@@ -35,6 +35,24 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 |---|---|---|---|---|
 | Application-side primary key UUID v7 generation | `@std/uuid` | `@std/uuid/v7` via `jsr:@std/uuid@1.1.1/v7` | `1.1.1` | Canonical exports are `generate`, `validate`, and `extractTimestamp`. Do not use `unstable-v7` or another UUID v7 source. |
 
+## Edge Function Naming Conventions
+
+All Edge Functions live under `supabase/functions/<function-name>/`. The canonical seven functions are:
+
+| Function Name | Directory | Responsibility |
+|---|---|---|
+| `ingest-orchestrator` | `supabase/functions/ingest-orchestrator/` | Orchestrates document ingestion pipeline |
+| `query-pipeline` | `supabase/functions/query-pipeline/` | Handles RAG query: retrieval + reranking + LLM generation |
+| `change-detection` | `supabase/functions/change-detection/` | Detects policy document changes via Municode/web polling |
+| `reconciliation` | `supabase/functions/reconciliation/` | Reconciles changed documents with the vector store |
+| `acknowledge-alert` | `supabase/functions/acknowledge-alert/` | Admin endpoint to acknowledge change alerts |
+| `admin-alerts` | `supabase/functions/admin-alerts/` | Lists outstanding change alerts for admin UI |
+| `keepalive-health` | `supabase/functions/keepalive-health/` | Health check and HF Spaces keep-warm ping |
+
+**Dependency isolation:** Each function has its own `deno.json` at `supabase/functions/<function-name>/deno.json`. There is no shared `import_map.json` or `supabase/functions/deno.json` — per-function `deno.json` is the current Supabase-recommended approach (Deno 2; `import_map.json` is legacy). Shared modules live in `supabase/functions/_shared/` and are referenced via the `"../​_shared/": "../​_shared/"` import mapping in each function's `deno.json`.
+
+**Entry point:** Each function's entry point is `index.ts` in its directory.
+
 ## Policy
 
 - Secrets live in environment variables, not committed code.
