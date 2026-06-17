@@ -1,0 +1,12 @@
+{
+  "name": "policy-navigator-app",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Policy Navigator application monorepo.",
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "test": "deno test"
+  }
+}

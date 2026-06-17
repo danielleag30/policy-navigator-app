@@ -1,0 +1,44 @@
+.env*
+!.env.example
+!.env.local.example
+
+# Dependencies and build output
+node_modules/
+.next/
+out/
+dist/
+coverage/
+
+# Vercel and Supabase local state
+.vercel/
+.supabase/
+supabase/.branches/
+supabase/.temp/
+
+# Logs and local OS/editor files
+*.log
+.DS_Store
+.idea/
+.vscode/
+
+# Credential material
+*credential*
+*credentials*
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.crt
+*.cer
+*.csr
+id_rsa*
+id_ed25519*
+service-account*.json
+service_account*.json
+*-service-account.json
+*_service_account.json
+*service-role*
+*service_role*
+*secret*
+secrets/
