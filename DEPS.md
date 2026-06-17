@@ -35,6 +35,13 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 |---|---|---|---|---|
 | Application-side primary key UUID v7 generation | `@std/uuid` | `@std/uuid/v7` via `jsr:@std/uuid@1.1.1/v7` | `1.1.1` | Canonical exports are `generate`, `validate`, and `extractTimestamp`. Do not use `unstable-v7` or another UUID v7 source. |
 
+## Shared Modules
+
+| Module | Location | Description |
+|---|---|---|
+| `hash.ts` | `supabase/functions/_shared/hash.ts` | Canonical SHA-256 `contentHash(input: string): Promise<string>`. All document deduplication imports from here — no other hashing for `content_hash` exists in the codebase. Algorithm: SHA-256 (collision-resistant, universally available via Web Crypto API with no external dependency). Input UTF-8 encoded via `TextEncoder`. Output: 64-char lowercase hex string. |
+| `response.ts` | `supabase/functions/_shared/response.ts` | Typed response envelope constructors. `success<T>(data)` → HTTP 200 `{ ok: true, data }`. `error(code, message, status?)` → HTTP error `{ ok: false, error: { code, message } }`. Named error codes: `RATE_LIMITED` (429), `OLLAMA_EXHAUSTED` (503), `INGESTION_FAILED` (500), `NOT_FOUND` (404), `UNAUTHORIZED` (401). All Edge Functions must import from here — no raw response objects. |
+
 ## Policy
 
 - Secrets live in environment variables, not committed code.
