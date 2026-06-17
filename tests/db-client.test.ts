@@ -11,19 +11,9 @@
 //   deno test --allow-env --allow-net --node-modules-dir=auto --env=.env.local tests/db-client.test.ts
 
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import db from "../supabase/functions/_shared/db-client.ts";
 
 Deno.test("db-client: initialises and reaches live Supabase project", async () => {
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-
-  assertExists(supabaseUrl, "SUPABASE_URL must be set");
-  assertExists(serviceRoleKey, "SUPABASE_SERVICE_ROLE_KEY must be set");
-
-  const db = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-
   // The `documents` table doesn't exist yet — a PostgREST 404/PGRST116 error
   // still proves the client initialised and authenticated correctly.
   const { data, error } = await db.from("documents").select("*").limit(1);
