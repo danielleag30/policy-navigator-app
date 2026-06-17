@@ -50,6 +50,15 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 | Function | Migration | Description |
 |---|---|---|
 | `public.ping()` | `20260617000000_keepalive_ping.sql` | Returns `true` (boolean). Called by `keepalive-health` Edge Function via `db.rpc('ping')` to confirm PostgREST → Postgres connectivity. Option A chosen over raw REST endpoint fetch because it exercises the full supabase-js `rpc` path used by real application queries. SECURITY DEFINER is safe: no privileged logic in the function body. |
+| `private.cron_invoke_edge_function(function_name text, body jsonb)` | `20260617000100_vault_cron_helpers.sql` (fixed in `20260617000300_fix_cron_invoke_signature.sql`) | Reads `project_url` and `service_role_key` from `vault.decrypted_secrets`, then calls `net.http_post` (pg_net). Returns a `bigint` request_id; actual response lands in `net._http_response` after a short async delay. Used by pg_cron jobs to invoke Edge Functions without hardcoding credentials. |
+
+## Postgres Extensions
+
+| Extension | Schema | Version | Status | Notes |
+|---|---|---|---|---|
+| `pg_net` | `net` | `0.20.3` | **Beta** — Supabase-hosted, async HTTP client for Postgres. `net.http_post(url, body jsonb, params jsonb, headers jsonb, timeout_milliseconds int)` returns a `bigint` request_id immediately; the response row appears in `net._http_response` after network round-trip (typically < 1 s). Always `pg_sleep(2)` before polling `net._http_response` in tests. Not suitable for synchronous use. |
+| `pg_cron` | `extensions` | `1.6.4` | Stable — enabled in `20260617000200_enable_extensions.sql`. Used by Phase 3 tasks for scheduled ingestion and keep-warm cron jobs. |
+| `supabase_vault` | `vault` | `0.3.1` | Stable — pre-enabled on all Supabase projects. Secrets stored via `vault.create_secret(secret, name, description)` and read back through `vault.decrypted_secrets`. **CRITICAL:** `vault.create_secret()` calls pass the secret value as a SQL literal and will appear in Postgres statement logs (`pg_stat_statements`, Supabase dashboard query history). Always run vault setup via `supabase db query -f <file>` or the Dashboard SQL editor — never inside a tracked migration. |
 
 ## Policy
 
