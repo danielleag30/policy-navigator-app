@@ -60,6 +60,12 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 | `pg_cron` | `extensions` | `1.6.4` | Stable — enabled in `20260617000200_enable_extensions.sql`. Used by Phase 3 tasks for scheduled ingestion and keep-warm cron jobs. |
 | `supabase_vault` | `vault` | `0.3.1` | Stable — pre-enabled on all Supabase projects. Secrets stored via `vault.create_secret(secret, name, description)` and read back through `vault.decrypted_secrets`. **CRITICAL:** `vault.create_secret()` calls pass the secret value as a SQL literal and will appear in Postgres statement logs (`pg_stat_statements`, Supabase dashboard query history). Always run vault setup via `supabase db query -f <file>` or the Dashboard SQL editor — never inside a tracked migration. |
 
+## Database Tables
+
+| Table | Migration | Description |
+|---|---|---|
+| `documents` | `001_documents.sql` | Source record for every ingested document — PDFs (budget, BOS minutes/summaries, ordinances) and Municode API responses. Tracks URL, doc_type, status (`current`/`superseded`/`unknown`), content hash, and parse metadata. No hard deletes; supersession flips `status`. RLS enabled, no policies (service role bypasses). |
+
 ## Policy
 
 - Secrets live in environment variables, not committed code.
