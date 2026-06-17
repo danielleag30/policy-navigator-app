@@ -22,6 +22,7 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 | `INCOMPLETE_SEARCH_FLOOR` | Local `.env.local` / Vercel project env | Edge Functions via `Deno.env.get()` | Retrieval tuning, configurable without code deploy. |
 | `VERCEL_DEPLOY_TOKEN` | Vercel secret / local `.env.local` if needed for tooling | Deployment tooling only | Used for frontend deployment automation, not runtime code. |
 | `ADMIN_SECRET` | Local `.env.local` / Vercel project env | Frontend route gate and `acknowledge-alert` Edge Function via `Deno.env.get()` | Dual-use secret; one value, two checks. |
+| `KEEPALIVE_HEALTH_URL` | GitHub Actions repo secret | `.github/workflows/keep-alive.yml` via `${{ secrets.KEEPALIVE_HEALTH_URL }}` | Full URL of the deployed `keepalive-health` Edge Function: `https://ahaurkifxzqsrhwjshbj.supabase.co/functions/v1/keepalive-health`. NOT in `.env.local` — only needed by CI. |
 
 ## Hardcoded Constants
 
@@ -34,6 +35,21 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 | Purpose | Library | Import/Submodule | Pinned Version | Notes |
 |---|---|---|---|---|
 | Application-side primary key UUID v7 generation | `@std/uuid` | `@std/uuid/v7` via `jsr:@std/uuid@1.1.1/v7` | `1.1.1` | Canonical exports are `generate`, `validate`, and `extractTimestamp`. Do not use `unstable-v7` or another UUID v7 source. |
+| Supabase Data API client (PostgREST-backed) for all Edge Functions | `@supabase/supabase-js` | `npm:@supabase/supabase-js@2` | `2.x` (npm floating minor) | Service-role client only — bypasses RLS, server-side Edge Functions only, never shipped to frontend. Instantiated once in `_shared/db-client.ts`; all Edge Functions import from there. This is the PostgREST Data API path (`SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`), **not** a raw Postgres pooler connection. If task 2-7 (RRF retrieval) requires raw SQL that PostgREST cannot express, a separate `_shared/db-pool.ts` will be created at that time with documented rationale. |
+
+## Shared Modules
+
+| Module | Location | Description |
+|---|---|---|
+| `hash.ts` | `supabase/functions/_shared/hash.ts` | Canonical SHA-256 `contentHash(input: string): Promise<string>`. All document deduplication imports from here — no other hashing for `content_hash` exists in the codebase. |
+| `response.ts` | `supabase/functions/_shared/response.ts` | Typed response envelope constructors. `success<T>(data)` → HTTP 200 `{ ok: true, data }`. `error(code, message, status?)` → HTTP error `{ ok: false, error: { code, message } }`. Named error codes: `RATE_LIMITED` (429), `OLLAMA_EXHAUSTED` (503), `INGESTION_FAILED` (500), `NOT_FOUND` (404), `UNAUTHORIZED` (401). All Edge Functions must import from here — no raw response objects. |
+| `db-client.ts` | `supabase/functions/_shared/db-client.ts` | Pre-instantiated service-role supabase-js client. Default export `db`. All Edge Functions import this rather than calling `createClient()` directly. Uses `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`; bypasses RLS; server-side only. |
+
+## Database Functions (SQL)
+
+| Function | Migration | Description |
+|---|---|---|
+| `public.ping()` | `20260617000000_keepalive_ping.sql` | Returns `true` (boolean). Called by `keepalive-health` Edge Function via `db.rpc('ping')` to confirm PostgREST → Postgres connectivity. Option A chosen over raw REST endpoint fetch because it exercises the full supabase-js `rpc` path used by real application queries. SECURITY DEFINER is safe: no privileged logic in the function body. |
 
 ## Policy
 
