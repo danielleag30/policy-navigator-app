@@ -35,6 +35,12 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 |---|---|---|---|---|
 | Application-side primary key UUID v7 generation | `@std/uuid` | `@std/uuid/v7` via `jsr:@std/uuid@1.1.1/v7` | `1.1.1` | Canonical exports are `generate`, `validate`, and `extractTimestamp`. Do not use `unstable-v7` or another UUID v7 source. |
 
+## Shared Modules
+
+| Module | Location | Description |
+|---|---|---|
+| `hash.ts` | `supabase/functions/_shared/hash.ts` | Canonical SHA-256 `contentHash(input: string): Promise<string>`. All document deduplication imports from here — no other hashing for `content_hash` exists in the codebase. Algorithm: SHA-256 (collision-resistant, universally available via Web Crypto API with no external dependency). Input UTF-8 encoded via `TextEncoder`. Output: 64-char lowercase hex string. |
+
 ## Policy
 
 - Secrets live in environment variables, not committed code.
