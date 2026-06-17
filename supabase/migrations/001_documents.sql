@@ -1,10 +1,10 @@
 -- Migration 001: documents table
 -- Source table for all ingested documents (PDFs, BOS minutes, Municode API responses).
 -- No hard deletes — status flags only.
--- UUID v7 is approximated via gen_random_uuid() (pg_crypto); Deno-side UUIDs will be true v7.
+-- UUID v7: always Deno-generated (application side). No server-side default — omitting id on INSERT is a hard error, enforcing caller responsibility.
 
 CREATE TABLE documents (
-  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  id                  uuid PRIMARY KEY,
   url                 text NOT NULL UNIQUE,
   filename            text NULL,
   doc_type            text NOT NULL CHECK (doc_type IN (
