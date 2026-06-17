@@ -35,6 +35,19 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 |---|---|---|---|---|
 | Application-side primary key UUID v7 generation | `@std/uuid` | `@std/uuid/v7` via `jsr:@std/uuid@1.1.1/v7` | `1.1.1` | Canonical exports are `generate`, `validate`, and `extractTimestamp`. Do not use `unstable-v7` or another UUID v7 source. |
 
+## Supabase Project
+
+| Field | Value |
+|---|---|
+| Project name | `policy-navigator` |
+| Project ref | `ahaurkifxzqsrhwjshbj` |
+| URL | `https://ahaurkifxzqsrhwjshbj.supabase.co` |
+| Region | `us-west-2` (West US — Oregon) |
+| Organization ID | `uwwkhrjetfribiffwxvr` |
+| Created | 2026-06-17 |
+
+The service role key lives in `.env.local` only and is never committed. It is available via `supabase projects api-keys --project-ref ahaurkifxzqsrhwjshbj`.
+
 ## Policy
 
 - Secrets live in environment variables, not committed code.
