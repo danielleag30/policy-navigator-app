@@ -1,5 +1,8 @@
 {
   "name": "@policy-navigator/frontend",
   "version": "0.0.0",
-  "private": true
+  "private": true,
+  "scripts": {
+    "build": "echo 'Static site — no build step'"
+  }
 }

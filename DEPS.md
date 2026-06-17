@@ -42,6 +42,28 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 | `hash.ts` | `supabase/functions/_shared/hash.ts` | Canonical SHA-256 `contentHash(input: string): Promise<string>`. All document deduplication imports from here — no other hashing for `content_hash` exists in the codebase. Algorithm: SHA-256 (collision-resistant, universally available via Web Crypto API with no external dependency). Input UTF-8 encoded via `TextEncoder`. Output: 64-char lowercase hex string. |
 | `response.ts` | `supabase/functions/_shared/response.ts` | Typed response envelope constructors. `success<T>(data)` → HTTP 200 `{ ok: true, data }`. `error(code, message, status?)` → HTTP error `{ ok: false, error: { code, message } }`. Named error codes: `RATE_LIMITED` (429), `OLLAMA_EXHAUSTED` (503), `INGESTION_FAILED` (500), `NOT_FOUND` (404), `UNAUTHORIZED` (401). All Edge Functions must import from here — no raw response objects. |
 
+## Vercel
+
+| Setting | Value |
+|---|---|
+| Project name | `policy-navigator` |
+| Team / account | `danielleag30s-projects` (Hobby tier, personal account) |
+| Project ID | `prj_NXypJC3k0Atvo6K4hGIWOwJYfYFp` |
+| Production URL | https://policy-navigator-mu.vercel.app |
+| Root directory | `frontend/` |
+| Build command | none (static site — served directly) |
+| Output directory | `.` (repo-relative: `frontend/`) |
+| Framework | Other (static) |
+
+**Environment variables set in Vercel project (production):**
+
+| Name | Notes |
+|---|---|
+| `SUPABASE_URL` | Public Supabase project API URL — safe for frontend exposure |
+| `SUPABASE_ANON_KEY` | Public anon key — safe for frontend exposure; row-level security enforced server-side |
+
+**NOT set in Vercel:** `SUPABASE_SERVICE_ROLE_KEY` — server-side only (Edge Functions read it from Supabase Vault / local env, never from Vercel frontend settings).
+
 ## Policy
 
 - Secrets live in environment variables, not committed code.

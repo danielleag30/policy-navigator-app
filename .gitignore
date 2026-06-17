@@ -10,7 +10,8 @@ dist/
 coverage/
 
 # Vercel and Supabase local state
-.vercel/
+.vercel/*
+!.vercel/project.json
 .supabase/
 supabase/.branches/
 supabase/.temp/
