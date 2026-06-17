@@ -11,6 +11,7 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 | `SUPABASE_SERVICE_ROLE_KEY` | Local `.env.local` / Vercel project env | Edge Functions via `Deno.env.get()` | Server-side only; bypasses RLS. |
 | `OLLAMA_CLOUD_BASE_URL` | Local `.env.local` / Vercel project env | Edge Functions via `Deno.env.get()` | Base URL for Ollama Cloud requests. |
 | `OLLAMA_TIMEOUT_MS` | Local `.env.local` / Vercel project env | Edge Functions via `Deno.env.get()` | Timeout ceiling for Ollama calls; default `15000`. |
+| `OLLAMA_RETRY_BASE_MS` | Local `.env.local` / Vercel project env (optional) | Edge Functions via `Deno.env.get()` | Base delay for exponential retry backoff; default `500`. Set to a small value in tests to avoid real wall-clock wait. Production default is fine for most deployments. |
 | `HF_SPACES_DOCLING_URL` | Local `.env.local` / Vercel project env | Edge Functions via `Deno.env.get()` | Docling wrapper endpoint. |
 | `HF_SPACES_KEEPWARM_URL` | Local `.env.local` / Vercel project env | GitHub Actions workflow and/or edge-side keep-warm logic | Keep-warm endpoint for the free-tier pause prevention job. |
 | `MUNICODE_BASE_URL` | Local `.env.local` / Vercel project env | Edge Functions via `Deno.env.get()` | Municode API base URL. |
@@ -35,6 +36,13 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 |---|---|---|---|---|
 | Application-side primary key UUID v7 generation | `@std/uuid` | `@std/uuid/v7` via `jsr:@std/uuid@1.1.1/v7` | `1.1.1` | Canonical exports are `generate`, `validate`, and `extractTimestamp`. Do not use `unstable-v7` or another UUID v7 source. |
 | Supabase Data API client (PostgREST-backed) for all Edge Functions | `@supabase/supabase-js` | `npm:@supabase/supabase-js@2` | `2.x` (npm floating minor) | Service-role client only — bypasses RLS, server-side Edge Functions only, never shipped to frontend. Instantiated once in `_shared/db-client.ts`; all Edge Functions import from there. This is the PostgREST Data API path (`SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`), **not** a raw Postgres pooler connection. If task 2-7 (RRF retrieval) requires raw SQL that PostgREST cannot express, a separate `_shared/db-pool.ts` will be created at that time with documented rationale. |
+
+## Shared Modules
+
+| Module | Location | Description |
+|---|---|---|
+| `db-client.ts` | `supabase/functions/_shared/db-client.ts` | Singleton PostgREST Data API client (service-role). Imported by all Edge Functions instead of calling `createClient()` directly. See `Application Dependencies` above for the PostgREST vs. pooler distinction. |
+| `ollama-client.ts` | `supabase/functions/_shared/ollama-client.ts` | **Single point of all Ollama Cloud API calls.** No Edge Function may call Ollama directly — all LLM calls go through `ollamaChat(messages, temperature)` exported from this module. Key design choices: (1) Uses native `/api/chat` endpoint — NOT `/v1/chat/completions`, which returns 500s on cloud models per confirmed Ollama GitHub issue. (2) No `tools` parameter is ever passed — confirmed Ollama Cloud GitHub issue shows `/api/chat` returns 500 when any tool is provided on cloud models; this pipeline uses plain chat completions with structured-output prompting. (3) Model `gemma4:31b-cloud` is hardcoded here, not a caller parameter. (4) `temperature` IS a per-call parameter — Judge/Verifier callers (tasks 2-9, 2-12) should use 0.0–0.3 for determinism; Drafter (task 2-11) may use higher values. (5) 3 retries with exponential backoff; clean error string returned on exhaustion — never a raw Error or stack trace. |
 
 ## Edge Function Naming Conventions
 

@@ -75,7 +75,8 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@std/uuid@1.1.1"
+      "jsr:@std/uuid@1.1.1",
+      "npm:@supabase/supabase-js@2"
     ]
   }
 }
