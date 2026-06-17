@@ -44,12 +44,12 @@ All Edge Functions live under `supabase/functions/<function-name>/`. The canonic
 | `ingest-orchestrator` | `supabase/functions/ingest-orchestrator/` | Orchestrates document ingestion pipeline |
 | `query-pipeline` | `supabase/functions/query-pipeline/` | Handles RAG query: retrieval + reranking + LLM generation |
 | `change-detection` | `supabase/functions/change-detection/` | Detects policy document changes via Municode/web polling |
-| `reconciliation` | `supabase/functions/reconciliation/` | Reconciles changed documents with the vector store |
+| `reconciliation` | `supabase/functions/reconciliation/` | Reconciles ordinance provision data when Municode publishes new code supplements |
 | `acknowledge-alert` | `supabase/functions/acknowledge-alert/` | Admin endpoint to acknowledge change alerts |
 | `admin-alerts` | `supabase/functions/admin-alerts/` | Lists outstanding change alerts for admin UI |
-| `keepalive-health` | `supabase/functions/keepalive-health/` | Health check and HF Spaces keep-warm ping |
+| `keepalive-health` | `supabase/functions/keepalive-health/` | Permanently-public health check called by GitHub Actions every 5-6 days to prevent Supabase project auto-pause; returns `{ ok: true }` only |
 
-**Dependency isolation:** Each function has its own `deno.json` at `supabase/functions/<function-name>/deno.json`. There is no shared `import_map.json` or `supabase/functions/deno.json` — per-function `deno.json` is the current Supabase-recommended approach (Deno 2; `import_map.json` is legacy). Shared modules live in `supabase/functions/_shared/` and are referenced via the `"../​_shared/": "../​_shared/"` import mapping in each function's `deno.json`.
+**Dependency isolation:** Each function has its own `deno.json` at `supabase/functions/<function-name>/deno.json`. There is no shared `import_map.json` or `supabase/functions/deno.json` — per-function `deno.json` is the current Supabase-recommended approach (Deno 2; `import_map.json` is legacy). Shared modules live in `supabase/functions/_shared/` and are referenced via the `"../_shared/": "../_shared/"` import mapping in each function's `deno.json`.
 
 **Entry point:** Each function's entry point is `index.ts` in its directory.
 
