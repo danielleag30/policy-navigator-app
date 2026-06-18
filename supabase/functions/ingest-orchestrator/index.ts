@@ -137,10 +137,13 @@ async function handlePdf(
   const { data: newDoc, error: insertErr } = await db
     .from("documents")
     .insert({
+      id: crypto.randomUUID(),
+      url: sourceUrl,
       content_hash: hash,
       doc_type: docType,
       status: "unknown",
       ingested_at: new Date().toISOString(),
+      last_checked_at: new Date().toISOString(),
     })
     .select("id")
     .single();

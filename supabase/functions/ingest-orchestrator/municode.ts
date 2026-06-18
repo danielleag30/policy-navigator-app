@@ -166,11 +166,14 @@ export async function handleMunicode(
   const { data: newDoc, error: insertErr } = await db
     .from("documents")
     .insert({
+      id: crypto.randomUUID(),
+      url: jobsUrl,
       content_hash: hash,
       doc_type: "municode_api",
       status: "unknown",
       ingested_at: new Date().toISOString(),
-      raw_api_response: codesBody,
+      last_checked_at: new Date().toISOString(),
+      raw_api_response: JSON.parse(codesBody), // jsonb column — must be object, not string
     })
     .select("id")
     .single();
@@ -185,30 +188,29 @@ export async function handleMunicode(
   for (const node of codesContent) {
     const effectiveDate = await computeEffectiveDate(node, jobData);
 
-    const provision = {
-      document_id: documentId,
-      municode_node_id: node.Id,
-      node_depth: node.NodeDepth,
-      is_amended: node.IsAmended ?? false,
-      amended_by: (node.AmendedBy as string | null) ?? null,
-      has_drafts:
-        node.Drafts != null && Array.isArray(node.Drafts) && node.Drafts.length > 0,
-      content_text: node.Content,
-      effective_date: effectiveDate,
-    };
-
-    // ON CONFLICT on UNIQUE (municode_node_id, effective_date): skip, warn (AC-9)
-    const { error: upsertErr } = await db
+    const { error: provisionErr } = await db
       .from("ordinance_provisions")
-      .upsert(provision, {
-        onConflict: "municode_node_id,effective_date",
-        ignoreDuplicates: true,
+      .insert({
+        id: crypto.randomUUID(),
+        document_id: documentId,
+        municode_node_id: node.Id,
+        effective_date: effectiveDate,
+        is_current: false,
+        section_title: null,
+        content: node.Content,
       });
 
-    if (upsertErr) {
-      console.warn(
-        `ordinance_provisions upsert warning for node ${node.Id}: ${upsertErr.message}`
-      );
+    if (provisionErr) {
+      if (provisionErr.code === "23505") {
+        // ON CONFLICT on UNIQUE (municode_node_id, effective_date): skip and warn (AC-9)
+        console.warn(
+          `Skipped duplicate ordinance_provision: node=${node.Id} effective_date=${effectiveDate}`
+        );
+      } else {
+        throw new Error(
+          `Failed to insert ordinance_provision for node ${node.Id}: ${provisionErr.message}`
+        );
+      }
     }
   }
 
