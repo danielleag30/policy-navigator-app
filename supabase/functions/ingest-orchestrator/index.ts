@@ -87,6 +87,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
         .from("pending_ingestions")
         .update({ status: "failed" })
         .eq("id", row.id);
+    } else {
+      // Reset to pending so the scheduler can retry on next_attempt_at
+      await db
+        .from("pending_ingestions")
+        .update({ status: "pending" })
+        .eq("id", row.id);
     }
 
     return error("INGESTION_FAILED", "Ingestion failed; alert recorded");
