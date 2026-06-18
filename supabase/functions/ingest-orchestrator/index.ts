@@ -3,6 +3,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import db from "../_shared/db-client.ts";
 import { contentHash } from "../_shared/hash.ts";
 import { error, success } from "../_shared/response.ts";
+import { handleMunicode } from "./municode.ts";
 
 const PDF_DOC_TYPES = new Set(["bos_minutes", "bos_summary", "budget_pdf"]);
 
@@ -64,7 +65,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (PDF_DOC_TYPES.has(docType)) {
       return await handlePdf(row.id as string, docType, row.source_url as string, newAttempts);
     } else if (docType === "municode_api") {
-      return await handleMunicode();
+      return await handleMunicode(row.id as string);
     } else {
       return error("INGESTION_FAILED", `Unknown doc_type: ${docType}`);
     }
@@ -159,11 +160,4 @@ async function handlePdf(
     .eq("id", pendingIngestionId);
 
   return success({ status: "completed", document_id: documentId });
-}
-
-async function handleMunicode(): Promise<Response> {
-  // Municode stub (real handler: task 2-5)
-  // Does NOT compute content_hash or create a Document shell row
-  console.log("municode stub");
-  return success({ status: "routed", handler: "municode" });
 }
