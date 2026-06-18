@@ -31,3 +31,5 @@ CREATE INDEX ON documents (status);
 CREATE INDEX ON documents (last_checked_at);
 
 ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE documents FROM anon, authenticated;
