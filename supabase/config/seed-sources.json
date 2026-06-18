@@ -1,0 +1,41 @@
+{
+  "version": "1",
+  "sources": [
+    {
+      "doc_type": "bos_minutes",
+      "label": "Fairfax County Board of Supervisors Minutes",
+      "base_url": "https://www.fairfaxcounty.gov",
+      "url_patterns": [
+        "REPLACE_WITH_BOS_MINUTES_URL_PATTERN"
+      ],
+      "notes": "Pattern should match minutes pages, e.g. /board/minutes or similar path"
+    },
+    {
+      "doc_type": "bos_summary",
+      "label": "Fairfax County Board of Supervisors Summaries",
+      "base_url": "https://www.fairfaxcounty.gov",
+      "url_patterns": [
+        "REPLACE_WITH_BOS_SUMMARY_URL_PATTERN"
+      ],
+      "notes": "Pattern should match summary/agenda pages"
+    },
+    {
+      "doc_type": "budget_pdf",
+      "label": "Fairfax County Budget PDFs",
+      "base_url": "https://www.fairfaxcounty.gov",
+      "url_patterns": [
+        "REPLACE_WITH_BUDGET_PDF_URL_PATTERN"
+      ],
+      "notes": "Pattern should match budget PDF download paths"
+    },
+    {
+      "doc_type": "municode_api",
+      "label": "Municode API — Fairfax County Ordinances",
+      "base_url": "https://api.municode.com",
+      "url_patterns": [
+        "/Jobs/latest/10051"
+      ],
+      "notes": "Municode jurisdiction code 10051 = Fairfax County, VA"
+    }
+  ]
+}
