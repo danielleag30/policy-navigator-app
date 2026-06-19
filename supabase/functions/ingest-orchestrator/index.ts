@@ -3,6 +3,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import db from "../_shared/db-client.ts";
 import { contentHash } from "../_shared/hash.ts";
 import { error, success } from "../_shared/response.ts";
+import { handleMunicode } from "./municode.ts";
 
 const PDF_DOC_TYPES = new Set(["bos_minutes", "bos_summary", "budget_pdf"]);
 
@@ -26,7 +27,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const pendingIngestionId = body.pending_ingestion_id as string | undefined;
   if (!pendingIngestionId) {
-    return error("INGESTION_FAILED", "Missing required field: pending_ingestion_id");
+    return error(
+      "INGESTION_FAILED",
+      "Missing required field: pending_ingestion_id",
+    );
   }
 
   // Fetch the pending ingestion row with explicit status = 'pending' filter
@@ -62,17 +66,27 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const docType = row.doc_type as string;
 
     if (PDF_DOC_TYPES.has(docType)) {
-      return await handlePdf(row.id as string, docType, row.source_url as string, newAttempts);
+      return await handlePdf(
+        row.id as string,
+        docType,
+        row.source_url as string,
+        newAttempts,
+      );
     } else if (docType === "municode_api") {
-      return await handleMunicode();
+      return await handleMunicode(row.id as string);
     } else {
       return error("INGESTION_FAILED", `Unknown doc_type: ${docType}`);
     }
   } catch (err: unknown) {
     // Log internally, never expose stack trace
-    console.error("Orchestrator error:", err instanceof Error ? err.message : String(err));
+    console.error(
+      "Orchestrator error:",
+      err instanceof Error ? err.message : String(err),
+    );
 
-    const safeMessage = err instanceof Error ? err.message : "Internal ingestion error";
+    const safeMessage = err instanceof Error
+      ? err.message
+      : "Internal ingestion error";
 
     // Write a pending alert
     await db.from("pending_alerts").insert({
@@ -103,12 +117,14 @@ async function handlePdf(
   pendingIngestionId: string,
   docType: string,
   sourceUrl: string,
-  attempts: number,
+  _attempts: number,
 ): Promise<Response> {
   // Fetch the PDF bytes
   const fetchResp = await fetch(sourceUrl);
   if (!fetchResp.ok) {
-    throw new Error(`Failed to fetch source document: HTTP ${fetchResp.status}`);
+    throw new Error(
+      `Failed to fetch source document: HTTP ${fetchResp.status}`,
+    );
   }
 
   // Compute content_hash BEFORE creating any Document row
@@ -159,11 +175,4 @@ async function handlePdf(
     .eq("id", pendingIngestionId);
 
   return success({ status: "completed", document_id: documentId });
-}
-
-async function handleMunicode(): Promise<Response> {
-  // Municode stub (real handler: task 2-5)
-  // Does NOT compute content_hash or create a Document shell row
-  console.log("municode stub");
-  return success({ status: "routed", handler: "municode" });
 }

@@ -4,5 +4,10 @@
     "../_shared/": "../_shared/",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2",
     "openai": "npm:openai@^4.52.5"
+  },
+  "lint": {
+    "rules": {
+      "exclude": ["no-import-prefix", "no-unversioned-import"]
+    }
   }
 }
