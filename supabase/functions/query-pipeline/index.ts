@@ -179,6 +179,10 @@ interface RankedCandidate {
 
 interface EnrichedCandidate extends RankedCandidate {
   ancestors: Array<{ municode_node_id: string; title: string; node_depth: number }>;
+  /** The Municode node identity key for ordinance_provisions chunks; undefined for other tables. */
+  municode_node_id: string | undefined;
+  /** Computed from peer candidates: effective_date of the current version when this chunk is superseded; null otherwise. */
+  superseded_date: string | null;
 }
 
 /**
@@ -265,11 +269,20 @@ async function enrichWithAncestors(candidates: RankedCandidate[]): Promise<Enric
     }
   }
 
-  return candidates.map(c => {
-    if (c.table !== 'ordinance_provisions') return { ...c, ancestors: [] };
+  // First pass: attach ancestor chains and municode_node_id to each candidate.
+  const withAncestors = candidates.map(c => {
+    const nodeId = c.table === 'ordinance_provisions'
+      ? (c.row.municode_node_id as string | undefined)
+      : undefined;
+
+    if (c.table !== 'ordinance_provisions') {
+      return { ...c, ancestors: [], municode_node_id: undefined, superseded_date: null };
+    }
 
     const myParentId = c.row.parent_node_id as string | null;
-    if (!myParentId) return { ...c, ancestors: [] };
+    if (!myParentId) {
+      return { ...c, ancestors: [], municode_node_id: nodeId, superseded_date: null };
+    }
 
     const ancestors: Array<{ municode_node_id: string; title: string; node_depth: number }> = [];
     let currentId: string | null = myParentId;
@@ -282,7 +295,25 @@ async function enrichWithAncestors(candidates: RankedCandidate[]): Promise<Enric
       currentId = ancestor.parent_node_id;
     }
     ancestors.sort((a, b) => a.node_depth - b.node_depth);
-    return { ...c, ancestors };
+    return { ...c, ancestors, municode_node_id: nodeId, superseded_date: null };
+  });
+
+  // Second pass: for is_current=false provisions, derive superseded_date from the
+  // effective_date of the current version of the same node if it's in the candidate set.
+  const currentVersionDates = new Map<string, string>();
+  for (const c of withAncestors) {
+    if (c.table === 'ordinance_provisions' && c.row.is_current === true && c.municode_node_id) {
+      const effDate = c.row.effective_date as string | null;
+      if (effDate) currentVersionDates.set(c.municode_node_id, effDate);
+    }
+  }
+
+  return withAncestors.map(c => {
+    if (c.table !== 'ordinance_provisions' || c.row.is_current === true || !c.municode_node_id) {
+      return c;
+    }
+    const superseded_date = currentVersionDates.get(c.municode_node_id) ?? null;
+    return { ...c, superseded_date };
   });
 }
 
@@ -290,27 +321,28 @@ async function enrichWithAncestors(candidates: RankedCandidate[]): Promise<Enric
 
 interface PendingChange {
   id: string;
-  ordinance_provision_id: string;
+  municode_node_id: string;
   codification_status: string;
-  change_description: string | null;
+  proposed_text: string | null;
 }
 
 /**
- * Fetch pending_code_changes rows for any ordinance_provisions IDs in the
- * candidate set. Non-fatal: returns [] on DB error so the judge proceeds
+ * Fetch pending_code_changes rows for any ordinance_provisions municode_node_ids in
+ * the candidate set. Non-fatal: returns [] on DB error so the judge proceeds
  * without pending change data rather than failing the request.
  */
 async function fetchPendingChanges(candidates: EnrichedCandidate[]): Promise<PendingChange[]> {
-  const ordinanceIds = candidates
-    .filter(c => c.table === 'ordinance_provisions')
-    .map(c => c.id);
+  const ordinanceMunicodeIds = candidates
+    .filter(c => c.table === 'ordinance_provisions' && c.municode_node_id)
+    .map(c => c.municode_node_id as string);
 
-  if (ordinanceIds.length === 0) return [];
+  const uniqueIds = [...new Set(ordinanceMunicodeIds)];
+  if (uniqueIds.length === 0) return [];
 
   const { data, error: dbErr } = await db
     .from('pending_code_changes')
-    .select('id, ordinance_provision_id, codification_status, change_description')
-    .in('ordinance_provision_id', ordinanceIds)
+    .select('id, municode_node_id, codification_status, proposed_text')
+    .in('municode_node_id', uniqueIds)
     .eq('codification_status', 'pending');
 
   if (dbErr) {
@@ -319,6 +351,37 @@ async function fetchPendingChanges(candidates: EnrichedCandidate[]): Promise<Pen
   }
 
   return (data ?? []) as PendingChange[];
+}
+
+// ── Hard pre-filter ───────────────────────────────────────────────────────────
+
+/** Heuristic: detect queries that reference a specific past date or time period. */
+function isHistoricalQuery(query: string): boolean {
+  return /\b(19|20)\d{2}\b/.test(query) ||
+    /\b(as of|at the time of|before the|prior to|in january|in february|in march|in april|in may|in june|in july|in august|in september|in october|in november|in december)\b/i.test(query);
+}
+
+/**
+ * Deterministic pre-filter: for current queries, remove is_current=false ordinance
+ * chunks when a same-municode_node_id is_current=true chunk is in the candidate set.
+ * For historical queries, skip filtering and let the LLM handle version selection.
+ */
+function hardFilterSuperseded(candidates: EnrichedCandidate[], historical: boolean): EnrichedCandidate[] {
+  if (historical) return candidates;
+
+  const currentNodeIds = new Set(
+    candidates
+      .filter(c => c.table === 'ordinance_provisions' && c.row.is_current === true)
+      .map(c => c.municode_node_id)
+      .filter((id): id is string => id !== undefined),
+  );
+
+  return candidates.filter(c => {
+    if (c.table !== 'ordinance_provisions') return true;
+    if (c.row.is_current === true) return true;
+    // superseded: keep only if no current version of same section exists in the candidate set
+    return !currentNodeIds.has(c.municode_node_id);
+  });
 }
 
 // ── Temporal Judge ────────────────────────────────────────────────────────────
@@ -350,11 +413,10 @@ function serializeChunk(c: EnrichedCandidate, index: number): string {
   if (c.table === 'ordinance_provisions') {
     const isCurrent = c.row.is_current ?? 'unknown';
     const effectiveDate = c.row.effective_date ?? 'unknown';
-    const supersededDate = c.row.superseded_date ?? null;
+    meta.push(`municode_node_id=${c.municode_node_id ?? 'unknown'}`);
     meta.push(`is_current=${isCurrent}`);
     meta.push(`effective_date=${effectiveDate}`);
-    meta.push(`superseded_date=${supersededDate ?? 'null'}`);
-    if (c.row.section_number) meta.push(`section=${c.row.section_number}`);
+    meta.push(`superseded_date=${c.superseded_date ?? 'null'}`);
     if (c.ancestors.length > 0) {
       meta.push(`ancestors=${c.ancestors.map(a => a.title).join(' > ')}`);
     }
@@ -454,13 +516,13 @@ Given a user query and up to ${JUDGE_CONTEXT_COUNT} retrieved document chunks, s
 
 TEMPORAL SELECTION RULES (apply in order — stop at the first rule that matches)
 1. HISTORICAL QUERY: If the query explicitly references a past date or time period (e.g., "as of 2019", "before the 2023 amendment", "what was the rule in January 2021", "prior to the change"), select chunks whose version was effective at the referenced date. A chunk was effective at date D when: effective_date ≤ D AND (superseded_date IS NULL OR superseded_date > D). Include superseded chunks only in this case.
-2. CURRENT QUERY (default): For any query without a historical date reference, prefer current versions. For ordinance_provisions chunks: if is_current=false AND a current version of the same section is also in the candidate list, REMOVE the superseded chunk. If no current version exists for that section, you may keep the superseded chunk but note this in amendment_caveat.
+2. CURRENT QUERY (default): For any query without a historical date reference, prefer current versions. For ordinance_provisions chunks: identify chunks that share the same municode_node_id. If is_current=false AND a chunk with the same municode_node_id and is_current=true is also in the candidate list, REMOVE the superseded chunk. If no current version exists for that section, you may keep the superseded chunk but note this in amendment_caveat.
 3. NON-ORDINANCE CHUNKS (vote_tallies, policy_decisions, budget_indicators, narrative_chunks): No temporal filtering — evaluate purely by relevance.
 
 OUTPUT RULES
 • Select at most ${JUDGE_OUTPUT_LIMIT} chunk IDs total. Preserve relevance order (lower index = higher relevance from retrieval).
 • temporal_flag = true if ANY of these occurred: (a) historical date detected in query, (b) one or more superseded chunks were filtered out, (c) multiple versions of the same section were compared.
-• amendment_caveat: one sentence if a SELECTED ordinance chunk has effective_date within the last 12 months (it may have recently changed); otherwise null.
+• amendment_caveat: non-null string if any selected chunk is from a section that has been amended — i.e., there exists another chunk in the candidate list with the same municode_node_id but a different version (is_current differs), OR the chunk metadata indicates amendment history (superseded_date is non-null). Set to a brief note like "Note: Section X was amended — verify you have the current version." Set to null only if no amendment history is apparent for any selected chunk.
 • pending_change_notice: one sentence if any pending_changes items are listed below; describe what is pending. Otherwise null.
 
 CRITICAL: Output ONLY valid JSON — no preamble, no markdown fences, no explanation outside the JSON object. Schema:
@@ -479,7 +541,7 @@ CRITICAL: Output ONLY valid JSON — no preamble, no markdown fences, no explana
   const pendingBlock = pendingChanges.length === 0
     ? 'None'
     : pendingChanges.map(p =>
-        `• provision_id=${p.ordinance_provision_id}: ${p.change_description ?? '(no description)'}`
+        `• node=${p.municode_node_id}: ${p.proposed_text ? p.proposed_text.slice(0, 200) : '(no proposed text)'}`
       ).join('\n');
 
   const userPrompt =
@@ -634,9 +696,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   // ── Step 6 (task 2-9): Temporal Judge ──────────────────────────────────────
 
-  const pendingChanges = await fetchPendingChanges(enriched);
+  const historical = isHistoricalQuery(query);
+  const preFiltered = hardFilterSuperseded(enriched, historical);
 
-  const judgeResult = await runTemporalJudge(query, enriched, pendingChanges);
+  const pendingChanges = await fetchPendingChanges(preFiltered);
+
+  const judgeResult = await runTemporalJudge(query, preFiltered, pendingChanges);
 
   // AC 7: On Ollama exhaustion, return clean error — never silently fall back
   // to the unfiltered chunk set.
