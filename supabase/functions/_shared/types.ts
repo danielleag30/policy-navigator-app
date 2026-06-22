@@ -38,8 +38,19 @@ export interface CitationChunk {
   source_title: string;
   /** Page number for PDF sources; null for Municode/web sources. */
   page_number: number | null;
+  /** Bounding box metadata for PDF sources; null when unavailable. */
+  bbox: unknown | null;
   /** Relevance rank (1 = most relevant). */
   rank: number;
+}
+
+/** A normalized citation attached to one answer claim. */
+export interface CitationMapEntry {
+  chunk_id: string;
+  /** Page number for PDF sources; null for Municode/web sources. */
+  page: number | null;
+  /** Bounding box metadata for PDF sources; null when unavailable. */
+  bbox: unknown | null;
 }
 
 /** Request body sent to the query-pipeline Edge Function. */
@@ -56,6 +67,8 @@ export interface QueryResponseData {
   answer: string;
   /** Ordered list of cited chunks (highest relevance first). */
   citations: CitationChunk[];
+  /** Claim-level citations keyed by exact claim text from the draft answer. */
+  citationMap: Record<string, CitationMapEntry>;
   /**
    * Full text of each cited chunk, keyed by chunk_id.
    * Allows the frontend to render chunk text without a second round-trip.
