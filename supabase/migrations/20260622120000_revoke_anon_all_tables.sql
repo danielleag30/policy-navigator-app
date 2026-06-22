@@ -17,5 +17,3 @@ REVOKE ALL ON TABLE request_logs            FROM anon, authenticated;
 REVOKE ALL ON TABLE pending_alerts          FROM anon, authenticated;
 REVOKE ALL ON TABLE document_chunks         FROM anon, authenticated;
 REVOKE ALL ON TABLE private.app_config      FROM anon, authenticated;
-
-REVOKE USAGE ON SCHEMA public FROM anon, authenticated;
