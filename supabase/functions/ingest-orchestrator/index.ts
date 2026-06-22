@@ -272,39 +272,27 @@ async function embedDocumentChunks(
   const texts = rows.map((r) => r.text as string);
   const embeddings = await generateEmbeddings(session, texts);
 
-  // Write embeddings back, one update per chunk
-  await Promise.all(
-    rows.map((row, i) => {
-      const emb = embeddings[i];
-      if (emb === null) {
-        console.error(`[embedder] null embedding for chunk ${row.id}`);
-        return Promise.resolve();
-      }
-      return db
-        .from("document_chunks")
-        .update({ embedding: emb, updated_at: new Date().toISOString() })
-        .eq("id", row.id)
-        .then(({ error: updErr }) => {
-          if (updErr) {
-            throw new Error(`Failed to persist embedding for chunk ${row.id}: ${updErr.message}`);
-          }
-        });
-    }),
-  );
+  // Write embeddings back, one update per chunk — check each write
+  for (let i = 0; i < rows.length; i++) {
+    const { error: chunkErr } = await db
+      .from("document_chunks")
+      .update({ embedding: embeddings[i] })
+      .eq("id", rows[i].id);
+    if (chunkErr) {
+      throw new Error(`Failed to write embedding for chunk ${rows[i].id}: ${chunkErr.message}`);
+    }
+  }
 
-  // Verify no nulls remain
-  const { count, error: countErr } = await db
+  // DB-side count verification: non-null count must match expected chunk count
+  const { count: nonNullCount, error: countErr } = await db
     .from("document_chunks")
     .select("id", { count: "exact", head: true })
     .eq("document_id", documentId)
-    .is("embedding", null);
-
-  if (countErr) {
-    throw new Error(`Null-check query failed for document_chunks: ${countErr.message}`);
-  }
-  if (count && count > 0) {
+    .not("embedding", "is", null);
+  if (countErr) throw new Error(`Embedding count check failed: ${countErr.message}`);
+  if ((nonNullCount ?? 0) !== rows.length) {
     throw new Error(
-      `${count} document_chunks still have null embedding after generation`,
+      `Embedding count mismatch: expected ${rows.length}, got ${nonNullCount ?? 0} non-null in DB`,
     );
   }
 }
