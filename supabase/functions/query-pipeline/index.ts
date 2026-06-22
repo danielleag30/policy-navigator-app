@@ -183,6 +183,8 @@ interface EnrichedCandidate extends RankedCandidate {
   municode_node_id: string | undefined;
   /** Computed from peer candidates: effective_date of the current version when this chunk is superseded; null otherwise. */
   superseded_date: string | null;
+  /** True when hardFilterSuperseded removed at least one superseded peer for this node — signals amendment history to the judge. */
+  hasAmendmentHistory: boolean;
 }
 
 /**
@@ -276,12 +278,12 @@ async function enrichWithAncestors(candidates: RankedCandidate[]): Promise<Enric
       : undefined;
 
     if (c.table !== 'ordinance_provisions') {
-      return { ...c, ancestors: [], municode_node_id: undefined, superseded_date: null };
+      return { ...c, ancestors: [], municode_node_id: undefined, superseded_date: null, hasAmendmentHistory: false };
     }
 
     const myParentId = c.row.parent_node_id as string | null;
     if (!myParentId) {
-      return { ...c, ancestors: [], municode_node_id: nodeId, superseded_date: null };
+      return { ...c, ancestors: [], municode_node_id: nodeId, superseded_date: null, hasAmendmentHistory: false };
     }
 
     const ancestors: Array<{ municode_node_id: string; title: string; node_depth: number }> = [];
@@ -295,7 +297,7 @@ async function enrichWithAncestors(candidates: RankedCandidate[]): Promise<Enric
       currentId = ancestor.parent_node_id;
     }
     ancestors.sort((a, b) => a.node_depth - b.node_depth);
-    return { ...c, ancestors, municode_node_id: nodeId, superseded_date: null };
+    return { ...c, ancestors, municode_node_id: nodeId, superseded_date: null, hasAmendmentHistory: false };
   });
 
   // Second pass: for is_current=false provisions, derive superseded_date from the
@@ -365,9 +367,16 @@ function isHistoricalQuery(query: string): boolean {
  * Deterministic pre-filter: for current queries, remove is_current=false ordinance
  * chunks when a same-municode_node_id is_current=true chunk is in the candidate set.
  * For historical queries, skip filtering and let the LLM handle version selection.
+ *
+ * Returns the filtered list AND the set of municode_node_ids for which at least one
+ * superseded chunk was removed — callers use this to tag remaining candidates and
+ * force temporalFlag=true without relying solely on the LLM judge.
  */
-function hardFilterSuperseded(candidates: EnrichedCandidate[], historical: boolean): EnrichedCandidate[] {
-  if (historical) return candidates;
+function hardFilterSuperseded(
+  candidates: EnrichedCandidate[],
+  historical: boolean,
+): { filtered: EnrichedCandidate[]; amendedNodeIds: Set<string> } {
+  if (historical) return { filtered: candidates, amendedNodeIds: new Set() };
 
   const currentNodeIds = new Set(
     candidates
@@ -376,12 +385,16 @@ function hardFilterSuperseded(candidates: EnrichedCandidate[], historical: boole
       .filter((id): id is string => id !== undefined),
   );
 
-  return candidates.filter(c => {
+  const amendedNodeIds = new Set<string>();
+  const filtered = candidates.filter(c => {
     if (c.table !== 'ordinance_provisions') return true;
     if (c.row.is_current === true) return true;
-    // superseded: keep only if no current version of same section exists in the candidate set
-    return !currentNodeIds.has(c.municode_node_id);
+    const shouldRemove = currentNodeIds.has(c.municode_node_id);
+    if (shouldRemove && c.municode_node_id) amendedNodeIds.add(c.municode_node_id);
+    return !shouldRemove;
   });
+
+  return { filtered, amendedNodeIds };
 }
 
 // ── Temporal Judge ────────────────────────────────────────────────────────────
@@ -417,6 +430,9 @@ function serializeChunk(c: EnrichedCandidate, index: number): string {
     meta.push(`is_current=${isCurrent}`);
     meta.push(`effective_date=${effectiveDate}`);
     meta.push(`superseded_date=${c.superseded_date ?? 'null'}`);
+    if (c.hasAmendmentHistory) {
+      meta.push('has_amendment_history=true');
+    }
     if (c.ancestors.length > 0) {
       meta.push(`ancestors=${c.ancestors.map(a => a.title).join(' > ')}`);
     }
@@ -522,7 +538,7 @@ TEMPORAL SELECTION RULES (apply in order — stop at the first rule that matches
 OUTPUT RULES
 • Select at most ${JUDGE_OUTPUT_LIMIT} chunk IDs total. Preserve relevance order (lower index = higher relevance from retrieval).
 • temporal_flag = true if ANY of these occurred: (a) historical date detected in query, (b) one or more superseded chunks were filtered out, (c) multiple versions of the same section were compared.
-• amendment_caveat: non-null string if any selected chunk is from a section that has been amended — i.e., there exists another chunk in the candidate list with the same municode_node_id but a different version (is_current differs), OR the chunk metadata indicates amendment history (superseded_date is non-null). Set to a brief note like "Note: Section X was amended — verify you have the current version." Set to null only if no amendment history is apparent for any selected chunk.
+• amendment_caveat: non-null string if ANY selected chunk has has_amendment_history=true in its metadata, OR if the chunk metadata shows superseded_date is non-null. In those cases, set a brief note like "Note: Section [id] was recently amended — verify you have the current version." Set to null ONLY if no amendment history signal is present for any selected chunk.
 • pending_change_notice: one sentence if any pending_changes items are listed below; describe what is pending. Otherwise null.
 
 CRITICAL: Output ONLY valid JSON — no preamble, no markdown fences, no explanation outside the JSON object. Schema:
@@ -697,11 +713,21 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // ── Step 6 (task 2-9): Temporal Judge ──────────────────────────────────────
 
   const historical = isHistoricalQuery(query);
-  const preFiltered = hardFilterSuperseded(enriched, historical);
+  const { filtered: preFiltered, amendedNodeIds } = hardFilterSuperseded(enriched, historical);
 
-  const pendingChanges = await fetchPendingChanges(preFiltered);
+  // Tag each remaining candidate so the judge sees has_amendment_history=true
+  // for sections where a superseded peer was removed by the pre-filter.
+  const taggedCandidates = preFiltered.map(c => ({
+    ...c,
+    hasAmendmentHistory:
+      c.table === 'ordinance_provisions' &&
+      c.municode_node_id !== undefined &&
+      amendedNodeIds.has(c.municode_node_id),
+  }));
 
-  const judgeResult = await runTemporalJudge(query, preFiltered, pendingChanges);
+  const pendingChanges = await fetchPendingChanges(taggedCandidates);
+
+  const judgeResult = await runTemporalJudge(query, taggedCandidates, pendingChanges);
 
   // AC 7: On Ollama exhaustion, return clean error — never silently fall back
   // to the unfiltered chunk set.
@@ -712,7 +738,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     );
   }
 
-  const { filteredCandidates, temporalFlag, amendmentCaveat, pendingChangeNotice } = judgeResult;
+  const { filteredCandidates, amendmentCaveat, pendingChangeNotice } = judgeResult;
+  // AC3: pre-filter removing superseded chunks IS temporal reasoning — force flag even
+  // if the LLM judge didn't set it independently.
+  const temporalFlag = judgeResult.temporalFlag || amendedNodeIds.size > 0;
 
   // ── TODO task 2-10: FK traversal on filteredCandidates ─────────────────────
   // ── TODO task 2-11: Answer Drafter LLM call ────────────────────────────────
