@@ -20,6 +20,7 @@ import { generate as uuidv7 } from "@std/uuid/v7";
 import db from "../_shared/db-client.ts";
 import { error, success } from "../_shared/response.ts";
 import { type AiSession } from "../_shared/embedder.ts";
+import { type CitationChunk, type QueryRequest, type QueryResponseData } from "../_shared/types.ts";
 
 declare const Supabase: {
   ai: { Session: new (model: string) => AiSession };
@@ -35,11 +36,10 @@ const CANDIDATE_COUNT = parseInt(
 const RRF_K = parseInt(Deno.env.get("RRF_K_CONSTANT") ?? "60", 10);
 
 const INCOMPLETE_SEARCH_FLOOR = parseFloat(
-  Deno.env.get("INCOMPLETE_SEARCH_FLOOR") ?? "0",
+  Deno.env.get("INCOMPLETE_SEARCH_FLOOR") ?? "0.005",
 );
 
-// Rate limit: max requests per 1-minute window per IP (not an env var per spec).
-const RATE_LIMIT_MAX = 10;
+const RATE_LIMIT_MAX = parseInt(Deno.env.get("RATE_LIMIT_MAX") ?? "10", 10);
 
 // ── Chunk-bearing tables ──────────────────────────────────────────────────────
 
@@ -218,7 +218,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   let query: string;
   try {
-    const body = await req.json();
+    const body = (await req.json()) as QueryRequest;
     if (typeof body?.query !== "string" || !body.query.trim()) {
       return error("NOT_FOUND", "Request body must contain a non-empty `query` string.", 400);
     }
@@ -236,10 +236,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const allowed = await isWithinRateLimit(ip);
   if (!allowed) {
-    return error(
-      "RATE_LIMITED",
-      "Rate limit exceeded. You may send up to 10 requests per minute.",
-    );
+    return error("RATE_LIMITED", "Too many requests. Please wait before retrying.");
   }
 
   // Increment bucket BEFORE retrieval — every non-429 request must write a row.
@@ -278,13 +275,18 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // ── INCOMPLETE_SEARCH_FLOOR gate ────────────────────────────────────────────
 
   const maxScore = ranked[0]?.rrfScore ?? 0;
-  if (INCOMPLETE_SEARCH_FLOOR > 0 && maxScore < INCOMPLETE_SEARCH_FLOOR) {
-    return success({
-      candidates: [],
-      incomplete_search: true,
-      incomplete_reason: "Search incomplete — this may be a gap in ingestion.",
-      rrf_max_score: maxScore,
-    });
+  if (maxScore < INCOMPLETE_SEARCH_FLOOR) {
+    const incompleteResponse: QueryResponseData = {
+      answer: "",
+      citations: [] as CitationChunk[],
+      chunkText: {},
+      temporalFlag: false,
+      amendmentCaveat: null,
+      pendingChangeNotice: null,
+      incompleteSearchWarning: true,
+      freshnessTimestamp: null,
+    };
+    return success<QueryResponseData>(incompleteResponse);
   }
 
   return success({
