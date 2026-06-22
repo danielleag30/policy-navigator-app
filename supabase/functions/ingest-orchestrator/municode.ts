@@ -10,6 +10,7 @@
  * task 2-6's responsibility.
  */
 
+import { generate as uuidv7 } from "@std/uuid/v7";
 import db from "../_shared/db-client.ts";
 import { contentHash } from "../_shared/hash.ts";
 
@@ -158,7 +159,7 @@ export async function handleMunicode(
 
   // Create Document shell at status='unknown'
   const now = new Date().toISOString();
-  const documentId = crypto.randomUUID();
+  const documentId = uuidv7();
 
   const { error: docErr } = await db.from("documents").insert({
     id: documentId,
@@ -185,7 +186,7 @@ export async function handleMunicode(
   for (const node of nodes) {
     const nodeId = String(node.Id);
     const { error: provErr } = await db.from("ordinance_provisions").insert({
-      id: crypto.randomUUID(),
+      id: uuidv7(),
       document_id: documentId,
       municode_node_id: nodeId,
       effective_date: typeof node.AdoptedDate === "string"
