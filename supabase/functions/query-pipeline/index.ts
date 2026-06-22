@@ -88,7 +88,7 @@ async function isWithinRateLimit(ip: string): Promise<boolean> {
  * `increment_rate_limit_bucket` Postgres function added in
  * migration 20260621000001.  Non-fatal on failure.
  */
-async function writeBucket(ip: string): Promise<void> {
+async function writeBucket(ip: string): Promise<boolean> {
   const { error: dbErr } = await db.rpc("increment_rate_limit_bucket", {
     p_ip_address: ip,
     p_window_start: minuteFloor(new Date()),
@@ -96,7 +96,9 @@ async function writeBucket(ip: string): Promise<void> {
   });
   if (dbErr) {
     console.error("rate-limit bucket write error:", dbErr.message);
+    return false;
   }
+  return true;
 }
 
 // ── BM25 retrieval ────────────────────────────────────────────────────────────
@@ -236,11 +238,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const allowed = await isWithinRateLimit(ip);
   if (!allowed) {
-    return error("RATE_LIMITED", "Too many requests. Please wait before retrying.");
+    return error("RATE_LIMITED", "Too many requests. Please wait before retrying.", 429);
   }
 
   // Increment bucket BEFORE retrieval — every non-429 request must write a row.
-  await writeBucket(ip);
+  const bucketWritten = await writeBucket(ip);
+  if (!bucketWritten) {
+    return error("INGESTION_FAILED", "Service temporarily unavailable. Please retry.", 503);
+  }
 
   // ── Step 2: Embed query (Supabase AI Session — gte-small, 384d) ────────────
 
