@@ -15,8 +15,8 @@
  *  8. Scripted FK traversal — reconsideration/amended-decision rows (task 2-10)
  *  9. Completeness check — temporal answers need sufficient version context (task 2-10)
  * 10. Answer Drafter LLM call — cited draft answer + citation payload (task 2-11)
+ * 11. Conditional Verifier LLM call + bounded correction loop (task 2-12)
  *
- * TODO task 2-12: Verifier LLM call
  * TODO task 2-13: Freshness timestamp
  */
 
@@ -69,7 +69,18 @@ const TEMPORAL_JUDGE_TEMPERATURE = 0.0;
 // Documented in _shared/ollama-client.ts under "Answer Drafter (2-11): 0.3".
 const ANSWER_DRAFTER_TEMPERATURE = 0.3;
 
+// Temperature for the Verifier and correction passes — deterministic citation checking.
+// Documented in _shared/ollama-client.ts under "Verifier (2-12): 0.0".
+const VERIFIER_TEMPERATURE = 0.0;
+
+// Build-plan task 2-12 cap: Temporal Judge + Drafter + Verifier + 2 corrections.
+const LLM_TOTAL_CALL_CAP = 5;
+const LLM_CALLS_BEFORE_VERIFIER = 2;
+const MAX_CORRECTION_PASSES = 2;
+
 const VERSION_HISTORY_INCOMPLETE_CAVEAT = "Version history may be incomplete";
+const UNVERIFIED_CAVEAT =
+  "Caveat: This answer could not be fully verified against the cited source text.";
 
 // ── Chunk-bearing tables ──────────────────────────────────────────────────────
 
@@ -225,6 +236,26 @@ interface AnswerDraftResult {
   citations: CitationChunk[];
   citationMap: Record<string, CitationMapEntry>;
   chunkText: Record<string, string>;
+}
+
+interface FlaggedClaim {
+  claim: string;
+  chunk_id: string;
+  issue: string;
+  correction_instruction: string;
+}
+
+interface VerifierResult {
+  flaggedClaims: FlaggedClaim[];
+}
+
+interface CorrectionResult extends AnswerDraftResult {
+  flaggedClaims: FlaggedClaim[];
+}
+
+interface LlmCallBudget {
+  used: number;
+  cap: number;
 }
 
 type FkTraversalResult =
@@ -1075,6 +1106,13 @@ function serializeDrafterChunk(chunk: AnnotatedDrafterChunk): string {
   ].join("\n");
 }
 
+async function prepareDrafterChunks(
+  candidates: EnrichedCandidate[],
+): Promise<AnnotatedDrafterChunk[]> {
+  const documents = await fetchSourceDocuments(candidates);
+  return buildAnnotatedDrafterChunks(candidates, documents);
+}
+
 function detectQuestionStyle(
   query: string,
 ): "terse" | "structured" | "conversational" {
@@ -1202,20 +1240,11 @@ function refusalDraft(): AnswerDraftResult {
 
 async function runAnswerDrafter(
   userQuery: string,
-  candidates: EnrichedCandidate[],
-  amendmentCaveat: string | null,
-  pendingChangeNotice: string | null,
-  incompleteSearchWarning: boolean,
+  chunks: AnnotatedDrafterChunk[],
+  caveats: string[],
 ): Promise<AnswerDraftResult | null> {
-  if (candidates.length === 0) return refusalDraft();
+  if (chunks.length === 0) return refusalDraft();
 
-  const documents = await fetchSourceDocuments(candidates);
-  const chunks = buildAnnotatedDrafterChunks(candidates, documents);
-  const caveats = caveatList(
-    amendmentCaveat,
-    pendingChangeNotice,
-    incompleteSearchWarning,
-  );
   const styleHint = detectQuestionStyle(userQuery);
 
   const systemPrompt =
@@ -1298,6 +1327,437 @@ Output JSON only:`;
     `[answer-drafter] drafted answer with ${draft.citations.length} cited chunks`,
   );
   return draft;
+}
+
+// ── Conditional Verifier + correction loop ──────────────────────────────────
+
+function textHasNumber(text: string): boolean {
+  return /\b\d+(?:[,\d]*\d)?(?:\.\d+)?%?\b/.test(text);
+}
+
+function draftHasNumericClaim(draft: AnswerDraftResult): boolean {
+  const claims = Object.keys(draft.citationMap);
+  if (claims.length > 0) return claims.some(textHasNumber);
+
+  const withoutUuidCitations = draft.answer.replace(
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+    "",
+  );
+  return textHasNumber(withoutUuidCitations);
+}
+
+function shouldRunVerifier(
+  draft: AnswerDraftResult,
+  temporalFlag: boolean,
+): boolean {
+  return temporalFlag || draftHasNumericClaim(draft);
+}
+
+function hasRemainingLlmCall(budget: LlmCallBudget): boolean {
+  return budget.used < budget.cap;
+}
+
+function consumeLlmCall(budget: LlmCallBudget, label: string): boolean {
+  if (!hasRemainingLlmCall(budget)) {
+    console.error(
+      `[${label}] LLM call cap reached (${budget.used}/${budget.cap}); skipping call`,
+    );
+    return false;
+  }
+  budget.used += 1;
+  return true;
+}
+
+function withUnverifiedCaveat(draft: AnswerDraftResult): AnswerDraftResult {
+  if (draft.answer.includes(UNVERIFIED_CAVEAT)) return draft;
+  return {
+    ...draft,
+    answer: `${draft.answer.trim()}\n\n${UNVERIFIED_CAVEAT}`,
+  };
+}
+
+function normalizeClaim(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function parseFlaggedClaims(
+  raw: unknown,
+  citationMap: Record<string, CitationMapEntry>,
+  validChunkIds: Set<string>,
+): FlaggedClaim[] | null {
+  if (!Array.isArray(raw)) return null;
+
+  const claimsByNormalized = new Map(
+    Object.keys(citationMap).map((claim) => [normalizeClaim(claim), claim]),
+  );
+  const flagged: FlaggedClaim[] = [];
+
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      return null;
+    }
+
+    const obj = item as Record<string, unknown>;
+    const rawClaim = typeof obj.claim === "string" ? obj.claim.trim() : "";
+    const matchedClaim = claimsByNormalized.get(normalizeClaim(rawClaim)) ??
+      rawClaim;
+    const mappedChunkId = citationMap[matchedClaim]?.chunk_id;
+    const rawChunkId = typeof obj.chunk_id === "string"
+      ? obj.chunk_id.trim()
+      : "";
+    const chunkId = mappedChunkId ?? rawChunkId;
+    const issue = typeof obj.issue === "string" ? obj.issue.trim() : "";
+    const instruction = typeof obj.correction_instruction === "string"
+      ? obj.correction_instruction.trim()
+      : "";
+
+    if (
+      matchedClaim === "" || chunkId === "" || !validChunkIds.has(chunkId) ||
+      issue === "" || instruction === ""
+    ) {
+      return null;
+    }
+
+    flagged.push({
+      claim: matchedClaim,
+      chunk_id: chunkId,
+      issue,
+      correction_instruction: instruction,
+    });
+  }
+
+  return flagged;
+}
+
+function validateVerifierOutput(
+  raw: unknown,
+  draft: AnswerDraftResult,
+): VerifierResult | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return null;
+  }
+
+  const obj = raw as Record<string, unknown>;
+  const validChunkIds = new Set(Object.keys(draft.chunkText));
+  const flaggedClaims = parseFlaggedClaims(
+    obj.flagged_claims,
+    draft.citationMap,
+    validChunkIds,
+  );
+  if (flaggedClaims === null) return null;
+
+  return { flaggedClaims };
+}
+
+function validateCorrectionOutput(
+  raw: unknown,
+  chunks: AnnotatedDrafterChunk[],
+  caveats: string[],
+): CorrectionResult | null {
+  const draft = validateDrafterOutput(raw, chunks, caveats);
+  if (draft === null) return null;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return null;
+  }
+
+  const obj = raw as Record<string, unknown>;
+  const validChunkIds = new Set(chunks.map((chunk) => chunk.chunk_id));
+  const flaggedClaims = parseFlaggedClaims(
+    obj.flagged_claims,
+    draft.citationMap,
+    validChunkIds,
+  );
+  if (flaggedClaims === null) return null;
+
+  return { ...draft, flaggedClaims };
+}
+
+function serializeClaimEvidence(
+  draft: AnswerDraftResult,
+  chunks: AnnotatedDrafterChunk[],
+): string {
+  const chunksById = new Map(chunks.map((chunk) => [chunk.chunk_id, chunk]));
+
+  return Object.entries(draft.citationMap).map(([claim, citation], index) => {
+    const chunk = chunksById.get(citation.chunk_id);
+    const text = draft.chunkText[citation.chunk_id] ?? chunk?.text ?? "";
+    return [
+      `[${index + 1}] claim: ${claim}`,
+      `chunk_id=${citation.chunk_id}`,
+      `page=${citation.page === null ? "null" : citation.page}`,
+      `bbox=${formatUnknown(citation.bbox)}`,
+      "chunk span:",
+      text,
+    ].join("\n");
+  }).join("\n\n---\n\n");
+}
+
+function serializeFlaggedClaims(flaggedClaims: FlaggedClaim[]): string {
+  if (flaggedClaims.length === 0) return "None";
+  return flaggedClaims.map((flag, index) =>
+    [
+      `[${index + 1}] claim: ${flag.claim}`,
+      `chunk_id=${flag.chunk_id}`,
+      `issue=${flag.issue}`,
+      `correction_instruction=${flag.correction_instruction}`,
+    ].join("\n")
+  ).join("\n\n");
+}
+
+async function runVerifier(
+  userQuery: string,
+  draft: AnswerDraftResult,
+  chunks: AnnotatedDrafterChunk[],
+  temporalFlag: boolean,
+  budget: LlmCallBudget,
+): Promise<VerifierResult | null> {
+  if (!consumeLlmCall(budget, "verifier")) return null;
+
+  const systemPrompt = `You are the Verifier for a municipal policy Q&A system.
+
+Use only the provided cited claims and chunk spans. Do not use outside knowledge.
+
+For every cited claim:
+1. Confirm whether the claim accurately reflects the cited chunk span.
+2. Numeric claims must match the cited chunk's numbers, units, dates, vote counts, percentages, money amounts, and qualifiers exactly.
+3. Temporal claims must not mix current and superseded context; if temporal_flag=true, be strict about effective dates and caveats.
+4. Flag any unsupported, overstated, contradicted, or under-qualified claim.
+5. For each flagged claim, provide concrete correction instructions.
+
+Output only valid JSON. No markdown fence and no prose outside JSON.
+
+JSON schema:
+{
+  "flagged_claims": [
+    {
+      "claim": "<exact cited claim text>",
+      "chunk_id": "<cited chunk_id>",
+      "issue": "<what is unsupported or inaccurate>",
+      "correction_instruction": "<how the answer should be revised>"
+    }
+  ]
+}
+
+If every cited claim is supported, return "flagged_claims": [].`;
+
+  const userPrompt = `User query:
+${userQuery}
+
+temporal_flag=${temporalFlag}
+
+Draft answer:
+${draft.answer}
+
+Cited claims and chunk spans:
+${serializeClaimEvidence(draft, chunks)}
+
+Output JSON only:`;
+
+  const { content, exhausted } = await ollamaChat(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    VERIFIER_TEMPERATURE,
+  );
+
+  if (exhausted) {
+    console.error("[verifier] Ollama exhausted after all retries");
+    return null;
+  }
+
+  const parsed = extractJson(content);
+  if (parsed === null) {
+    console.error(
+      "[verifier] JSON extraction failed; raw response:",
+      content.slice(0, 400),
+    );
+    return null;
+  }
+
+  const result = validateVerifierOutput(parsed, draft);
+  if (result === null) {
+    console.error(
+      "[verifier] schema validation failed; parsed:",
+      JSON.stringify(parsed).slice(0, 400),
+    );
+    return null;
+  }
+
+  console.log(`[verifier] flagged ${result.flaggedClaims.length} claims`);
+  return result;
+}
+
+async function runCorrectionPass(
+  userQuery: string,
+  currentDraft: AnswerDraftResult,
+  chunks: AnnotatedDrafterChunk[],
+  caveats: string[],
+  flaggedClaims: FlaggedClaim[],
+  passNumber: number,
+  budget: LlmCallBudget,
+): Promise<CorrectionResult | null> {
+  if (!consumeLlmCall(budget, `correction-pass-${passNumber}`)) return null;
+
+  const systemPrompt =
+    `You are the Correction Drafter for a municipal policy Q&A system.
+
+Use only the provided document chunks. Do not use outside knowledge.
+
+Revise the answer to satisfy the verifier's correction instructions:
+1. Fix inaccurate or unsupported claims.
+2. Drop claims that cannot be supported by the chunks.
+3. Preserve useful supported content from the previous answer.
+4. Every document-supported textual claim must cite a chunk inline.
+5. Every numeric claim must cite chunk_id, page, and bbox inline.
+6. Use this inline citation format after each claim: [chunk_id=<id>; page=<page-or-null>; bbox=<bbox-or-null>].
+7. Attach caveats when provided; caveats do not need document citations.
+8. After revising, internally check each cited claim against its chunk span and list any remaining unsupported claims in flagged_claims.
+
+Output only valid JSON. No markdown fence and no prose outside JSON.
+
+JSON schema:
+{
+  "answer": "<revised answer text with inline citations>",
+  "citation_map": {
+    "<claim text without inline citation>": {
+      "chunk_id": "<one provided chunk_id>",
+      "page": <number or null>,
+      "bbox": <bbox object/array/string or null>
+    }
+  },
+  "flagged_claims": [
+    {
+      "claim": "<exact revised claim text>",
+      "chunk_id": "<cited chunk_id>",
+      "issue": "<what remains unsupported or inaccurate>",
+      "correction_instruction": "<what would still be needed to fix it>"
+    }
+  ]
+}
+
+If all revised claims are supported, return "flagged_claims": [].`;
+
+  const caveatBlock = caveats.length === 0 ? "None" : caveats.join("\n");
+  const contextBlock = chunks.map(serializeDrafterChunk).join("\n\n---\n\n");
+
+  const userPrompt = `User query:
+${userQuery}
+
+Correction pass: ${passNumber} of ${MAX_CORRECTION_PASSES}
+
+Caveats to attach if applicable:
+${caveatBlock}
+
+Previous answer:
+${currentDraft.answer}
+
+Verifier flags to fix:
+${serializeFlaggedClaims(flaggedClaims)}
+
+Available chunks:
+${contextBlock}
+
+Output JSON only:`;
+
+  const { content, exhausted } = await ollamaChat(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    VERIFIER_TEMPERATURE,
+  );
+
+  if (exhausted) {
+    console.error(
+      `[correction-pass-${passNumber}] Ollama exhausted after all retries`,
+    );
+    return null;
+  }
+
+  const parsed = extractJson(content);
+  if (parsed === null) {
+    console.error(
+      `[correction-pass-${passNumber}] JSON extraction failed; raw response:`,
+      content.slice(0, 400),
+    );
+    return null;
+  }
+
+  const result = validateCorrectionOutput(parsed, chunks, caveats);
+  if (result === null) {
+    console.error(
+      `[correction-pass-${passNumber}] schema validation failed; parsed:`,
+      JSON.stringify(parsed).slice(0, 400),
+    );
+    return null;
+  }
+
+  console.log(
+    `[correction-pass-${passNumber}] remaining flagged claims: ${result.flaggedClaims.length}`,
+  );
+  return result;
+}
+
+async function runVerifierCorrectionLoop(
+  userQuery: string,
+  draft: AnswerDraftResult,
+  chunks: AnnotatedDrafterChunk[],
+  caveats: string[],
+  temporalFlag: boolean,
+  budget: LlmCallBudget,
+): Promise<AnswerDraftResult | null> {
+  if (!shouldRunVerifier(draft, temporalFlag)) {
+    console.log("[verifier] skipped: no numeric claim and temporal_flag=false");
+    return draft;
+  }
+
+  if (!hasRemainingLlmCall(budget)) {
+    return withUnverifiedCaveat(draft);
+  }
+
+  const verifier = await runVerifier(
+    userQuery,
+    draft,
+    chunks,
+    temporalFlag,
+    budget,
+  );
+  if (verifier === null) return null;
+
+  let currentDraft = draft;
+  let flaggedClaims = verifier.flaggedClaims;
+
+  for (
+    let passNumber = 1;
+    passNumber <= MAX_CORRECTION_PASSES && flaggedClaims.length > 0;
+    passNumber += 1
+  ) {
+    if (!hasRemainingLlmCall(budget)) {
+      return withUnverifiedCaveat(currentDraft);
+    }
+
+    const correction = await runCorrectionPass(
+      userQuery,
+      currentDraft,
+      chunks,
+      caveats,
+      flaggedClaims,
+      passNumber,
+      budget,
+    );
+    if (correction === null) return null;
+
+    const { flaggedClaims: remainingFlags, ...correctedDraft } = correction;
+    currentDraft = correctedDraft;
+    flaggedClaims = remainingFlags;
+  }
+
+  if (flaggedClaims.length > 0) {
+    return withUnverifiedCaveat(currentDraft);
+  }
+
+  return currentDraft;
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -1467,12 +1927,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // excluded here rather than expanding the answer prompt beyond 8 chunks.
 
   const drafterContext = finalContext.slice(0, JUDGE_OUTPUT_LIMIT);
-  const draft = await runAnswerDrafter(
-    query,
-    drafterContext,
+  const drafterChunks = await prepareDrafterChunks(drafterContext);
+  const answerCaveats = caveatList(
     completeness.amendmentCaveat,
     pendingChangeNotice,
     completeness.incompleteSearchWarning,
+  );
+  const draft = await runAnswerDrafter(
+    query,
+    drafterChunks,
+    answerCaveats,
   );
 
   if (draft === null) {
@@ -1482,14 +1946,35 @@ Deno.serve(async (req: Request): Promise<Response> => {
     );
   }
 
-  // ── TODO task 2-12: Verifier LLM call ──────────────────────────────────────
+  // ── Step 10 (task 2-12): Conditional Verifier + correction loop ───────────
+
+  const llmBudget: LlmCallBudget = {
+    used: LLM_CALLS_BEFORE_VERIFIER,
+    cap: LLM_TOTAL_CALL_CAP,
+  };
+  const verifiedDraft = await runVerifierCorrectionLoop(
+    query,
+    draft,
+    drafterChunks,
+    answerCaveats,
+    temporalFlag,
+    llmBudget,
+  );
+
+  if (verifiedDraft === null) {
+    return error(
+      "OLLAMA_EXHAUSTED",
+      "Unable to process your query right now. Please try again in a moment.",
+    );
+  }
+
   // ── TODO task 2-13: Freshness timestamp ────────────────────────────────────
 
   const responseData: QueryResponseData = {
-    answer: draft.answer,
-    citations: draft.citations,
-    citationMap: draft.citationMap,
-    chunkText: draft.chunkText,
+    answer: verifiedDraft.answer,
+    citations: verifiedDraft.citations,
+    citationMap: verifiedDraft.citationMap,
+    chunkText: verifiedDraft.chunkText,
     temporalFlag,
     amendmentCaveat: completeness.amendmentCaveat,
     pendingChangeNotice,
