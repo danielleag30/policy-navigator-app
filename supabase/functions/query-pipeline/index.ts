@@ -1,0 +1,303 @@
+/**
+ * query-pipeline — Query Pipeline Edge Function (tasks 2-7 through 2-13)
+ *
+ * This file implements task 2-7: rate limiting + parallel retrieval + RRF merge.
+ * Later tasks (2-8 through 2-13) will extend this function.
+ *
+ * Request:  POST  { query: string }
+ * Response: SuccessEnvelope<QueryPipelineResult> | ErrorEnvelope
+ *
+ * Pipeline (task 2-7):
+ *  1. Rate limit check — 429 if exceeded; increment bucket row for all non-429
+ *  2. Embed query via Supabase AI Session (gte-small, 384d)
+ *  3. Parallel BM25 + vector retrieval across five chunk-bearing tables (40 each)
+ *  4. RRF merge with table-qualified dedup keys: '{table}:{id}'
+ *  5. INCOMPLETE_SEARCH_FLOOR gate — return early if max RRF score below floor
+ */
+
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { generate as uuidv7 } from "@std/uuid/v7";
+import db from "../_shared/db-client.ts";
+import { error, success } from "../_shared/response.ts";
+import { type AiSession } from "../_shared/embedder.ts";
+
+declare const Supabase: {
+  ai: { Session: new (model: string) => AiSession };
+};
+
+// ── Env-var tuning constants ──────────────────────────────────────────────────
+
+const CANDIDATE_COUNT = parseInt(
+  Deno.env.get("RETRIEVAL_CANDIDATE_COUNT") ?? "40",
+  10,
+);
+
+const RRF_K = parseInt(Deno.env.get("RRF_K_CONSTANT") ?? "60", 10);
+
+const INCOMPLETE_SEARCH_FLOOR = parseFloat(
+  Deno.env.get("INCOMPLETE_SEARCH_FLOOR") ?? "0",
+);
+
+// Rate limit: max requests per 1-minute window per IP (not an env var per spec).
+const RATE_LIMIT_MAX = 10;
+
+// ── Chunk-bearing tables ──────────────────────────────────────────────────────
+
+const CHUNK_TABLES = [
+  "ordinance_provisions",
+  "vote_tallies",
+  "policy_decisions",
+  "budget_indicators",
+  "narrative_chunks",
+] as const;
+
+type ChunkTable = (typeof CHUNK_TABLES)[number];
+
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+
+/** Truncate a Date to the start of its UTC minute — the rate limit window key. */
+function minuteFloor(d: Date): string {
+  const out = new Date(d);
+  out.setUTCSeconds(0, 0);
+  return out.toISOString();
+}
+
+/**
+ * Return true if the IP is under the rate limit for the current minute window.
+ * Fails open on DB errors to avoid blocking real users.
+ */
+async function isWithinRateLimit(ip: string): Promise<boolean> {
+  const { data, error: dbErr } = await db
+    .from("rate_limit_buckets")
+    .select("request_count")
+    .eq("ip_address", ip)
+    .eq("window_start", minuteFloor(new Date()))
+    .maybeSingle();
+
+  if (dbErr) {
+    console.error("rate-limit read error:", dbErr.message);
+    return true; // fail open
+  }
+
+  return !data || data.request_count < RATE_LIMIT_MAX;
+}
+
+/**
+ * Atomically write (first request) or increment (subsequent requests) the
+ * rate limit bucket row for this IP/minute-window.  Uses the
+ * `increment_rate_limit_bucket` Postgres function added in
+ * migration 20260621000001.  Non-fatal on failure.
+ */
+async function writeBucket(ip: string): Promise<void> {
+  const { error: dbErr } = await db.rpc("increment_rate_limit_bucket", {
+    p_ip_address: ip,
+    p_window_start: minuteFloor(new Date()),
+    p_id: uuidv7(),
+  });
+  if (dbErr) {
+    console.error("rate-limit bucket write error:", dbErr.message);
+  }
+}
+
+// ── BM25 retrieval ────────────────────────────────────────────────────────────
+
+/**
+ * Run ts_rank-ordered full-text search against one chunk table.
+ * Result ordering (index 0 = highest ts_rank) is the BM25 rank used in RRF.
+ */
+async function bm25ForTable(
+  table: ChunkTable,
+  query: string,
+): Promise<Record<string, unknown>[]> {
+  const { data, error: dbErr } = await db.rpc(`bm25_${table}`, {
+    p_query_text: query,
+    p_limit: CANDIDATE_COUNT,
+  });
+
+  if (dbErr) {
+    console.error(`bm25 ${table} error:`, dbErr.message);
+    return [];
+  }
+
+  return (data ?? []) as Record<string, unknown>[];
+}
+
+// ── Vector retrieval ──────────────────────────────────────────────────────────
+
+/**
+ * Run cosine-distance-ordered HNSW vector search against one chunk table.
+ * Result ordering (index 0 = most similar) is the vector rank used in RRF.
+ */
+async function vectorForTable(
+  table: ChunkTable,
+  queryEmbedding: number[],
+): Promise<Record<string, unknown>[]> {
+  const { data, error: dbErr } = await db.rpc(`match_${table}`, {
+    query_embedding: queryEmbedding,
+    match_count: CANDIDATE_COUNT,
+  });
+
+  if (dbErr) {
+    console.error(`vector ${table} error:`, dbErr.message);
+    return [];
+  }
+
+  return (data ?? []) as Record<string, unknown>[];
+}
+
+// ── RRF merge ─────────────────────────────────────────────────────────────────
+
+interface RankedCandidate {
+  key: string; // '{table}:{id}' — table-qualified dedup key
+  table: ChunkTable;
+  id: string;
+  row: Record<string, unknown>;
+  rankBm25: number | null; // 1-based position in BM25 leg; null if absent
+  rankVector: number | null; // 1-based position in vector leg; null if absent
+  rrfScore: number; // 1/(K+rank_bm25) + 1/(K+rank_vector), missing leg = 0
+}
+
+/**
+ * Merge BM25 and vector result lists using Reciprocal Rank Fusion.
+ *
+ * Deduplication key: `'{table}:{id}'` — guaranteed never to collide across tables.
+ * RRF formula: score = 1/(K + rank_bm25) + 1/(K + rank_vector)
+ *   where K = RRF_K (default 60) and ranks are 1-based array positions.
+ * Candidates present in only one leg contribute 0 from the missing leg.
+ * Returns candidates sorted by rrfScore descending.
+ */
+function rrfMerge(
+  bm25Results: Map<ChunkTable, Record<string, unknown>[]>,
+  vectorResults: Map<ChunkTable, Record<string, unknown>[]>,
+): RankedCandidate[] {
+  const map = new Map<string, RankedCandidate>();
+
+  for (const table of CHUNK_TABLES) {
+    const rows = bm25Results.get(table) ?? [];
+    rows.forEach((row, idx) => {
+      const id = row.id as string;
+      const key = `${table}:${id}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.rankBm25 = idx + 1;
+      } else {
+        map.set(key, { key, table, id, row, rankBm25: idx + 1, rankVector: null, rrfScore: 0 });
+      }
+    });
+  }
+
+  for (const table of CHUNK_TABLES) {
+    const rows = vectorResults.get(table) ?? [];
+    rows.forEach((row, idx) => {
+      const id = row.id as string;
+      const key = `${table}:${id}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.rankVector = idx + 1;
+      } else {
+        map.set(key, { key, table, id, row, rankBm25: null, rankVector: idx + 1, rrfScore: 0 });
+      }
+    });
+  }
+
+  for (const c of map.values()) {
+    c.rrfScore =
+      (c.rankBm25 !== null ? 1 / (RRF_K + c.rankBm25) : 0) +
+      (c.rankVector !== null ? 1 / (RRF_K + c.rankVector) : 0);
+  }
+
+  return Array.from(map.values()).sort((a, b) => b.rrfScore - a.rrfScore);
+}
+
+// ── Main handler ──────────────────────────────────────────────────────────────
+
+Deno.serve(async (req: Request): Promise<Response> => {
+  if (req.method !== "POST") {
+    return error("NOT_FOUND", "Method not allowed", 405);
+  }
+
+  let query: string;
+  try {
+    const body = await req.json();
+    if (typeof body?.query !== "string" || !body.query.trim()) {
+      return error("NOT_FOUND", "Request body must contain a non-empty `query` string.", 400);
+    }
+    query = body.query.trim();
+  } catch {
+    return error("NOT_FOUND", "Invalid JSON body.", 400);
+  }
+
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    req.headers.get("x-real-ip") ??
+    "unknown";
+
+  // ── Step 1: Rate limit ──────────────────────────────────────────────────────
+
+  const allowed = await isWithinRateLimit(ip);
+  if (!allowed) {
+    return error(
+      "RATE_LIMITED",
+      "Rate limit exceeded. You may send up to 10 requests per minute.",
+    );
+  }
+
+  // Increment bucket BEFORE retrieval — every non-429 request must write a row.
+  await writeBucket(ip);
+
+  // ── Step 2: Embed query (Supabase AI Session — gte-small, 384d) ────────────
+
+  const session = new Supabase.ai.Session("gte-small");
+
+  let queryEmbedding: number[];
+  try {
+    queryEmbedding = await session.run(query, { mean_pool: true, normalize: true });
+  } catch (embedErr) {
+    console.error("embedding error:", embedErr);
+    return error("INGESTION_FAILED", "Failed to embed query.", 500);
+  }
+
+  // ── Step 3: Parallel BM25 + vector retrieval across all five tables ─────────
+
+  const [bm25Raw, vectorRaw] = await Promise.all([
+    Promise.all(CHUNK_TABLES.map((t) => bm25ForTable(t, query))),
+    Promise.all(CHUNK_TABLES.map((t) => vectorForTable(t, queryEmbedding))),
+  ]);
+
+  const bm25Results = new Map<ChunkTable, Record<string, unknown>[]>(
+    CHUNK_TABLES.map((t, i) => [t, bm25Raw[i]]),
+  );
+  const vectorResults = new Map<ChunkTable, Record<string, unknown>[]>(
+    CHUNK_TABLES.map((t, i) => [t, vectorRaw[i]]),
+  );
+
+  // ── Step 4: RRF merge ───────────────────────────────────────────────────────
+
+  const ranked = rrfMerge(bm25Results, vectorResults);
+
+  // ── INCOMPLETE_SEARCH_FLOOR gate ────────────────────────────────────────────
+
+  const maxScore = ranked[0]?.rrfScore ?? 0;
+  if (INCOMPLETE_SEARCH_FLOOR > 0 && maxScore < INCOMPLETE_SEARCH_FLOOR) {
+    return success({
+      candidates: [],
+      incomplete_search: true,
+      incomplete_reason: "Search incomplete — this may be a gap in ingestion.",
+      rrf_max_score: maxScore,
+    });
+  }
+
+  return success({
+    candidates: ranked.map((c) => ({
+      key: c.key,
+      table: c.table,
+      id: c.id,
+      rrf_score: c.rrfScore,
+      rank_bm25: c.rankBm25,
+      rank_vector: c.rankVector,
+      row: c.row,
+    })),
+    incomplete_search: false,
+    rrf_max_score: maxScore,
+  });
+});
