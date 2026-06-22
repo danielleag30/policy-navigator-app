@@ -30,3 +30,4 @@ AS $$
 $$;
 
 REVOKE ALL ON FUNCTION get_ordinance_ancestors(text[]) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION get_ordinance_ancestors(text[]) TO service_role;
