@@ -129,8 +129,8 @@ returns `200` with the full response shape and `incompleteSearchWarning: true`.
 Processes one `pending_ingestions` row. PDF source types go through fetch,
 deduplication, Docling, chunking, extraction, embeddings, and finalization.
 `municode_api` source rows go through Municode ingestion, ordinance embeddings,
-and pending-code-change overlap detection. Reconciliation triggering is planned
-but is not implemented on this branch.
+pending-code-change overlap detection, and reconciliation triggering (invokes
+`reconcile-ordinances`, which is planned/pending merge).
 
 ### Request
 
