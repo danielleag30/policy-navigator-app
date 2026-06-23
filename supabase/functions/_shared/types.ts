@@ -1,18 +1,7 @@
 /**
  * _shared/types.ts — Policy Navigator shared TypeScript types.
- * Verified by task 2-21b against actual Edge Function implementations.
- *
- * CHANGES (task 2-21b):
- * - QueryResponseData fields confirmed correct against query-pipeline/index.ts.
- * - chunkText keyed by chunk_id: verified (used in the INCOMPLETE_SEARCH_FLOOR
- *   early-exit path; will be populated by tasks 2-8 through 2-13).
- * - CitationChunk fields (chunk_id, source_url, source_title, page_number, rank):
- *   consistent with the planned citation assembly step (tasks 2-8 through 2-13).
- *   Not yet emitted by the pipeline (retrieval only is implemented as of 2-21b).
- * - Divergence: the current "normal success" response of query-pipeline returns
- *   { candidates: EnrichedCandidate[], total: number } (task 2-7 interim output)
- *   rather than QueryResponseData. That interim shape is internal to the function
- *   and is NOT exported here — it will be replaced once generation is wired in.
+ * Query pipeline types verified by task 2-21b against the task 2-13 response
+ * assembly implementation.
  */
 
 /**
@@ -48,8 +37,23 @@ export interface CitationChunk {
   source_title: string;
   /** Page number for PDF sources; null for Municode/web sources. */
   page_number: number | null;
+  /** Bounding box metadata for PDF sources; null when unavailable. */
+  bbox: unknown | null;
+  /** ISO 8601 timestamp when the source document was ingested/retrieved. */
+  retrieved_at: string | null;
+  /** Human-readable citation label, e.g. [Document title, page X, retrieved YYYY-MM-DD]. */
+  formatted: string;
   /** Relevance rank (1 = most relevant). */
   rank: number;
+}
+
+/** A normalized citation attached to one answer claim. */
+export interface CitationMapEntry {
+  chunk_id: string;
+  /** Page number for PDF sources; null for Municode/web sources. */
+  page: number | null;
+  /** Bounding box metadata for PDF sources; null when unavailable. */
+  bbox: unknown | null;
 }
 
 /** Request body sent to the query-pipeline Edge Function. */
@@ -66,6 +70,8 @@ export interface QueryResponseData {
   answer: string;
   /** Ordered list of cited chunks (highest relevance first). */
   citations: CitationChunk[];
+  /** Claim-level citations keyed by exact claim text from the draft answer. */
+  citationMap: Record<string, CitationMapEntry>;
   /**
    * Full text of each cited chunk, keyed by chunk_id.
    * Allows the frontend to render chunk text without a second round-trip.
@@ -81,4 +87,8 @@ export interface QueryResponseData {
   incompleteSearchWarning: boolean;
   /** ISO 8601 timestamp of the most recently verified source used in the answer. */
   freshnessTimestamp: string | null;
+  /** Human-readable freshness notice for the cited sources. */
+  freshness: string | null;
+  /** All caveats applicable to the assembled answer. */
+  caveats: string[];
 }

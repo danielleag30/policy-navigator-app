@@ -341,12 +341,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const incompleteResponse: QueryResponseData = {
       answer: "",
       citations: [] as CitationChunk[],
+      citationMap: {},
       chunkText: {},
       temporalFlag: false,
       amendmentCaveat: null,
       pendingChangeNotice: null,
       incompleteSearchWarning: true,
       freshnessTimestamp: null,
+      freshness: null,
+      caveats: [],
     };
     return success<QueryResponseData>(incompleteResponse);
   }
