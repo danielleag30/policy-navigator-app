@@ -209,9 +209,20 @@ interface CitationMapEntry {
   bbox: unknown | null;
 }
 
+interface CitationChunk {
+  chunk_id: string;
+  source_url: string;
+  source_title: string;
+  page_number: number | null;
+  bbox: unknown | null;
+  retrieved_at: string | null;
+  formatted: string;
+  rank: number;
+}
+
 interface AnswerDraftResult {
   answer: string;
-  citations: unknown[];
+  citations: CitationChunk[];
   citationMap: Record<string, CitationMapEntry>;
   chunkText: Record<string, string>;
 }
@@ -280,6 +291,69 @@ function withUnverifiedCaveat(draft: AnswerDraftResult): AnswerDraftResult {
     ...draft,
     answer: `${draft.answer.trim()}\n\n${UNVERIFIED_CAVEAT}`,
   };
+}
+
+function retrievedDate(ingestedAt: string | null): string {
+  if (!ingestedAt) return "retrieval date unavailable";
+  const parsed = new Date(ingestedAt);
+  if (Number.isNaN(parsed.getTime())) return "retrieval date unavailable";
+  return parsed.toISOString().slice(0, 10);
+}
+
+function formatCitation(
+  title: string,
+  page: number | null,
+  ingestedAt: string | null,
+): string {
+  const pageText = page === null ? "page n/a" : `page ${page}`;
+  return `[${title}, ${pageText}, retrieved ${retrievedDate(ingestedAt)}]`;
+}
+
+function validIsoTimestamp(value: string | null): string | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
+function mostRecentRetrievedAt(citations: CitationChunk[]): string | null {
+  let latestMs = -Infinity;
+  let latestIso: string | null = null;
+
+  for (const citation of citations) {
+    const iso = validIsoTimestamp(citation.retrieved_at);
+    if (!iso) continue;
+    const ms = new Date(iso).getTime();
+    if (ms > latestMs) {
+      latestMs = ms;
+      latestIso = iso;
+    }
+  }
+
+  return latestIso;
+}
+
+function freshnessNotice(freshnessTimestamp: string | null): string | null {
+  if (!freshnessTimestamp) return null;
+  return `Sources current as of ${retrievedDate(freshnessTimestamp)}`;
+}
+
+function citationByChunkId(citations: CitationChunk[]): Map<string, string> {
+  return new Map(citations.map((citation) => [
+    citation.chunk_id,
+    citation.formatted,
+  ]));
+}
+
+function formatInlineAnswerCitations(
+  answer: string,
+  citations: CitationChunk[],
+): string {
+  const labels = citationByChunkId(citations);
+  return answer.replace(
+    /\[chunk_id=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12});[^\n]*?\](?:\])?/gi,
+    (raw, chunkId: string) => labels.get(chunkId) ?? raw,
+  );
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -613,5 +687,83 @@ Deno.test("verifier correction budget caps post-draft calls and falls back with 
     throw new Error(
       "expected unverified caveat after exhausted correction passes",
     );
+  }
+});
+
+Deno.test("response assembly formats citation labels with title page and retrieved date", () => {
+  const formatted = formatCitation(
+    "FY 2026 Adopted Budget",
+    42,
+    "2026-06-20T15:30:00Z",
+  );
+
+  if (formatted !== "[FY 2026 Adopted Budget, page 42, retrieved 2026-06-20]") {
+    throw new Error(`unexpected formatted citation: ${formatted}`);
+  }
+});
+
+Deno.test("response assembly replaces inline chunk-id citations with formatted citations", () => {
+  const chunkId = "00000000-0000-0000-0000-000000000099";
+  const citations: CitationChunk[] = [{
+    chunk_id: chunkId,
+    source_url: "https://example.test/budget.pdf",
+    source_title: "FY 2026 Adopted Budget",
+    page_number: 42,
+    bbox: null,
+    retrieved_at: "2026-06-20T15:30:00Z",
+    formatted: "[FY 2026 Adopted Budget, page 42, retrieved 2026-06-20]",
+    rank: 1,
+  }];
+
+  const answer =
+    `The tax rate is 1.12. [chunk_id=${chunkId}; page=42; bbox=null]`;
+  const formatted = formatInlineAnswerCitations(answer, citations);
+
+  if (formatted.includes("chunk_id=")) {
+    throw new Error(
+      `expected internal chunk citation to be removed: ${formatted}`,
+    );
+  }
+  if (
+    !formatted.includes(
+      "[FY 2026 Adopted Budget, page 42, retrieved 2026-06-20]",
+    )
+  ) {
+    throw new Error(`expected formatted citation in answer: ${formatted}`);
+  }
+});
+
+Deno.test("response assembly freshness uses most recent cited ingested_at", () => {
+  const citations: CitationChunk[] = [
+    {
+      chunk_id: "00000000-0000-0000-0000-000000000091",
+      source_url: "",
+      source_title: "Older Source",
+      page_number: null,
+      bbox: null,
+      retrieved_at: "2026-06-18T10:00:00Z",
+      formatted: "[Older Source, page n/a, retrieved 2026-06-18]",
+      rank: 1,
+    },
+    {
+      chunk_id: "00000000-0000-0000-0000-000000000092",
+      source_url: "",
+      source_title: "Newer Source",
+      page_number: null,
+      bbox: null,
+      retrieved_at: "2026-06-21T09:00:00Z",
+      formatted: "[Newer Source, page n/a, retrieved 2026-06-21]",
+      rank: 2,
+    },
+  ];
+
+  const freshnessTimestamp = mostRecentRetrievedAt(citations);
+  if (freshnessTimestamp !== "2026-06-21T09:00:00.000Z") {
+    throw new Error(`unexpected freshness timestamp: ${freshnessTimestamp}`);
+  }
+  if (
+    freshnessNotice(freshnessTimestamp) !== "Sources current as of 2026-06-21"
+  ) {
+    throw new Error("unexpected freshness notice");
   }
 });

@@ -40,6 +40,10 @@ export interface CitationChunk {
   page_number: number | null;
   /** Bounding box metadata for PDF sources; null when unavailable. */
   bbox: unknown | null;
+  /** ISO 8601 timestamp when the source document was ingested/retrieved. */
+  retrieved_at: string | null;
+  /** Human-readable citation label, e.g. [Document title, page X, retrieved YYYY-MM-DD]. */
+  formatted: string;
   /** Relevance rank (1 = most relevant). */
   rank: number;
 }
@@ -84,4 +88,8 @@ export interface QueryResponseData {
   incompleteSearchWarning: boolean;
   /** ISO 8601 timestamp of the most recently verified source used in the answer. */
   freshnessTimestamp: string | null;
+  /** Human-readable freshness notice for the cited sources. */
+  freshness: string | null;
+  /** All caveats applicable to the assembled answer. */
+  caveats: string[];
 }

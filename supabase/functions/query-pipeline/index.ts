@@ -16,8 +16,7 @@
  *  9. Completeness check — temporal answers need sufficient version context (task 2-10)
  * 10. Answer Drafter LLM call — cited draft answer + citation payload (task 2-11)
  * 11. Conditional Verifier LLM call + bounded correction loop (task 2-12)
- *
- * TODO task 2-13: Freshness timestamp
+ * 12. Response assembly + RequestLog persistence (task 2-13)
  */
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -75,7 +74,6 @@ const VERIFIER_TEMPERATURE = 0.0;
 
 // Build-plan task 2-12 cap: Temporal Judge + Drafter + Verifier + 2 corrections.
 const LLM_TOTAL_CALL_CAP = 5;
-const LLM_CALLS_BEFORE_VERIFIER = 2;
 const MAX_CORRECTION_PASSES = 2;
 
 const VERSION_HISTORY_INCOMPLETE_CAVEAT = "Version history may be incomplete";
@@ -217,6 +215,7 @@ interface SourceDocument {
   url: string;
   title: string | null;
   filename: string | null;
+  ingested_at: string;
 }
 
 interface AnnotatedDrafterChunk {
@@ -225,6 +224,7 @@ interface AnnotatedDrafterChunk {
   rank: number;
   source_url: string;
   source_title: string;
+  source_ingested_at: string | null;
   page: number | null;
   bbox: unknown | null;
   text: string;
@@ -256,6 +256,18 @@ interface CorrectionResult extends AnswerDraftResult {
 interface LlmCallBudget {
   used: number;
   cap: number;
+}
+
+interface RequestLogInput {
+  ip: string;
+  queryText: string;
+  responseMs: number;
+  chunkCount: number;
+  llmCalls: number;
+  temporalFlag: boolean;
+  verifierFlag: boolean;
+  refusal: boolean;
+  incompleteSearch: boolean;
 }
 
 type FkTraversalResult =
@@ -1027,7 +1039,7 @@ async function fetchSourceDocuments(
 
   const { data, error: dbErr } = await db
     .from("documents")
-    .select("id, url, title, filename")
+    .select("id, url, title, filename, ingested_at")
     .in("id", documentIds);
 
   if (dbErr) {
@@ -1051,6 +1063,22 @@ function sourceTitle(
       "Ordinance provision";
   }
   return c.table;
+}
+
+function retrievedDate(ingestedAt: string | null): string {
+  if (!ingestedAt) return "retrieval date unavailable";
+  const parsed = new Date(ingestedAt);
+  if (Number.isNaN(parsed.getTime())) return "retrieval date unavailable";
+  return parsed.toISOString().slice(0, 10);
+}
+
+function formatCitation(
+  title: string,
+  page: number | null,
+  ingestedAt: string | null,
+): string {
+  const pageText = page === null ? "page n/a" : `page ${page}`;
+  return `[${title}, ${pageText}, retrieved ${retrievedDate(ingestedAt)}]`;
 }
 
 function buildAnnotatedDrafterChunks(
@@ -1085,6 +1113,7 @@ function buildAnnotatedDrafterChunks(
       rank: index + 1,
       source_url: doc?.url ?? "",
       source_title: sourceTitle(doc, c),
+      source_ingested_at: doc?.ingested_at ?? null,
       page: candidatePage(c),
       bbox: candidateBbox(c),
       text: candidateText(c),
@@ -1219,6 +1248,12 @@ function validateDrafterOutput(
     source_title: chunk.source_title,
     page_number: chunk.page,
     bbox: chunk.bbox,
+    retrieved_at: chunk.source_ingested_at,
+    formatted: formatCitation(
+      chunk.source_title,
+      chunk.page,
+      chunk.source_ingested_at,
+    ),
     rank: index + 1,
   }));
 
@@ -1760,9 +1795,141 @@ async function runVerifierCorrectionLoop(
   return currentDraft;
 }
 
+// ── Response assembly + RequestLog persistence ──────────────────────────────
+
+function validIsoTimestamp(value: string | null): string | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
+function mostRecentRetrievedAt(citations: CitationChunk[]): string | null {
+  let latestMs = -Infinity;
+  let latestIso: string | null = null;
+
+  for (const citation of citations) {
+    const iso = validIsoTimestamp(citation.retrieved_at);
+    if (!iso) continue;
+    const ms = new Date(iso).getTime();
+    if (ms > latestMs) {
+      latestMs = ms;
+      latestIso = iso;
+    }
+  }
+
+  return latestIso;
+}
+
+function freshnessNotice(freshnessTimestamp: string | null): string | null {
+  if (!freshnessTimestamp) return null;
+  return `Sources current as of ${retrievedDate(freshnessTimestamp)}`;
+}
+
+function citationByChunkId(citations: CitationChunk[]): Map<string, string> {
+  return new Map(citations.map((citation) => [
+    citation.chunk_id,
+    citation.formatted,
+  ]));
+}
+
+function formatInlineAnswerCitations(
+  answer: string,
+  citations: CitationChunk[],
+): string {
+  const labels = citationByChunkId(citations);
+  return answer.replace(
+    /\[chunk_id=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12});[^\n]*?\](?:\])?/gi,
+    (raw, chunkId: string) => labels.get(chunkId) ?? raw,
+  );
+}
+
+function isRefusalAnswer(answer: string): boolean {
+  return answer.toLowerCase().includes("not in the documents");
+}
+
+function finalCaveats(answer: string, caveats: string[]): string[] {
+  const combined = [...caveats];
+  if (answer.includes(UNVERIFIED_CAVEAT)) {
+    combined.push(UNVERIFIED_CAVEAT);
+  }
+  return [...new Set(combined.filter((caveat) => caveat.trim() !== ""))];
+}
+
+function assembleQueryResponse(
+  draft: AnswerDraftResult,
+  temporalFlag: boolean,
+  amendmentCaveat: string | null,
+  pendingChangeNotice: string | null,
+  incompleteSearchWarning: boolean,
+  caveats: string[],
+): QueryResponseData {
+  const freshnessTimestamp = mostRecentRetrievedAt(draft.citations);
+  return {
+    answer: formatInlineAnswerCitations(draft.answer, draft.citations),
+    citations: draft.citations,
+    citationMap: draft.citationMap,
+    chunkText: draft.chunkText,
+    temporalFlag,
+    amendmentCaveat,
+    pendingChangeNotice,
+    incompleteSearchWarning,
+    freshnessTimestamp,
+    freshness: freshnessNotice(freshnessTimestamp),
+    caveats: finalCaveats(draft.answer, caveats),
+  };
+}
+
+async function writeRequestLog(input: RequestLogInput): Promise<boolean> {
+  const { error: dbErr } = await db.from("request_logs").insert({
+    id: uuidv7(),
+    ip_address: input.ip,
+    query_text: input.queryText,
+    response_ms: input.responseMs,
+    chunk_count: input.chunkCount,
+    llm_calls: input.llmCalls,
+    temporal_flag: input.temporalFlag,
+    verifier_flag: input.verifierFlag,
+    refusal: input.refusal,
+    incomplete_search: input.incompleteSearch,
+  });
+
+  if (dbErr) {
+    console.error("request log write error:", dbErr.message);
+    return false;
+  }
+  return true;
+}
+
+async function returnLoggedSuccess(
+  data: QueryResponseData,
+  startedAt: number,
+  input: Omit<RequestLogInput, "responseMs" | "chunkCount" | "refusal">,
+): Promise<Response> {
+  const responseMs = Math.max(0, Math.round(performance.now() - startedAt));
+  const logged = await writeRequestLog({
+    ...input,
+    responseMs,
+    chunkCount: Object.keys(data.chunkText).length,
+    refusal: isRefusalAnswer(data.answer),
+  });
+
+  if (!logged) {
+    return error(
+      "INGESTION_FAILED",
+      "Service temporarily unavailable. Please retry.",
+      503,
+    );
+  }
+
+  return success<QueryResponseData>(data);
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request): Promise<Response> => {
+  const startedAt = performance.now();
+
   if (req.method !== "POST") {
     return error("NOT_FOUND", "Method not allowed", 405);
   }
@@ -1785,6 +1952,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
     req.headers.get("x-real-ip") ??
     "unknown";
+  let llmCalls = 0;
 
   // ── Step 1: Rate limit ──────────────────────────────────────────────────────
 
@@ -1854,8 +2022,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
       pendingChangeNotice: null,
       incompleteSearchWarning: true,
       freshnessTimestamp: null,
+      freshness: null,
+      caveats: [],
     };
-    return success<QueryResponseData>(incompleteResponse);
+    return await returnLoggedSuccess(incompleteResponse, startedAt, {
+      ip,
+      queryText: query,
+      llmCalls,
+      temporalFlag: false,
+      verifierFlag: false,
+      incompleteSearch: true,
+    });
   }
 
   // ── Step 5 (task 2-8): Ancestor enrichment ─────────────────────────────────
@@ -1884,6 +2061,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const pendingChanges = await fetchPendingChanges(taggedCandidates);
 
+  llmCalls += 1;
   const judgeResult = await runTemporalJudge(
     query,
     taggedCandidates,
@@ -1933,6 +2111,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     pendingChangeNotice,
     completeness.incompleteSearchWarning,
   );
+  if (drafterChunks.length > 0) {
+    llmCalls += 1;
+  }
   const draft = await runAnswerDrafter(
     query,
     drafterChunks,
@@ -1949,9 +2130,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // ── Step 10 (task 2-12): Conditional Verifier + correction loop ───────────
 
   const llmBudget: LlmCallBudget = {
-    used: LLM_CALLS_BEFORE_VERIFIER,
+    used: llmCalls,
     cap: LLM_TOTAL_CALL_CAP,
   };
+  const verifierFlag = shouldRunVerifier(draft, temporalFlag) &&
+    hasRemainingLlmCall(llmBudget);
   const verifiedDraft = await runVerifierCorrectionLoop(
     query,
     draft,
@@ -1967,19 +2150,24 @@ Deno.serve(async (req: Request): Promise<Response> => {
       "Unable to process your query right now. Please try again in a moment.",
     );
   }
+  llmCalls = llmBudget.used;
 
-  // ── TODO task 2-13: Freshness timestamp ────────────────────────────────────
+  // ── Step 11 (task 2-13): Response assembly + RequestLog ──────────────────
 
-  const responseData: QueryResponseData = {
-    answer: verifiedDraft.answer,
-    citations: verifiedDraft.citations,
-    citationMap: verifiedDraft.citationMap,
-    chunkText: verifiedDraft.chunkText,
+  const responseData = assembleQueryResponse(
+    verifiedDraft,
     temporalFlag,
-    amendmentCaveat: completeness.amendmentCaveat,
+    completeness.amendmentCaveat,
     pendingChangeNotice,
-    incompleteSearchWarning: completeness.incompleteSearchWarning,
-    freshnessTimestamp: null,
-  };
-  return success<QueryResponseData>(responseData);
+    completeness.incompleteSearchWarning,
+    answerCaveats,
+  );
+  return await returnLoggedSuccess(responseData, startedAt, {
+    ip,
+    queryText: query,
+    llmCalls,
+    temporalFlag,
+    verifierFlag,
+    incompleteSearch: completeness.incompleteSearchWarning,
+  });
 });
