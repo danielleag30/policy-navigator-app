@@ -722,11 +722,11 @@ Deno.serve(async (req: Request) => {
       await embedNarrativeChunks(documentId, session);
 
       // ── Task 2-19: supersede any existing 'current' document at the same URL
-      logInfo("ingest-orchestrator", "superseding previous document", { url: sourceUrl, documentId });
+      logInfo("ingest-orchestrator", "superseding previous document", { url: row.url, documentId });
       const { error: supersedeErr } = await db
         .from("documents")
         .update({ status: "superseded", updated_at: new Date().toISOString() })
-        .eq("url", sourceUrl)
+        .eq("url", row.url)
         .eq("status", "current")
         .neq("id", documentId);
       if (supersedeErr) {
