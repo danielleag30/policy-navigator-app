@@ -1,7 +1,8 @@
 /**
  * _shared/types.ts — Policy Navigator shared TypeScript types.
- * Query pipeline types verified by task 2-21b against the task 2-13 response
- * assembly implementation.
+ * Query pipeline response assembly types are a draft/planned contract on this
+ * branch. The current query-pipeline normal success path still returns interim
+ * retrieval data; only the incomplete-search early exit uses QueryResponseData.
  */
 
 /**
@@ -25,7 +26,7 @@ export interface IndividualVote {
 }
 
 /**
- * Query pipeline public API types (verified by task 2-21b).
+ * Query pipeline planned public API types.
  * These types must remain usable by both backend Edge Functions and frontend —
  * no runtime-specific or framework-specific assumptions.
  */

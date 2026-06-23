@@ -1,9 +1,10 @@
 # Policy Navigator Edge Functions API Contract
 
 Task 2-21b contract verification. This document describes the implemented Edge
-Function request and response shapes from the function source, including the
-completed query-pipeline response assembly, change-detection, and reconciliation
-task branches.
+Function request and response shapes from the function source on this branch.
+Only `query-pipeline`, `ingest-orchestrator`, and `keepalive-health` are present
+in this worktree. The full query response assembly, `change-detection`, and
+`reconciliation` contracts remain planned/pending merge.
 
 All functions return the shared envelope from `_shared/response.ts`:
 
@@ -30,10 +31,9 @@ Error codes and default status values:
 **Method:** `POST`
 **Auth:** Supabase Edge Function JWT enforcement.
 
-Runs the query pipeline: rate limit, query embedding, BM25/vector retrieval, RRF
-merge, ancestor enrichment, temporal judge, FK traversal/completeness check,
-answer drafting, conditional verification/correction, response assembly, and
-request logging.
+Runs the current interim query pipeline: rate limit, query embedding,
+BM25/vector retrieval, RRF merge, ancestor enrichment for ordinance candidates,
+and an incomplete-search early exit.
 
 ### Request
 
@@ -48,55 +48,39 @@ request logging.
 
 ### Success
 
-`data` is `QueryResponseData` from `_shared/types.ts`.
+On the normal success path, the current branch returns interim retrieval data:
 
 ```json
 {
   "ok": true,
   "data": {
-    "answer": "Generated answer text with formatted inline citations, or \"not in the documents\".",
-    "citations": [
+    "candidates": [
       {
-        "chunk_id": "uuid",
+        "id": "uuid",
+        "table": "budget_chunks",
+        "text": "Retrieved chunk text",
+        "rrfScore": 0.03278688524590164,
         "source_url": "https://...",
         "source_title": "Document title",
         "page_number": 12,
-        "bbox": null,
-        "retrieved_at": "2026-06-01T00:00:00.000Z",
-        "formatted": "[Document title, page 12, retrieved 2026-06-01]",
-        "rank": 1
+        "ancestors": []
       }
     ],
-    "citationMap": {
-      "Exact claim text from the drafted answer": {
-        "chunk_id": "uuid",
-        "page": 12,
-        "bbox": null
-      }
-    },
-    "chunkText": {
-      "uuid": "Full cited chunk text"
-    },
-    "temporalFlag": false,
-    "amendmentCaveat": null,
-    "pendingChangeNotice": null,
-    "incompleteSearchWarning": false,
-    "freshnessTimestamp": "2026-06-01T00:00:00.000Z",
-    "freshness": "Sources current as of 2026-06-01",
-    "caveats": []
+    "total": 42
   }
 }
 ```
 
 Field notes:
 
-- `citations` is ordered by cited chunk relevance after answer assembly.
-- `citationMap` is keyed by exact claim text from the draft answer.
-- `chunkText` is keyed by `chunk_id` and contains only cited chunks.
-- `bbox`, `page_number`, `retrieved_at`, `freshnessTimestamp`, and `freshness`
-  are nullable when source metadata is unavailable.
-- `caveats` includes applicable amendment, pending-change, incomplete-version,
-  and verifier caveats.
+- `candidates` contains the top eight RRF-ranked chunks after optional ancestor
+  enrichment.
+- `total` is the full ranked candidate count before the top-eight slice.
+- `ancestors` is populated only for ordinance provision candidates when linked
+  ancestor data can be loaded; it is otherwise an empty array.
+- The full `QueryResponseData` answer/citation/freshness shape in
+  `_shared/types.ts` is a planned contract and is not implemented on the normal
+  success path of this branch.
 
 ### Incomplete Search Success
 
@@ -130,10 +114,8 @@ returns `200` with the full response shape and `incompleteSearchWarning: true`.
 | 400 | `NOT_FOUND` | Body is invalid JSON. |
 | 400 | `NOT_FOUND` | `query` is missing, not a string, or empty after trim. |
 | 429 | `RATE_LIMITED` | IP exceeded the current rate-limit window. |
-| 503 | `INGESTION_FAILED` | Rate-limit bucket write or request-log write failed. |
+| 503 | `INGESTION_FAILED` | Rate-limit bucket write failed. |
 | 500 | `INGESTION_FAILED` | Query embedding failed. |
-| 500 | `INGESTION_FAILED` | FK traversal failed while loading linked vote/decision context. |
-| 503 | `OLLAMA_EXHAUSTED` | Temporal judge, answer drafter, verifier, or correction pass exhausted Ollama retries or returned unusable output. |
 
 ---
 
@@ -147,7 +129,8 @@ returns `200` with the full response shape and `incompleteSearchWarning: true`.
 Processes one `pending_ingestions` row. PDF source types go through fetch,
 deduplication, Docling, chunking, extraction, embeddings, and finalization.
 `municode_api` source rows go through Municode ingestion, ordinance embeddings,
-pending-code-change overlap detection, and reconciliation triggering.
+and pending-code-change overlap detection. Reconciliation triggering is planned
+but is not implemented on this branch.
 
 ### Request
 
@@ -232,149 +215,6 @@ Municode ingestion completed:
 | 500 | `INGESTION_FAILED` | Failed to claim the processing slot. |
 | 500 | `INGESTION_FAILED` | Ingestion failed and was reset to `pending` for retry. |
 | 500 | `INGESTION_FAILED` | Maximum attempts reached and row was marked `failed`. |
-
----
-
-## change-detection
-
-**Path:** `/functions/v1/change-detection`
-**Method:** `POST`
-**Auth:** Service role token. Intended for scheduled invocation.
-
-Scans `supabase/config/seed-sources.json`, checks watched source URLs, creates
-`pending_ingestions` rows when content changes, writes stale/source-error alerts,
-checks the latest Municode supplement job, and attempts to trigger
-`reconciliation` when a new Municode job is detected.
-
-### Request
-
-No request body is read.
-
-### Success
-
-```json
-{
-  "ok": true,
-  "data": {
-    "scanned_urls": 5,
-    "pending_ingestions_created": 1,
-    "active_ingestions_skipped": 0,
-    "last_checked_updates": 4,
-    "skipped_invalid_seeds": 0,
-    "stale_alerts_created": 0,
-    "municode": {
-      "checked": true,
-      "job_id": "12345",
-      "previous_job_id": "12344",
-      "pending_ingestion_id": "uuid",
-      "reconciliation_triggered": true
-    },
-    "errors": [],
-    "results": [
-      {
-        "url": "https://...",
-        "doc_type": "budget_pdf",
-        "action": "pending_ingestion_created",
-        "pending_ingestion_id": "uuid",
-        "document_id": "uuid",
-        "message": "optional detail"
-      }
-    ]
-  }
-}
-```
-
-`results[].doc_type` is one of `budget_pdf`, `bos_minutes`, `bos_summary`,
-`ordinance`, or `municode_api`.
-
-`results[].action` is one of:
-
-- `pending_ingestion_created`
-- `active_ingestion_exists`
-- `last_checked_updated`
-- `skipped_invalid_seed`
-- `error`
-
-`municode.checked` is `false` only when the Municode check did not complete.
-`municode.job_id`, `previous_job_id`, and `pending_ingestion_id` are nullable.
-
-### Errors
-
-| Status | Error code | Condition |
-| ---: | --- | --- |
-| 405 | `NOT_FOUND` | Method is not `POST`. |
-| 500 | `INGESTION_FAILED` | Fatal setup, seed validation, stale-alert, or summary failure. |
-
-Per-URL and Municode scan failures are normally captured in `data.results`,
-`data.errors`, and pending alerts while the function still returns `200`.
-
----
-
-## reconciliation
-
-**Path:** `/functions/v1/reconciliation`
-**Method:** `POST`
-**Auth:** Service role token. Called by `change-detection` or manually by an
-operator.
-
-Compares pending code changes against current ordinance provisions using Ollama,
-writes `code_reconciliation_logs`, marks matched pending changes as codified,
-and creates alerts for partial matches or mismatches.
-
-### Request
-
-```json
-{
-  "supplement_job_id": "string (required)",
-  "pending_ingestion_id": "uuid (accepted when sent by change-detection; not read by handler)"
-}
-```
-
-### Success
-
-```json
-{
-  "ok": true,
-  "data": {
-    "reconciled": 2,
-    "skipped": 1,
-    "no_provision_found": 0,
-    "results": [
-      {
-        "pending_code_change_id": "uuid",
-        "ordinance_provision_id": "uuid",
-        "result": "matched",
-        "skipped": false
-      },
-      {
-        "pending_code_change_id": "uuid",
-        "error": "Pair-specific failure message"
-      }
-    ]
-  }
-}
-```
-
-`result` is one of `matched`, `partial_match`, `mismatch`, or `not_found`.
-Duplicate log rows caused by concurrent runs are counted as `skipped`.
-Pair-specific failures are included in `results` and do not fail the whole
-request.
-
-If there are no pending code changes, the success shape is the same with all
-counts set to `0` and `results: []`.
-
-### Errors
-
-| Status | Error code | Condition |
-| ---: | --- | --- |
-| 405 | `NOT_FOUND` | Method is not `POST`. |
-| 400 | `INGESTION_FAILED` | Body is invalid JSON. |
-| 400 | `INGESTION_FAILED` | `supplement_job_id` is missing or not a string. |
-| 500 | `INGESTION_FAILED` | Failed to load pending code changes. |
-| 500 | `INGESTION_FAILED` | Failed to load current ordinance provisions. |
-| 500 | `INGESTION_FAILED` | Fatal reconciliation failure outside a pair-specific comparison. |
-
----
 
 ## keepalive-health
 
