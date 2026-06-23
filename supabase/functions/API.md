@@ -301,3 +301,46 @@ Already acknowledged alerts are idempotent: the existing row is returned with
 | 404 | `NOT_FOUND` | Alert ID does not exist. |
 | 500 | `INGESTION_FAILED` | `ADMIN_SECRET` is not configured. |
 | 500 | `INGESTION_FAILED` | Alert lookup or update failed. |
+
+---
+
+## admin-alerts
+
+**Path:** `/functions/v1/admin-alerts`
+**Method:** `GET`
+**Auth:** Admin secret in `x-admin-secret: <ADMIN_SECRET>`. The handler also accepts
+`Authorization: Bearer <ADMIN_SECRET>` for caller compatibility.
+
+Returns all unacknowledged `pending_alerts` rows sorted by `triggered_at`
+descending. A wrong or missing secret returns `401` before any database access.
+
+### Success
+
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "id": "uuid",
+      "alert_type": "ingestion_failure",
+      "details": {},
+      "triggered_at": "2026-06-23T12:00:00.000Z",
+      "acknowledged": false,
+      "acknowledged_at": null,
+      "created_at": "2026-06-23T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+`data` is an empty array `[]` when no unacknowledged alerts exist (still `200`).
+`details` is returned as-is from the `jsonb` column (object, not stringified).
+
+### Errors
+
+| Status | Error code | Condition |
+| ---: | --- | --- |
+| 405 | `NOT_FOUND` | Method is not `GET`. |
+| 401 | `UNAUTHORIZED` | Admin secret missing or incorrect. |
+| 500 | `INGESTION_FAILED` | `ADMIN_SECRET` is not configured. |
+| 500 | `INGESTION_FAILED` | DB query failed. |

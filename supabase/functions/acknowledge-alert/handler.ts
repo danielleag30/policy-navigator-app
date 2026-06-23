@@ -1,7 +1,11 @@
+import {
+  ADMIN_SECRET_HEADER,
+  requestSecret,
+} from "../_shared/admin-auth.ts";
 import { logError, logInfo } from "../_shared/logger.ts";
 import { error, success } from "../_shared/response.ts";
 
-export const ADMIN_SECRET_HEADER = "x-admin-secret";
+export { ADMIN_SECRET_HEADER };
 const FUNCTION_NAME = "acknowledge-alert";
 
 export interface PendingAlertRow {
@@ -46,15 +50,6 @@ interface HandlerDeps {
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function requestSecret(req: Request): string | null {
-  const directSecret = req.headers.get(ADMIN_SECRET_HEADER);
-  if (directSecret) return directSecret;
-
-  const authorization = req.headers.get("authorization");
-  if (!authorization?.startsWith("Bearer ")) return null;
-  return authorization.slice("Bearer ".length).trim();
-}
 
 function isValidUuid(value: unknown): value is string {
   return typeof value === "string" && UUID_PATTERN.test(value);
