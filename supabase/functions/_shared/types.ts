@@ -1,6 +1,18 @@
 /**
  * _shared/types.ts — Policy Navigator shared TypeScript types.
- * Query pipeline types are a DRAFT (task 2-21a); final verification is task 2-21b.
+ * Verified by task 2-21b against actual Edge Function implementations.
+ *
+ * CHANGES (task 2-21b):
+ * - QueryResponseData fields confirmed correct against query-pipeline/index.ts.
+ * - chunkText keyed by chunk_id: verified (used in the INCOMPLETE_SEARCH_FLOOR
+ *   early-exit path; will be populated by tasks 2-8 through 2-13).
+ * - CitationChunk fields (chunk_id, source_url, source_title, page_number, rank):
+ *   consistent with the planned citation assembly step (tasks 2-8 through 2-13).
+ *   Not yet emitted by the pipeline (retrieval only is implemented as of 2-21b).
+ * - Divergence: the current "normal success" response of query-pipeline returns
+ *   { candidates: EnrichedCandidate[], total: number } (task 2-7 interim output)
+ *   rather than QueryResponseData. That interim shape is internal to the function
+ *   and is NOT exported here — it will be replaced once generation is wired in.
  */
 
 /**
@@ -24,9 +36,7 @@ export interface IndividualVote {
 }
 
 /**
- * Query pipeline public API types — DRAFT (v1).
- * This is an early draft subject to revision during implementation.
- * Final verification is task 2-21b.
+ * Query pipeline public API types (verified by task 2-21b).
  * These types must remain usable by both backend Edge Functions and frontend —
  * no runtime-specific or framework-specific assumptions.
  */
