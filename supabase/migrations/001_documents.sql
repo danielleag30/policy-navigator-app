@@ -1,0 +1,35 @@
+-- Migration 001: documents table
+-- Source table for all ingested documents (PDFs, BOS minutes, Municode API responses).
+-- No hard deletes — status flags only.
+-- UUID v7: always Deno-generated (application side). No server-side default — omitting id on INSERT is a hard error, enforcing caller responsibility.
+
+CREATE TABLE documents (
+  id                  uuid PRIMARY KEY,
+  url                 text NOT NULL UNIQUE,
+  filename            text NULL,
+  doc_type            text NOT NULL CHECK (doc_type IN (
+                        'budget_pdf', 'bos_minutes',
+                        'bos_summary', 'ordinance', 'municode_api'
+                      )),
+  status              text NOT NULL DEFAULT 'current' CHECK (status IN (
+                        'current', 'superseded', 'unknown'
+                      )),
+  ingested_at         timestamptz NOT NULL,
+  last_checked_at     timestamptz NOT NULL,
+  content_hash        text NOT NULL,
+  source_published_at date NULL,
+  title               text NULL,
+  fiscal_year         int NULL,
+  docling_version     text NULL,
+  raw_api_response    jsonb NULL,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX ON documents (doc_type);
+CREATE INDEX ON documents (status);
+CREATE INDEX ON documents (last_checked_at);
+
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE documents FROM anon, authenticated;
