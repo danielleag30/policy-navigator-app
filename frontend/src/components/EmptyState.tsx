@@ -6,11 +6,11 @@ const EXAMPLES = [
 
 export default function EmptyState() {
   return (
-    <div className="w-full text-center">
-      <p className="text-sm text-gray-500 mb-3">Try asking something like:</p>
+    <div className="w-full min-w-0 text-center">
+      <p className="text-sm text-gray-500 mb-3 break-words">Try asking something like:</p>
       <ul className="flex flex-col gap-2">
         {EXAMPLES.map((q) => (
-          <li key={q} className="text-sm text-gray-600 italic">
+          <li key={q} className="break-words text-sm text-gray-600 italic">
             &ldquo;{q}&rdquo;
           </li>
         ))}

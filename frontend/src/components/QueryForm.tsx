@@ -84,7 +84,7 @@ export default function QueryForm() {
   };
 
   return (
-    <div className="w-full max-w-2xl flex flex-col gap-6">
+    <div className="w-full max-w-2xl min-w-0 flex flex-col gap-5 sm:gap-6">
       <QueryInput
         value={query}
         onChange={setQuery}
@@ -96,12 +96,12 @@ export default function QueryForm() {
 
       {status === 'error' && errorType && (
         errorType === 'rate_limit' ? (
-          <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <div role="alert" className="break-words rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
             <span className="font-semibold">Rate limit reached.</span>{' '}
             {errorMessages.rate_limit}
           </div>
         ) : (
-          <p role="alert" className="text-red-600 text-sm font-medium">
+          <p role="alert" className="break-words text-red-600 text-sm font-medium">
             {errorMessages[errorType]}
           </p>
         )
