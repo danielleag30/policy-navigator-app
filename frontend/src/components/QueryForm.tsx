@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { QueryResponseData } from '@shared/types';
 import { SUPABASE_ANON_KEY, QUERY_PIPELINE_URL } from '../lib/env';
 import QueryInput from './QueryInput';
+import AnswerDisplay from './AnswerDisplay';
 
 type Status = 'idle' | 'loading' | 'success' | 'error';
 type ErrorType = null | 'rate_limit' | 'exhausted' | 'generic';
@@ -96,17 +97,7 @@ export default function QueryForm() {
         </p>
       )}
 
-      {status === 'success' && result && (
-        <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-          {result.answer ? (
-            <p className="text-gray-800 whitespace-pre-wrap">{result.answer}</p>
-          ) : (
-            <p className="text-gray-500 text-sm italic">
-              Retrieved {(result.citations ?? []).length} candidates (answer assembly pending task 3-3)
-            </p>
-          )}
-        </div>
-      )}
+      {status === 'success' && result && <AnswerDisplay result={result} />}
     </div>
   );
 }
