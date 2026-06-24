@@ -49,15 +49,15 @@ export default function CitationPanel({ citation, chunkText, citationIndex, onCl
       {/* Bottom sheet panel */}
       <div
         ref={panelRef}
-        className="w-full max-w-2xl rounded-t-2xl bg-white shadow-2xl flex flex-col max-h-[70vh]"
+        className="flex max-h-[70vh] w-full max-w-2xl min-w-0 flex-col rounded-t-2xl bg-white shadow-2xl"
       >
         {/* Handle + header */}
-        <div className="flex items-center justify-between px-5 pt-4 pb-2 shrink-0">
-          <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between px-4 pt-4 pb-2 shrink-0 sm:px-5">
+          <div className="flex min-w-0 items-center gap-3">
             <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-semibold">
               {citationIndex}
             </span>
-            <h3 className="text-sm font-semibold text-gray-800 leading-snug line-clamp-2">
+            <h3 className="min-w-0 break-words text-sm font-semibold text-gray-800 leading-snug line-clamp-2">
               {citation.source_title}
             </h3>
           </div>
@@ -73,8 +73,8 @@ export default function CitationPanel({ citation, chunkText, citationIndex, onCl
         </div>
 
         {/* Location label */}
-        <div className="px-5 pb-2 shrink-0">
-          <span className="inline-block text-xs text-gray-500 bg-gray-100 rounded px-2 py-0.5">
+        <div className="px-4 pb-2 shrink-0 sm:px-5">
+          <span className="inline-block max-w-full break-all text-xs text-gray-500 bg-gray-100 rounded px-2 py-0.5">
             {locationLabel}
           </span>
         </div>
@@ -82,9 +82,9 @@ export default function CitationPanel({ citation, chunkText, citationIndex, onCl
         <hr className="border-gray-100 shrink-0" />
 
         {/* Chunk text */}
-        <div className="overflow-y-auto px-5 py-4 flex-1">
+        <div className="overflow-y-auto px-4 py-4 flex-1 sm:px-5">
           {chunkText ? (
-            <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+            <p className="break-words text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
               {chunkText}
             </p>
           ) : (
@@ -96,7 +96,7 @@ export default function CitationPanel({ citation, chunkText, citationIndex, onCl
 
         {/* Source link footer */}
         {citation.source_url && (
-          <div className="px-5 py-3 border-t border-gray-100 shrink-0">
+          <div className="px-4 py-3 border-t border-gray-100 shrink-0 sm:px-5">
             <a
               href={citation.source_url}
               target="_blank"
