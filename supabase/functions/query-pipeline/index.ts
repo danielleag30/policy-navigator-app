@@ -12,8 +12,9 @@
  *  5. INCOMPLETE_SEARCH_FLOOR gate — return early if max RRF score below floor
  *  6. Ancestor enrichment — hierarchy metadata attached to ordinance chunks (task 2-8)
  *  7. Temporal Judge LLM call — version filtering + temporal flag (task 2-9)
+ *  8. Scripted FK traversal — reconsideration/amended-decision rows (task 2-10)
+ *  9. Completeness check — temporal answers need sufficient version context (task 2-10)
  *
- * TODO task 2-10: FK traversal on filteredCandidates
  * TODO task 2-11: Answer Drafter LLM call
  * TODO task 2-12: Verifier LLM call
  * TODO task 2-13: Freshness timestamp
@@ -58,6 +59,8 @@ const JUDGE_OUTPUT_LIMIT = 8;
 // Temperature for the Temporal Judge — 0.0 for maximum determinism (filter/verifier role).
 // Documented in DEPS.md under "Temporal Judge (2-9): 0.0".
 const TEMPORAL_JUDGE_TEMPERATURE = 0.0;
+
+const VERSION_HISTORY_INCOMPLETE_CAVEAT = "Version history may be incomplete";
 
 // ── Chunk-bearing tables ──────────────────────────────────────────────────────
 
@@ -186,6 +189,10 @@ interface EnrichedCandidate extends RankedCandidate {
   /** True when hardFilterSuperseded removed at least one superseded peer for this node — signals amendment history to the judge. */
   hasAmendmentHistory: boolean;
 }
+
+type FkTraversalResult =
+  | { ok: true; candidates: EnrichedCandidate[] }
+  | { ok: false; message: string };
 
 /**
  * Merge BM25 and vector result lists using Reciprocal Rank Fusion.
@@ -389,7 +396,7 @@ function hardFilterSuperseded(
   const filtered = candidates.filter(c => {
     if (c.table !== 'ordinance_provisions') return true;
     if (c.row.is_current === true) return true;
-    const shouldRemove = currentNodeIds.has(c.municode_node_id);
+    const shouldRemove = c.municode_node_id !== undefined && currentNodeIds.has(c.municode_node_id);
     if (shouldRemove && c.municode_node_id) amendedNodeIds.add(c.municode_node_id);
     return !shouldRemove;
   });
@@ -620,6 +627,119 @@ Output JSON only:`;
   };
 }
 
+// ── Scripted FK traversal ────────────────────────────────────────────────────
+
+function fkCandidate(table: "vote_tallies" | "policy_decisions", row: Record<string, unknown>): EnrichedCandidate {
+  const id = row.id as string;
+  return {
+    key: `${table}:${id}`,
+    table,
+    id,
+    row,
+    rankBm25: null,
+    rankVector: null,
+    rrfScore: 0,
+    ancestors: [],
+    municode_node_id: undefined,
+    superseded_date: null,
+    hasAmendmentHistory: false,
+  };
+}
+
+/**
+ * After the Temporal Judge selects the answer context, deterministically fetch
+ * linked rows that must travel with the selected chunk even when they had no
+ * BM25/vector score of their own.
+ */
+async function traverseForeignKeys(candidates: EnrichedCandidate[]): Promise<FkTraversalResult> {
+  const seenKeys = new Set(candidates.map(c => c.key));
+
+  const reconsiderationIds = [...new Set(
+    candidates
+      .filter(c => c.table === 'vote_tallies')
+      .map(c => c.row.reconsidered_by)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0),
+  )].filter(id => !seenKeys.has(`vote_tallies:${id}`));
+
+  const amendedDecisionIds = [...new Set(
+    candidates
+      .filter(c => c.table === 'policy_decisions')
+      .map(c => c.row.amends_decision_id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0),
+  )].filter(id => !seenKeys.has(`policy_decisions:${id}`));
+
+  const appended: EnrichedCandidate[] = [];
+
+  if (reconsiderationIds.length > 0) {
+    const { data, error: dbErr } = await db
+      .from('vote_tallies')
+      .select('*')
+      .in('id', reconsiderationIds);
+
+    if (dbErr) {
+      console.error('vote_tallies FK traversal error:', dbErr.message);
+      return { ok: false, message: 'Failed to fetch linked reconsideration vote context.' };
+    }
+
+    for (const row of (data ?? []) as Record<string, unknown>[]) {
+      const linked = fkCandidate('vote_tallies', row);
+      if (!seenKeys.has(linked.key)) {
+        appended.push(linked);
+        seenKeys.add(linked.key);
+      }
+    }
+  }
+
+  if (amendedDecisionIds.length > 0) {
+    const { data, error: dbErr } = await db
+      .from('policy_decisions')
+      .select('*')
+      .in('id', amendedDecisionIds);
+
+    if (dbErr) {
+      console.error('policy_decisions FK traversal error:', dbErr.message);
+      return { ok: false, message: 'Failed to fetch linked amended decision context.' };
+    }
+
+    for (const row of (data ?? []) as Record<string, unknown>[]) {
+      const linked = fkCandidate('policy_decisions', row);
+      if (!seenKeys.has(linked.key)) {
+        appended.push(linked);
+        seenKeys.add(linked.key);
+      }
+    }
+  }
+
+  return { ok: true, candidates: [...candidates, ...appended] };
+}
+
+// ── Completeness check ───────────────────────────────────────────────────────
+
+function appendCaveat(existing: string | null, caveat: string): string {
+  if (existing === null || existing.trim() === '') return caveat;
+  if (existing.includes(caveat)) return existing;
+  return `${existing} ${caveat}`;
+}
+
+function countVersionChunks(candidates: EnrichedCandidate[]): number {
+  return candidates.filter(c => c.table === 'ordinance_provisions').length;
+}
+
+function applyCompletenessCheck(
+  candidates: EnrichedCandidate[],
+  temporalFlag: boolean,
+  amendmentCaveat: string | null,
+): { incompleteSearchWarning: boolean; amendmentCaveat: string | null } {
+  if (!temporalFlag || countVersionChunks(candidates) >= 2) {
+    return { incompleteSearchWarning: false, amendmentCaveat };
+  }
+
+  return {
+    incompleteSearchWarning: true,
+    amendmentCaveat: appendCaveat(amendmentCaveat, VERSION_HISTORY_INCOMPLETE_CAVEAT),
+  };
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -738,27 +858,43 @@ Deno.serve(async (req: Request): Promise<Response> => {
     );
   }
 
-  const { filteredCandidates, amendmentCaveat, pendingChangeNotice } = judgeResult;
+  const { filteredCandidates, pendingChangeNotice } = judgeResult;
   // AC3: pre-filter removing superseded chunks IS temporal reasoning — force flag even
   // if the LLM judge didn't set it independently.
   const temporalFlag = judgeResult.temporalFlag || amendedNodeIds.size > 0;
 
-  // ── TODO task 2-10: FK traversal on filteredCandidates ─────────────────────
+  // ── Step 7 (task 2-10): Scripted FK traversal ─────────────────────────────
+
+  const fkTraversal = await traverseForeignKeys(filteredCandidates);
+  if (!fkTraversal.ok) {
+    return error("INGESTION_FAILED", fkTraversal.message, 500);
+  }
+
+  const finalContext = fkTraversal.candidates;
+
+  // ── Step 8 (task 2-10): Completeness check ────────────────────────────────
+
+  const completeness = applyCompletenessCheck(
+    finalContext,
+    temporalFlag,
+    judgeResult.amendmentCaveat,
+  );
+
   // ── TODO task 2-11: Answer Drafter LLM call ────────────────────────────────
   // ── TODO task 2-12: Verifier LLM call ──────────────────────────────────────
   // ── TODO task 2-13: Freshness timestamp ────────────────────────────────────
 
-  // Incomplete pipeline response — steps 2-10 through 2-13 not yet implemented.
-  // filteredCandidates holds the ≤8 temporally-filtered chunks ready for FK
-  // traversal (task 2-10) and the Answer Drafter (task 2-11).
+  // Incomplete pipeline response — steps 2-11 through 2-13 not yet implemented.
+  // finalContext holds the temporally-filtered chunks plus any required FK rows
+  // ready for the Answer Drafter (task 2-11).
   const incompleteResponse: QueryResponseData = {
     answer: "",
     citations: [] as CitationChunk[],
     chunkText: {},
     temporalFlag,
-    amendmentCaveat,
+    amendmentCaveat: completeness.amendmentCaveat,
     pendingChangeNotice,
-    incompleteSearchWarning: false,
+    incompleteSearchWarning: completeness.incompleteSearchWarning,
     freshnessTimestamp: null,
   };
   return success<QueryResponseData>(incompleteResponse);
