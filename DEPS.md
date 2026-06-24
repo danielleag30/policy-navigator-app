@@ -10,6 +10,7 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 | `SUPABASE_ANON_KEY` | Local `.env.local` / Vercel project env | Frontend build/runtime config | Public key only; never used for privileged server writes. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Local `.env.local` / Vercel project env | Edge Functions via `Deno.env.get()` | Server-side only; bypasses RLS. |
 | `OLLAMA_CLOUD_BASE_URL` | Local `.env.local` / Vercel project env | Edge Functions via `Deno.env.get()` | Base URL for Ollama Cloud requests. |
+| `OLLAMA_API_KEY` | Supabase Edge Function secret / local `.env.local` | Edge Functions via `Deno.env.get()` | Preferred Ollama Cloud bearer token. When present, `_shared/ollama-client.ts` sends `Authorization: Bearer <value>`; absent is allowed for local or unauthenticated endpoints. |
 | `OLLAMA_TIMEOUT_MS` | Local `.env.local` / Vercel project env | Edge Functions via `Deno.env.get()` | Timeout ceiling for Ollama calls; default `15000`. |
 | `HF_SPACES_DOCLING_URL` | Local `.env.local` / Vercel project env | Edge Functions via `Deno.env.get()` | Docling wrapper endpoint. |
 | `HF_SPACES_KEEPWARM_URL` | Local `.env.local` / Vercel project env | GitHub Actions workflow and/or edge-side keep-warm logic | Keep-warm endpoint for the free-tier pause prevention job. |
@@ -70,5 +71,6 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 
 - Secrets live in environment variables, not committed code.
 - Edge Functions read server-side secrets with `Deno.env.get()`.
+- Supabase-hosted Edge Functions should store Ollama auth as the function secret `OLLAMA_API_KEY`.
 - Public frontend values are mirrored into the Vercel project settings when the frontend project is provisioned.
 - Placeholder values in `.env.local.example` are documentation only and must never be replaced with production secrets in git-tracked files.
