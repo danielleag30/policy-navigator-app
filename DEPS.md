@@ -66,6 +66,19 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 |---|---|---|
 | `documents` | `001_documents.sql` | Source record for every ingested document — PDFs (budget, BOS minutes/summaries, ordinances) and Municode API responses. Tracks URL, doc_type, status (`current`/`superseded`/`unknown`), content hash, and parse metadata. No hard deletes; supersession flips `status`. RLS enabled, no policies (service role bypasses). |
 
+## Supabase Project
+
+| Field | Value |
+|---|---|
+| Project name | `policy-navigator` |
+| Project ref | `ahaurkifxzqsrhwjshbj` |
+| URL | `https://ahaurkifxzqsrhwjshbj.supabase.co` |
+| Region | `us-west-2` (West US — Oregon) |
+| Organization ID | `uwwkhrjetfribiffwxvr` |
+| Created | 2026-06-17 |
+
+The service role key lives in `.env.local` only and is never committed. It is available via `supabase projects api-keys --project-ref ahaurkifxzqsrhwjshbj`.
+
 ## Policy
 
 - Secrets live in environment variables, not committed code.
