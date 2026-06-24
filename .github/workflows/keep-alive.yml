@@ -1,0 +1,44 @@
+name: Keep-alive ping
+# Purpose: Prevent the Supabase free-tier project from pausing after 7 days
+# of inactivity. Calls the keepalive-health Edge Function (service-role
+# internally, anon key to invoke) every 5 days.
+#
+# Repo visibility: public repo — GitHub Actions on public repos run on
+# GitHub-hosted runners with unlimited free minutes. If repo ever goes
+# private (GitHub Free plan): ~73 runs/year × <1 min each ≈ 73 min/year,
+# well under the 2000 free min/month included on GitHub Free.
+#
+# Failure notification: GitHub Actions sends an automatic email to the repo
+# owner whenever a scheduled workflow fails (default GitHub behavior — no
+# extra configuration required).
+
+on:
+  schedule:
+    - cron: '0 0 */5 * *'   # every 5 days at midnight UTC
+  workflow_dispatch:          # manual trigger for verification
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping keepalive-health Edge Function
+        env:
+          KEEPALIVE_HEALTH_URL: ${{ secrets.KEEPALIVE_HEALTH_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          RESPONSE=$(curl -sf -o response.json -w "%{http_code}" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            "$KEEPALIVE_HEALTH_URL")
+          echo "HTTP status: $RESPONSE"
+          cat response.json
+          if [ "$RESPONSE" != "200" ]; then
+            echo "ERROR: Non-200 response from keepalive-health: $RESPONSE"
+            exit 1
+          fi
+          OK=$(python3 -c "import json,sys; d=json.load(open('response.json')); print(str(d.get('ok', False)).lower())" 2>/dev/null || echo 'false')
+          if [ "$OK" != "true" ]; then
+            echo "ERROR: ok field not true in response:"
+            cat response.json
+            exit 1
+          fi
+          echo "Keep-alive ping succeeded."
