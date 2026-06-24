@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "@std/uuid/v7": "jsr:@std/uuid@1.1.1/v7",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2"
+  }
+}

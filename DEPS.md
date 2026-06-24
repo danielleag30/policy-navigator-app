@@ -27,6 +27,10 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 ## Hardcoded Constants
 
 - `gemma4:31b-cloud` is a hardcoded model string in the Ollama client module.
+- Query-pipeline Ollama temperatures are set per call site: Temporal Judge `0.0`,
+  Answer Drafter `0.3`, Verifier and correction passes `0.0`. Judge/Verifier paths
+  favor deterministic filtering and citation checking; the drafter allows limited
+  prose variation while remaining grounded in provided chunks.
 - UUID v7 generation uses `@std/uuid/v7`.
 - SHA-256 is the canonical `content_hash` algorithm.
 
