@@ -20,7 +20,7 @@ export default class ErrorBoundary extends Component<Props, State> {
         <div role="alert" className="w-full max-w-2xl rounded-lg border border-red-200 bg-red-50 p-6 text-center">
           <p className="font-semibold text-red-700">Something went wrong.</p>
           <p className="mt-1 text-sm text-red-600">
-            Reload the page to try again.
+            You can try again or reload the page.
           </p>
           <button
             onClick={() => this.setState({ hasError: false })}

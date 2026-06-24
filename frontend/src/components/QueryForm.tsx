@@ -95,9 +95,16 @@ export default function QueryForm() {
       {status === 'idle' && <EmptyState />}
 
       {status === 'error' && errorType && (
-        <p role="alert" className="text-red-600 text-sm font-medium">
-          {errorMessages[errorType]}
-        </p>
+        errorType === 'rate_limit' ? (
+          <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <span className="font-semibold">Rate limit reached.</span>{' '}
+            {errorMessages.rate_limit}
+          </div>
+        ) : (
+          <p role="alert" className="text-red-600 text-sm font-medium">
+            {errorMessages[errorType]}
+          </p>
+        )
       )}
 
       {status === 'success' && result && <AnswerDisplay result={result} />}
