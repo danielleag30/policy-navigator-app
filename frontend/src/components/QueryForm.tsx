@@ -102,7 +102,7 @@ export default function QueryForm() {
             <p className="text-gray-800 whitespace-pre-wrap">{result.answer}</p>
           ) : (
             <p className="text-gray-500 text-sm italic">
-              Retrieved {result.citations.length} candidates (answer assembly pending task 3-3)
+              Retrieved {(result.citations ?? []).length} candidates (answer assembly pending task 3-3)
             </p>
           )}
         </div>
