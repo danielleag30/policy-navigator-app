@@ -23,6 +23,21 @@ Policy Navigator is a web application for policy Q&A over local government sourc
 └── README.md
 ```
 
+## Seed URL Validation
+
+The seed URL validation script reads `supabase/config/seed-sources.json`, collects every
+`discovery_urls` entry, and sends a HEAD request to each URL. It prints one status line per
+URL and exits non-zero if any discovery URL does not return HTTP 200.
+
+Run it from the repository root:
+
+```bash
+deno run --allow-net --allow-read supabase/scripts/validate-seeds.ts
+```
+
+Run this check before the first ingestion deployment and whenever `seed-sources.json` is
+updated.
+
 ## Build Loop
 
 Every build-plan task follows the Linear + Obsidian handoff protocol.
