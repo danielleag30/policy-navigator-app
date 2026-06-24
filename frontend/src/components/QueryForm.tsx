@@ -5,6 +5,7 @@ import type { QueryResponseData } from '@shared/types';
 import { SUPABASE_ANON_KEY, QUERY_PIPELINE_URL } from '../lib/env';
 import QueryInput from './QueryInput';
 import AnswerDisplay from './AnswerDisplay';
+import EmptyState from './EmptyState';
 
 type Status = 'idle' | 'loading' | 'success' | 'error';
 type ErrorType = null | 'rate_limit' | 'exhausted' | 'generic';
@@ -90,6 +91,8 @@ export default function QueryForm() {
         onSubmit={handleSubmit}
         disabled={status === 'loading'}
       />
+
+      {status === 'idle' && <EmptyState />}
 
       {status === 'error' && errorType && (
         <p role="alert" className="text-red-600 text-sm font-medium">
