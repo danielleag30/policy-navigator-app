@@ -66,6 +66,12 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 |---|---|---|
 | `documents` | `001_documents.sql` | Source record for every ingested document — PDFs (budget, BOS minutes/summaries, ordinances) and Municode API responses. Tracks URL, doc_type, status (`current`/`superseded`/`unknown`), content hash, and parse metadata. No hard deletes; supersession flips `status`. RLS enabled, no policies (service role bypasses). |
 
+## Shared Modules
+
+| Module | Location | Description |
+|---|---|---|
+| `hash.ts` | `supabase/functions/_shared/hash.ts` | Canonical SHA-256 `contentHash(input: string): Promise<string>`. All document deduplication imports from here — no other hashing for `content_hash` exists in the codebase. Algorithm: SHA-256 (collision-resistant, universally available via Web Crypto API with no external dependency). Input UTF-8 encoded via `TextEncoder`. Output: 64-char lowercase hex string. |
+
 ## Policy
 
 - Secrets live in environment variables, not committed code.
