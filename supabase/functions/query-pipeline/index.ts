@@ -14,8 +14,8 @@
  *  7. Temporal Judge LLM call — version filtering + temporal flag (task 2-9)
  *  8. Scripted FK traversal — reconsideration/amended-decision rows (task 2-10)
  *  9. Completeness check — temporal answers need sufficient version context (task 2-10)
+ * 10. Answer Drafter LLM call — cited draft answer + citation payload (task 2-11)
  *
- * TODO task 2-11: Answer Drafter LLM call
  * TODO task 2-12: Verifier LLM call
  * TODO task 2-13: Freshness timestamp
  */
@@ -26,7 +26,12 @@ import db from "../_shared/db-client.ts";
 import { error, success } from "../_shared/response.ts";
 import { ollamaChat } from "../_shared/ollama-client.ts";
 import { type AiSession } from "../_shared/embedder.ts";
-import { type CitationChunk, type QueryRequest, type QueryResponseData } from "../_shared/types.ts";
+import {
+  type CitationChunk,
+  type CitationMapEntry,
+  type QueryRequest,
+  type QueryResponseData,
+} from "../_shared/types.ts";
 
 declare const Supabase: {
   ai: { Session: new (model: string) => AiSession };
@@ -59,6 +64,10 @@ const JUDGE_OUTPUT_LIMIT = 8;
 // Temperature for the Temporal Judge — 0.0 for maximum determinism (filter/verifier role).
 // Documented in DEPS.md under "Temporal Judge (2-9): 0.0".
 const TEMPORAL_JUDGE_TEMPERATURE = 0.0;
+
+// Temperature for the Answer Drafter — prose may vary slightly while staying grounded.
+// Documented in _shared/ollama-client.ts under "Answer Drafter (2-11): 0.3".
+const ANSWER_DRAFTER_TEMPERATURE = 0.3;
 
 const VERSION_HISTORY_INCOMPLETE_CAVEAT = "Version history may be incomplete";
 
@@ -181,13 +190,41 @@ interface RankedCandidate {
 }
 
 interface EnrichedCandidate extends RankedCandidate {
-  ancestors: Array<{ municode_node_id: string; title: string; node_depth: number }>;
+  ancestors: Array<
+    { municode_node_id: string; title: string; node_depth: number }
+  >;
   /** The Municode node identity key for ordinance_provisions chunks; undefined for other tables. */
   municode_node_id: string | undefined;
   /** Computed from peer candidates: effective_date of the current version when this chunk is superseded; null otherwise. */
   superseded_date: string | null;
   /** True when hardFilterSuperseded removed at least one superseded peer for this node — signals amendment history to the judge. */
   hasAmendmentHistory: boolean;
+}
+
+interface SourceDocument {
+  id: string;
+  url: string;
+  title: string | null;
+  filename: string | null;
+}
+
+interface AnnotatedDrafterChunk {
+  chunk_id: string;
+  table: ChunkTable;
+  rank: number;
+  source_url: string;
+  source_title: string;
+  page: number | null;
+  bbox: unknown | null;
+  text: string;
+  metadata: string[];
+}
+
+interface AnswerDraftResult {
+  answer: string;
+  citations: CitationChunk[];
+  citationMap: Record<string, CitationMapEntry>;
+  chunkText: Record<string, string>;
 }
 
 type FkTraversalResult =
@@ -218,7 +255,15 @@ function rrfMerge(
       if (existing) {
         existing.rankBm25 = idx + 1;
       } else {
-        map.set(key, { key, table, id, row, rankBm25: idx + 1, rankVector: null, rrfScore: 0 });
+        map.set(key, {
+          key,
+          table,
+          id,
+          row,
+          rankBm25: idx + 1,
+          rankVector: null,
+          rrfScore: 0,
+        });
       }
     });
   }
@@ -232,14 +277,21 @@ function rrfMerge(
       if (existing) {
         existing.rankVector = idx + 1;
       } else {
-        map.set(key, { key, table, id, row, rankBm25: null, rankVector: idx + 1, rrfScore: 0 });
+        map.set(key, {
+          key,
+          table,
+          id,
+          row,
+          rankBm25: null,
+          rankVector: idx + 1,
+          rrfScore: 0,
+        });
       }
     });
   }
 
   for (const c of map.values()) {
-    c.rrfScore =
-      (c.rankBm25 !== null ? 1 / (RRF_K + c.rankBm25) : 0) +
+    c.rrfScore = (c.rankBm25 !== null ? 1 / (RRF_K + c.rankBm25) : 0) +
       (c.rankVector !== null ? 1 / (RRF_K + c.rankVector) : 0);
   }
 
@@ -254,23 +306,40 @@ function rrfMerge(
  * Ancestors do NOT count toward the 8-chunk ceiling.
  * Non-fatal: if the DB call fails, candidates are returned without ancestors.
  */
-async function enrichWithAncestors(candidates: RankedCandidate[]): Promise<EnrichedCandidate[]> {
-  const ordinanceCandidates = candidates.filter(c => c.table === 'ordinance_provisions');
+async function enrichWithAncestors(
+  candidates: RankedCandidate[],
+): Promise<EnrichedCandidate[]> {
+  const ordinanceCandidates = candidates.filter((c) =>
+    c.table === "ordinance_provisions"
+  );
 
-  const parentNodeIds = [...new Set(
-    ordinanceCandidates
-      .map(c => c.row.parent_node_id as string | null)
-      .filter((pid): pid is string => pid !== null)
-  )];
+  const parentNodeIds = [
+    ...new Set(
+      ordinanceCandidates
+        .map((c) => c.row.parent_node_id as string | null)
+        .filter((pid): pid is string => pid !== null),
+    ),
+  ];
 
-  const ancestorMap = new Map<string, { municode_node_id: string; parent_node_id: string | null; title: string; node_depth: number }>();
+  const ancestorMap = new Map<
+    string,
+    {
+      municode_node_id: string;
+      parent_node_id: string | null;
+      title: string;
+      node_depth: number;
+    }
+  >();
 
   if (parentNodeIds.length > 0) {
-    const { data, error: ancestorErr } = await db.rpc('get_ordinance_ancestors', {
-      p_node_ids: parentNodeIds,
-    });
+    const { data, error: ancestorErr } = await db.rpc(
+      "get_ordinance_ancestors",
+      {
+        p_node_ids: parentNodeIds,
+      },
+    );
     if (ancestorErr) {
-      console.error('ancestor lookup error:', ancestorErr.message);
+      console.error("ancestor lookup error:", ancestorErr.message);
     } else {
       for (const row of (data ?? [])) {
         ancestorMap.set(row.municode_node_id, row);
@@ -279,46 +348,76 @@ async function enrichWithAncestors(candidates: RankedCandidate[]): Promise<Enric
   }
 
   // First pass: attach ancestor chains and municode_node_id to each candidate.
-  const withAncestors = candidates.map(c => {
-    const nodeId = c.table === 'ordinance_provisions'
+  const withAncestors = candidates.map((c) => {
+    const nodeId = c.table === "ordinance_provisions"
       ? (c.row.municode_node_id as string | undefined)
       : undefined;
 
-    if (c.table !== 'ordinance_provisions') {
-      return { ...c, ancestors: [], municode_node_id: undefined, superseded_date: null, hasAmendmentHistory: false };
+    if (c.table !== "ordinance_provisions") {
+      return {
+        ...c,
+        ancestors: [],
+        municode_node_id: undefined,
+        superseded_date: null,
+        hasAmendmentHistory: false,
+      };
     }
 
     const myParentId = c.row.parent_node_id as string | null;
     if (!myParentId) {
-      return { ...c, ancestors: [], municode_node_id: nodeId, superseded_date: null, hasAmendmentHistory: false };
+      return {
+        ...c,
+        ancestors: [],
+        municode_node_id: nodeId,
+        superseded_date: null,
+        hasAmendmentHistory: false,
+      };
     }
 
-    const ancestors: Array<{ municode_node_id: string; title: string; node_depth: number }> = [];
+    const ancestors: Array<
+      { municode_node_id: string; title: string; node_depth: number }
+    > = [];
     let currentId: string | null = myParentId;
     const seen = new Set<string>();
     while (currentId && !seen.has(currentId)) {
       seen.add(currentId);
       const ancestor = ancestorMap.get(currentId);
       if (!ancestor) break;
-      ancestors.push({ municode_node_id: ancestor.municode_node_id, title: ancestor.title, node_depth: ancestor.node_depth });
+      ancestors.push({
+        municode_node_id: ancestor.municode_node_id,
+        title: ancestor.title,
+        node_depth: ancestor.node_depth,
+      });
       currentId = ancestor.parent_node_id;
     }
     ancestors.sort((a, b) => a.node_depth - b.node_depth);
-    return { ...c, ancestors, municode_node_id: nodeId, superseded_date: null, hasAmendmentHistory: false };
+    return {
+      ...c,
+      ancestors,
+      municode_node_id: nodeId,
+      superseded_date: null,
+      hasAmendmentHistory: false,
+    };
   });
 
   // Second pass: for is_current=false provisions, derive superseded_date from the
   // effective_date of the current version of the same node if it's in the candidate set.
   const currentVersionDates = new Map<string, string>();
   for (const c of withAncestors) {
-    if (c.table === 'ordinance_provisions' && c.row.is_current === true && c.municode_node_id) {
+    if (
+      c.table === "ordinance_provisions" && c.row.is_current === true &&
+      c.municode_node_id
+    ) {
       const effDate = c.row.effective_date as string | null;
       if (effDate) currentVersionDates.set(c.municode_node_id, effDate);
     }
   }
 
-  return withAncestors.map(c => {
-    if (c.table !== 'ordinance_provisions' || c.row.is_current === true || !c.municode_node_id) {
+  return withAncestors.map((c) => {
+    if (
+      c.table !== "ordinance_provisions" || c.row.is_current === true ||
+      !c.municode_node_id
+    ) {
       return c;
     }
     const superseded_date = currentVersionDates.get(c.municode_node_id) ?? null;
@@ -340,22 +439,24 @@ interface PendingChange {
  * the candidate set. Non-fatal: returns [] on DB error so the judge proceeds
  * without pending change data rather than failing the request.
  */
-async function fetchPendingChanges(candidates: EnrichedCandidate[]): Promise<PendingChange[]> {
+async function fetchPendingChanges(
+  candidates: EnrichedCandidate[],
+): Promise<PendingChange[]> {
   const ordinanceMunicodeIds = candidates
-    .filter(c => c.table === 'ordinance_provisions' && c.municode_node_id)
-    .map(c => c.municode_node_id as string);
+    .filter((c) => c.table === "ordinance_provisions" && c.municode_node_id)
+    .map((c) => c.municode_node_id as string);
 
   const uniqueIds = [...new Set(ordinanceMunicodeIds)];
   if (uniqueIds.length === 0) return [];
 
   const { data, error: dbErr } = await db
-    .from('pending_code_changes')
-    .select('id, municode_node_id, codification_status, proposed_text')
-    .in('municode_node_id', uniqueIds)
-    .eq('codification_status', 'pending');
+    .from("pending_code_changes")
+    .select("id, municode_node_id, codification_status, proposed_text")
+    .in("municode_node_id", uniqueIds)
+    .eq("codification_status", "pending");
 
   if (dbErr) {
-    console.error('pending changes lookup error:', dbErr.message);
+    console.error("pending changes lookup error:", dbErr.message);
     return [];
   }
 
@@ -367,7 +468,8 @@ async function fetchPendingChanges(candidates: EnrichedCandidate[]): Promise<Pen
 /** Heuristic: detect queries that reference a specific past date or time period. */
 function isHistoricalQuery(query: string): boolean {
   return /\b(19|20)\d{2}\b/.test(query) ||
-    /\b(as of|at the time of|before the|prior to|in january|in february|in march|in april|in may|in june|in july|in august|in september|in october|in november|in december)\b/i.test(query);
+    /\b(as of|at the time of|before the|prior to|in january|in february|in march|in april|in may|in june|in july|in august|in september|in october|in november|in december)\b/i
+      .test(query);
 }
 
 /**
@@ -387,17 +489,22 @@ function hardFilterSuperseded(
 
   const currentNodeIds = new Set(
     candidates
-      .filter(c => c.table === 'ordinance_provisions' && c.row.is_current === true)
-      .map(c => c.municode_node_id)
+      .filter((c) =>
+        c.table === "ordinance_provisions" && c.row.is_current === true
+      )
+      .map((c) => c.municode_node_id)
       .filter((id): id is string => id !== undefined),
   );
 
   const amendedNodeIds = new Set<string>();
-  const filtered = candidates.filter(c => {
-    if (c.table !== 'ordinance_provisions') return true;
+  const filtered = candidates.filter((c) => {
+    if (c.table !== "ordinance_provisions") return true;
     if (c.row.is_current === true) return true;
-    const shouldRemove = c.municode_node_id !== undefined && currentNodeIds.has(c.municode_node_id);
-    if (shouldRemove && c.municode_node_id) amendedNodeIds.add(c.municode_node_id);
+    const shouldRemove = c.municode_node_id !== undefined &&
+      currentNodeIds.has(c.municode_node_id);
+    if (shouldRemove && c.municode_node_id) {
+      amendedNodeIds.add(c.municode_node_id);
+    }
     return !shouldRemove;
   });
 
@@ -421,6 +528,100 @@ interface TemporalJudgeResult {
   pendingChangeNotice: string | null;
 }
 
+function asText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function formatUnknown(value: unknown): string {
+  if (value === null || value === undefined) return "null";
+  if (
+    typeof value === "string" || typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function pushMetadata(lines: string[], label: string, value: unknown): void {
+  if (value !== null && value !== undefined && value !== "") {
+    lines.push(`${label}: ${formatUnknown(value)}`);
+  }
+}
+
+function candidateText(c: EnrichedCandidate): string {
+  switch (c.table) {
+    case "ordinance_provisions":
+      return asText(c.row.content) ?? "";
+    case "vote_tallies": {
+      const lines: string[] = [];
+      pushMetadata(lines, "Motion", c.row.motion_text);
+      pushMetadata(lines, "Motion type", c.row.motion_type);
+      pushMetadata(lines, "Outcome", c.row.outcome);
+      pushMetadata(lines, "Meeting date", c.row.meeting_date);
+      const voteParts = [
+        `yes ${c.row.vote_yes ?? 0}`,
+        `no ${c.row.vote_no ?? 0}`,
+        `abstain ${c.row.vote_abstain ?? 0}`,
+        `absent ${c.row.vote_absent ?? 0}`,
+      ];
+      lines.push(`Vote counts: ${voteParts.join(", ")}`);
+      pushMetadata(lines, "Individual votes", c.row.individual_votes);
+      return lines.join("\n");
+    }
+    case "policy_decisions": {
+      const lines = [asText(c.row.raw_extracted_text)].filter((
+        v,
+      ): v is string => v !== null);
+      pushMetadata(lines, "Subject", c.row.subject);
+      pushMetadata(lines, "Decision type", c.row.decision_type);
+      pushMetadata(lines, "Meeting date", c.row.meeting_date);
+      pushMetadata(lines, "Fiscal year", c.row.fiscal_year);
+      pushMetadata(lines, "Amount dollars", c.row.amount_dollars);
+      pushMetadata(lines, "Rate value", c.row.rate_value);
+      pushMetadata(lines, "Rate unit", c.row.rate_unit);
+      pushMetadata(lines, "Effective date", c.row.effective_date);
+      return lines.join("\n");
+    }
+    case "budget_indicators": {
+      const lines = [asText(c.row.raw_extracted_text)].filter((
+        v,
+      ): v is string => v !== null);
+      pushMetadata(lines, "Fiscal year", c.row.fiscal_year);
+      pushMetadata(lines, "Department", c.row.department);
+      pushMetadata(lines, "Program", c.row.program);
+      pushMetadata(lines, "Indicator", c.row.indicator_name);
+      pushMetadata(lines, "Actual", c.row.value_actual);
+      pushMetadata(lines, "Target", c.row.value_target);
+      pushMetadata(lines, "Prior year", c.row.value_prior_year);
+      pushMetadata(lines, "Unit", c.row.unit);
+      return lines.join("\n");
+    }
+    case "narrative_chunks":
+      return asText(c.row.content) ?? "";
+  }
+}
+
+function candidatePage(c: EnrichedCandidate): number | null {
+  return asNumber(c.row.page_number_start) ?? asNumber(c.row.page_number_end);
+}
+
+function candidateBbox(c: EnrichedCandidate): unknown | null {
+  const start = c.row.bbox_start ?? null;
+  const end = c.row.bbox_end ?? null;
+  if (start === null && end === null) return null;
+  if (JSON.stringify(start) === JSON.stringify(end)) return start;
+  return { start, end };
+}
+
 /**
  * Serialize one enriched candidate into a compact text block for the judge prompt.
  * Chunk text is truncated at 600 chars to keep the context window manageable.
@@ -430,29 +631,30 @@ function serializeChunk(c: EnrichedCandidate, index: number): string {
 
   const meta: string[] = [`[${index + 1}] id=${c.id} | table=${c.table}`];
 
-  if (c.table === 'ordinance_provisions') {
-    const isCurrent = c.row.is_current ?? 'unknown';
-    const effectiveDate = c.row.effective_date ?? 'unknown';
-    meta.push(`municode_node_id=${c.municode_node_id ?? 'unknown'}`);
+  if (c.table === "ordinance_provisions") {
+    const isCurrent = c.row.is_current ?? "unknown";
+    const effectiveDate = c.row.effective_date ?? "unknown";
+    meta.push(`municode_node_id=${c.municode_node_id ?? "unknown"}`);
     meta.push(`is_current=${isCurrent}`);
     meta.push(`effective_date=${effectiveDate}`);
-    meta.push(`superseded_date=${c.superseded_date ?? 'null'}`);
+    meta.push(`superseded_date=${c.superseded_date ?? "null"}`);
     if (c.hasAmendmentHistory) {
-      meta.push('has_amendment_history=true');
+      meta.push("has_amendment_history=true");
     }
     if (c.ancestors.length > 0) {
-      meta.push(`ancestors=${c.ancestors.map(a => a.title).join(' > ')}`);
+      meta.push(`ancestors=${c.ancestors.map((a) => a.title).join(" > ")}`);
     }
   }
 
-  lines.push(meta.join(' | '));
+  lines.push(meta.join(" | "));
 
-  const rawText =
-    (c.row.chunk_text ?? c.row.content_text ?? c.row.text ?? '') as string;
-  const truncated = rawText.length > 600 ? rawText.slice(0, 600) + '…' : rawText;
+  const rawText = candidateText(c);
+  const truncated = rawText.length > 600
+    ? rawText.slice(0, 600) + "…"
+    : rawText;
   lines.push(`    ${truncated}`);
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 /**
@@ -462,9 +664,10 @@ function serializeChunk(c: EnrichedCandidate, index: number): string {
  */
 function extractJson(raw: string): unknown | null {
   // Strip markdown code fences if present
-  const stripped = raw.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '').trim();
-  const start = stripped.indexOf('{');
-  const end = stripped.lastIndexOf('}');
+  const stripped = raw.replace(/```(?:json)?\s*/gi, "").replace(/```/g, "")
+    .trim();
+  const start = stripped.indexOf("{");
+  const end = stripped.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) return null;
   try {
     return JSON.parse(stripped.slice(start, end + 1));
@@ -477,25 +680,29 @@ function extractJson(raw: string): unknown | null {
  * Validate and normalise the raw parsed object into a typed JudgeOutput.
  * Returns null if required fields are missing or malformed.
  */
-function validateJudgeOutput(raw: unknown, validIds: Set<string>): JudgeOutput | null {
-  if (typeof raw !== 'object' || raw === null) return null;
+function validateJudgeOutput(
+  raw: unknown,
+  validIds: Set<string>,
+): JudgeOutput | null {
+  if (typeof raw !== "object" || raw === null) return null;
 
   const obj = raw as Record<string, unknown>;
 
   if (!Array.isArray(obj.selected_chunk_ids)) return null;
-  if (typeof obj.temporal_flag !== 'boolean') return null;
+  if (typeof obj.temporal_flag !== "boolean") return null;
 
   // Clamp to JUDGE_OUTPUT_LIMIT and drop any IDs that weren't in the input.
   const selectedIds = (obj.selected_chunk_ids as unknown[])
-    .filter((id): id is string => typeof id === 'string' && validIds.has(id))
+    .filter((id): id is string => typeof id === "string" && validIds.has(id))
     .slice(0, JUDGE_OUTPUT_LIMIT);
 
-  const amendmentCaveat =
-    typeof obj.amendment_caveat === 'string' ? obj.amendment_caveat : null;
-  const pendingChangeNotice =
-    typeof obj.pending_change_notice === 'string' ? obj.pending_change_notice : null;
-  const reasoning =
-    typeof obj.reasoning === 'string' ? obj.reasoning : '';
+  const amendmentCaveat = typeof obj.amendment_caveat === "string"
+    ? obj.amendment_caveat
+    : null;
+  const pendingChangeNotice = typeof obj.pending_change_notice === "string"
+    ? obj.pending_change_notice
+    : null;
+  const reasoning = typeof obj.reasoning === "string" ? obj.reasoning : "";
 
   return {
     selected_chunk_ids: selectedIds,
@@ -532,7 +739,8 @@ async function runTemporalJudge(
   // • The `reasoning` field gives an internal audit trail without a free-text
   //   preamble that could corrupt the JSON parser.
 
-  const systemPrompt = `You are the Temporal Judge for a municipal policy Q&A system (Fairfax County, Virginia).
+  const systemPrompt =
+    `You are the Temporal Judge for a municipal policy Q&A system (Fairfax County, Virginia).
 
 TASK
 Given a user query and up to ${JUDGE_CONTEXT_COUNT} retrieved document chunks, select the ≤${JUDGE_OUTPUT_LIMIT} most relevant, temporally correct chunks to use when answering the query.
@@ -559,16 +767,19 @@ CRITICAL: Output ONLY valid JSON — no preamble, no markdown fences, no explana
 
   // ── User prompt ──────────────────────────────────────────────────────────────
 
-  const chunkBlocks = candidates.map((c, i) => serializeChunk(c, i)).join('\n\n');
+  const chunkBlocks = candidates.map((c, i) => serializeChunk(c, i)).join(
+    "\n\n",
+  );
 
   const pendingBlock = pendingChanges.length === 0
-    ? 'None'
-    : pendingChanges.map(p =>
-        `• node=${p.municode_node_id}: ${p.proposed_text ? p.proposed_text.slice(0, 200) : '(no proposed text)'}`
-      ).join('\n');
+    ? "None"
+    : pendingChanges.map((p) =>
+      `• node=${p.municode_node_id}: ${
+        p.proposed_text ? p.proposed_text.slice(0, 200) : "(no proposed text)"
+      }`
+    ).join("\n");
 
-  const userPrompt =
-    `Query: ${userQuery}
+  const userPrompt = `Query: ${userQuery}
 
 Today's date: ${todayIso}
 
@@ -582,14 +793,14 @@ Output JSON only:`;
 
   const { content, exhausted } = await ollamaChat(
     [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
     ],
     TEMPORAL_JUDGE_TEMPERATURE,
   );
 
   if (exhausted) {
-    console.error('[temporal-judge] Ollama exhausted after all retries');
+    console.error("[temporal-judge] Ollama exhausted after all retries");
     return null;
   }
 
@@ -597,26 +808,36 @@ Output JSON only:`;
 
   const parsed = extractJson(content);
   if (parsed === null) {
-    console.error('[temporal-judge] JSON extraction failed; raw response:', content.slice(0, 400));
+    console.error(
+      "[temporal-judge] JSON extraction failed; raw response:",
+      content.slice(0, 400),
+    );
     return null;
   }
 
-  const validIds = new Set(candidates.map(c => c.id));
+  const validIds = new Set(candidates.map((c) => c.id));
   const judgeOutput = validateJudgeOutput(parsed, validIds);
 
   if (judgeOutput === null) {
-    console.error('[temporal-judge] schema validation failed; parsed:', JSON.stringify(parsed).slice(0, 400));
+    console.error(
+      "[temporal-judge] schema validation failed; parsed:",
+      JSON.stringify(parsed).slice(0, 400),
+    );
     return null;
   }
 
   console.log(`[temporal-judge] reasoning: ${judgeOutput.reasoning}`);
-  console.log(`[temporal-judge] selected ${judgeOutput.selected_chunk_ids.length} of ${candidates.length} chunks; temporal_flag=${judgeOutput.temporal_flag}`);
+  console.log(
+    `[temporal-judge] selected ${judgeOutput.selected_chunk_ids.length} of ${candidates.length} chunks; temporal_flag=${judgeOutput.temporal_flag}`,
+  );
 
   // Filter candidates to only those selected by the judge, preserving their
   // original RRF order (the judge's selected_chunk_ids list carries relevance order).
-  const idIndex = new Map(judgeOutput.selected_chunk_ids.map((id, i) => [id, i]));
+  const idIndex = new Map(
+    judgeOutput.selected_chunk_ids.map((id, i) => [id, i]),
+  );
   const filteredCandidates = candidates
-    .filter(c => idIndex.has(c.id))
+    .filter((c) => idIndex.has(c.id))
     .sort((a, b) => (idIndex.get(a.id) ?? 999) - (idIndex.get(b.id) ?? 999));
 
   return {
@@ -629,7 +850,10 @@ Output JSON only:`;
 
 // ── Scripted FK traversal ────────────────────────────────────────────────────
 
-function fkCandidate(table: "vote_tallies" | "policy_decisions", row: Record<string, unknown>): EnrichedCandidate {
+function fkCandidate(
+  table: "vote_tallies" | "policy_decisions",
+  row: Record<string, unknown>,
+): EnrichedCandidate {
   const id = row.id as string;
   return {
     key: `${table}:${id}`,
@@ -651,38 +875,47 @@ function fkCandidate(table: "vote_tallies" | "policy_decisions", row: Record<str
  * linked rows that must travel with the selected chunk even when they had no
  * BM25/vector score of their own.
  */
-async function traverseForeignKeys(candidates: EnrichedCandidate[]): Promise<FkTraversalResult> {
-  const seenKeys = new Set(candidates.map(c => c.key));
+async function traverseForeignKeys(
+  candidates: EnrichedCandidate[],
+): Promise<FkTraversalResult> {
+  const seenKeys = new Set(candidates.map((c) => c.key));
 
-  const reconsiderationIds = [...new Set(
-    candidates
-      .filter(c => c.table === 'vote_tallies')
-      .map(c => c.row.reconsidered_by)
-      .filter((id): id is string => typeof id === 'string' && id.length > 0),
-  )].filter(id => !seenKeys.has(`vote_tallies:${id}`));
+  const reconsiderationIds = [
+    ...new Set(
+      candidates
+        .filter((c) => c.table === "vote_tallies")
+        .map((c) => c.row.reconsidered_by)
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    ),
+  ].filter((id) => !seenKeys.has(`vote_tallies:${id}`));
 
-  const amendedDecisionIds = [...new Set(
-    candidates
-      .filter(c => c.table === 'policy_decisions')
-      .map(c => c.row.amends_decision_id)
-      .filter((id): id is string => typeof id === 'string' && id.length > 0),
-  )].filter(id => !seenKeys.has(`policy_decisions:${id}`));
+  const amendedDecisionIds = [
+    ...new Set(
+      candidates
+        .filter((c) => c.table === "policy_decisions")
+        .map((c) => c.row.amends_decision_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    ),
+  ].filter((id) => !seenKeys.has(`policy_decisions:${id}`));
 
   const appended: EnrichedCandidate[] = [];
 
   if (reconsiderationIds.length > 0) {
     const { data, error: dbErr } = await db
-      .from('vote_tallies')
-      .select('*')
-      .in('id', reconsiderationIds);
+      .from("vote_tallies")
+      .select("*")
+      .in("id", reconsiderationIds);
 
     if (dbErr) {
-      console.error('vote_tallies FK traversal error:', dbErr.message);
-      return { ok: false, message: 'Failed to fetch linked reconsideration vote context.' };
+      console.error("vote_tallies FK traversal error:", dbErr.message);
+      return {
+        ok: false,
+        message: "Failed to fetch linked reconsideration vote context.",
+      };
     }
 
     for (const row of (data ?? []) as Record<string, unknown>[]) {
-      const linked = fkCandidate('vote_tallies', row);
+      const linked = fkCandidate("vote_tallies", row);
       if (!seenKeys.has(linked.key)) {
         appended.push(linked);
         seenKeys.add(linked.key);
@@ -692,17 +925,20 @@ async function traverseForeignKeys(candidates: EnrichedCandidate[]): Promise<FkT
 
   if (amendedDecisionIds.length > 0) {
     const { data, error: dbErr } = await db
-      .from('policy_decisions')
-      .select('*')
-      .in('id', amendedDecisionIds);
+      .from("policy_decisions")
+      .select("*")
+      .in("id", amendedDecisionIds);
 
     if (dbErr) {
-      console.error('policy_decisions FK traversal error:', dbErr.message);
-      return { ok: false, message: 'Failed to fetch linked amended decision context.' };
+      console.error("policy_decisions FK traversal error:", dbErr.message);
+      return {
+        ok: false,
+        message: "Failed to fetch linked amended decision context.",
+      };
     }
 
     for (const row of (data ?? []) as Record<string, unknown>[]) {
-      const linked = fkCandidate('policy_decisions', row);
+      const linked = fkCandidate("policy_decisions", row);
       if (!seenKeys.has(linked.key)) {
         appended.push(linked);
         seenKeys.add(linked.key);
@@ -716,13 +952,13 @@ async function traverseForeignKeys(candidates: EnrichedCandidate[]): Promise<FkT
 // ── Completeness check ───────────────────────────────────────────────────────
 
 function appendCaveat(existing: string | null, caveat: string): string {
-  if (existing === null || existing.trim() === '') return caveat;
+  if (existing === null || existing.trim() === "") return caveat;
   if (existing.includes(caveat)) return existing;
   return `${existing} ${caveat}`;
 }
 
 function countVersionChunks(candidates: EnrichedCandidate[]): number {
-  return candidates.filter(c => c.table === 'ordinance_provisions').length;
+  return candidates.filter((c) => c.table === "ordinance_provisions").length;
 }
 
 function applyCompletenessCheck(
@@ -736,8 +972,332 @@ function applyCompletenessCheck(
 
   return {
     incompleteSearchWarning: true,
-    amendmentCaveat: appendCaveat(amendmentCaveat, VERSION_HISTORY_INCOMPLETE_CAVEAT),
+    amendmentCaveat: appendCaveat(
+      amendmentCaveat,
+      VERSION_HISTORY_INCOMPLETE_CAVEAT,
+    ),
   };
+}
+
+// ── Answer Drafter ───────────────────────────────────────────────────────────
+
+async function fetchSourceDocuments(
+  candidates: EnrichedCandidate[],
+): Promise<Map<string, SourceDocument>> {
+  const documentIds = [
+    ...new Set(
+      candidates
+        .map((c) => c.row.document_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    ),
+  ];
+
+  if (documentIds.length === 0) return new Map();
+
+  const { data, error: dbErr } = await db
+    .from("documents")
+    .select("id, url, title, filename")
+    .in("id", documentIds);
+
+  if (dbErr) {
+    console.error("document source lookup error:", dbErr.message);
+    return new Map();
+  }
+
+  return new Map(
+    ((data ?? []) as SourceDocument[]).map((doc) => [doc.id, doc]),
+  );
+}
+
+function sourceTitle(
+  doc: SourceDocument | undefined,
+  c: EnrichedCandidate,
+): string {
+  if (doc?.title) return doc.title;
+  if (doc?.filename) return doc.filename;
+  if (c.table === "ordinance_provisions") {
+    return asText(c.row.section_title) ?? asText(c.row.municode_node_id) ??
+      "Ordinance provision";
+  }
+  return c.table;
+}
+
+function buildAnnotatedDrafterChunks(
+  candidates: EnrichedCandidate[],
+  documents: Map<string, SourceDocument>,
+): AnnotatedDrafterChunk[] {
+  return candidates.map((c, index) => {
+    const doc = typeof c.row.document_id === "string"
+      ? documents.get(c.row.document_id)
+      : undefined;
+    const metadata: string[] = [`table=${c.table}`];
+
+    if (c.table === "ordinance_provisions") {
+      metadata.push(`municode_node_id=${c.municode_node_id ?? "unknown"}`);
+      metadata.push(
+        `is_current=${formatUnknown(c.row.is_current ?? "unknown")}`,
+      );
+      metadata.push(
+        `effective_date=${formatUnknown(c.row.effective_date ?? "unknown")}`,
+      );
+      metadata.push(`superseded_date=${c.superseded_date ?? "null"}`);
+      if (c.ancestors.length > 0) {
+        metadata.push(
+          `ancestors=${c.ancestors.map((a) => a.title).join(" > ")}`,
+        );
+      }
+    }
+
+    return {
+      chunk_id: c.id,
+      table: c.table,
+      rank: index + 1,
+      source_url: doc?.url ?? "",
+      source_title: sourceTitle(doc, c),
+      page: candidatePage(c),
+      bbox: candidateBbox(c),
+      text: candidateText(c),
+      metadata,
+    };
+  });
+}
+
+function serializeDrafterChunk(chunk: AnnotatedDrafterChunk): string {
+  return [
+    `[${chunk.rank}] chunk_id=${chunk.chunk_id}`,
+    `source_title=${chunk.source_title}`,
+    `source_url=${chunk.source_url || "unknown"}`,
+    `page=${chunk.page === null ? "null" : chunk.page}`,
+    `bbox=${formatUnknown(chunk.bbox)}`,
+    `metadata=${chunk.metadata.join(" | ")}`,
+    "text:",
+    chunk.text,
+  ].join("\n");
+}
+
+function detectQuestionStyle(
+  query: string,
+): "terse" | "structured" | "conversational" {
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  if (
+    /\b(list|compare|break down|table|bullets?|steps?|summarize)\b/i.test(query)
+  ) {
+    return "structured";
+  }
+  if (words.length <= 8) return "terse";
+  if (
+    /\b(can you|could you|please|explain|walk me through|what does this mean)\b/i
+      .test(query)
+  ) {
+    return "conversational";
+  }
+  return "structured";
+}
+
+function caveatList(
+  amendmentCaveat: string | null,
+  pendingChangeNotice: string | null,
+  incompleteSearchWarning: boolean,
+): string[] {
+  const caveats = [amendmentCaveat, pendingChangeNotice]
+    .filter((value): value is string =>
+      typeof value === "string" && value.trim() !== ""
+    )
+    .map((value) => value.trim());
+
+  if (incompleteSearchWarning) {
+    caveats.push(VERSION_HISTORY_INCOMPLETE_CAVEAT);
+  }
+
+  return [...new Set(caveats)];
+}
+
+function withRequiredCaveats(answer: string, caveats: string[]): string {
+  const missing = caveats.filter((caveat) => !answer.includes(caveat));
+  if (missing.length === 0) return answer;
+  return `${answer.trim()}\n\nCaveats: ${missing.join(" ")}`;
+}
+
+function validateDrafterOutput(
+  raw: unknown,
+  chunks: AnnotatedDrafterChunk[],
+  caveats: string[],
+): AnswerDraftResult | null {
+  if (typeof raw !== "object" || raw === null) return null;
+
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.answer !== "string" || obj.answer.trim() === "") return null;
+
+  const chunksById = new Map(chunks.map((chunk) => [chunk.chunk_id, chunk]));
+  const rawCitationMap = obj.citation_map;
+  if (
+    typeof rawCitationMap !== "object" || rawCitationMap === null ||
+    Array.isArray(rawCitationMap)
+  ) {
+    return null;
+  }
+
+  const citationMap: Record<string, CitationMapEntry> = {};
+  const citedIds = new Set<string>();
+
+  for (
+    const [claim, value] of Object.entries(
+      rawCitationMap as Record<string, unknown>,
+    )
+  ) {
+    if (
+      claim.trim() === "" || typeof value !== "object" || value === null ||
+      Array.isArray(value)
+    ) {
+      return null;
+    }
+
+    const entry = value as Record<string, unknown>;
+    const chunkId = typeof entry.chunk_id === "string" ? entry.chunk_id : null;
+    if (chunkId === null || !chunksById.has(chunkId)) {
+      return null;
+    }
+
+    const chunk = chunksById.get(chunkId)!;
+    citationMap[claim] = {
+      chunk_id: chunkId,
+      page: chunk.page,
+      bbox: chunk.bbox,
+    };
+    citedIds.add(chunkId);
+  }
+
+  const rawAnswer = obj.answer.trim();
+  const isRefusal = rawAnswer.toLowerCase().includes("not in the documents");
+  const answer = isRefusal
+    ? "not in the documents"
+    : withRequiredCaveats(rawAnswer, caveats);
+  if (citedIds.size === 0 && !isRefusal) return null;
+
+  const citedChunks = chunks.filter((chunk) => citedIds.has(chunk.chunk_id));
+  const citations = citedChunks.map((chunk, index): CitationChunk => ({
+    chunk_id: chunk.chunk_id,
+    source_url: chunk.source_url,
+    source_title: chunk.source_title,
+    page_number: chunk.page,
+    bbox: chunk.bbox,
+    rank: index + 1,
+  }));
+
+  const chunkText = Object.fromEntries(
+    citedChunks.map((chunk) => [chunk.chunk_id, chunk.text]),
+  );
+
+  return { answer, citations, citationMap, chunkText };
+}
+
+function refusalDraft(): AnswerDraftResult {
+  return {
+    answer: "not in the documents",
+    citations: [],
+    citationMap: {},
+    chunkText: {},
+  };
+}
+
+async function runAnswerDrafter(
+  userQuery: string,
+  candidates: EnrichedCandidate[],
+  amendmentCaveat: string | null,
+  pendingChangeNotice: string | null,
+  incompleteSearchWarning: boolean,
+): Promise<AnswerDraftResult | null> {
+  if (candidates.length === 0) return refusalDraft();
+
+  const documents = await fetchSourceDocuments(candidates);
+  const chunks = buildAnnotatedDrafterChunks(candidates, documents);
+  const caveats = caveatList(
+    amendmentCaveat,
+    pendingChangeNotice,
+    incompleteSearchWarning,
+  );
+  const styleHint = detectQuestionStyle(userQuery);
+
+  const systemPrompt =
+    `You are the Answer Drafter for a municipal policy Q&A system.
+
+Use only the provided document chunks. Do not use outside knowledge.
+
+Required behavior:
+1. Detect the user's question style and adapt prose:
+   - terse: answer in one or two concise sentences.
+   - structured: use short paragraphs or bullets when comparison/listing helps.
+   - conversational: answer plainly with enough context for a non-specialist.
+2. If the chunks do not support the answer, answer exactly: "not in the documents".
+3. Every document-supported textual claim must cite a chunk inline.
+4. Every numeric claim must cite chunk_id, page, and bbox inline.
+5. Use this inline citation format after each claim: [chunk_id=<id>; page=<page-or-null>; bbox=<bbox-or-null>].
+6. Attach caveats when provided; caveats do not need document citations.
+7. Output only valid JSON. No markdown fence and no prose outside JSON.
+
+JSON schema:
+{
+  "answer": "<draft answer text with inline citations>",
+  "citation_map": {
+    "<claim text without inline citation>": {
+      "chunk_id": "<one provided chunk_id>",
+      "page": <number or null>,
+      "bbox": <bbox object/array/string or null>
+    }
+  }
+}`;
+
+  const caveatBlock = caveats.length === 0 ? "None" : caveats.join("\n");
+  const contextBlock = chunks.map(serializeDrafterChunk).join("\n\n---\n\n");
+
+  const userPrompt = `User query:
+${userQuery}
+
+Question style hint from deterministic precheck: ${styleHint}. You may override it if the query clearly asks for a different style.
+
+Caveats to attach if applicable:
+${caveatBlock}
+
+Annotated final context (${chunks.length} chunks, highest relevance first):
+${contextBlock}
+
+Output JSON only:`;
+
+  const { content, exhausted } = await ollamaChat(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    ANSWER_DRAFTER_TEMPERATURE,
+  );
+
+  if (exhausted) {
+    console.error("[answer-drafter] Ollama exhausted after all retries");
+    return null;
+  }
+
+  const parsed = extractJson(content);
+  if (parsed === null) {
+    console.error(
+      "[answer-drafter] JSON extraction failed; raw response:",
+      content.slice(0, 400),
+    );
+    return null;
+  }
+
+  const draft = validateDrafterOutput(parsed, chunks, caveats);
+  if (draft === null) {
+    console.error(
+      "[answer-drafter] schema validation failed; parsed:",
+      JSON.stringify(parsed).slice(0, 400),
+    );
+    return null;
+  }
+
+  console.log(
+    `[answer-drafter] drafted answer with ${draft.citations.length} cited chunks`,
+  );
+  return draft;
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -751,15 +1311,18 @@ Deno.serve(async (req: Request): Promise<Response> => {
   try {
     const body = (await req.json()) as QueryRequest;
     if (typeof body?.query !== "string" || !body.query.trim()) {
-      return error("NOT_FOUND", "Request body must contain a non-empty `query` string.", 400);
+      return error(
+        "NOT_FOUND",
+        "Request body must contain a non-empty `query` string.",
+        400,
+      );
     }
     query = body.query.trim();
   } catch {
     return error("NOT_FOUND", "Invalid JSON body.", 400);
   }
 
-  const ip =
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
     req.headers.get("x-real-ip") ??
     "unknown";
 
@@ -767,13 +1330,21 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const allowed = await isWithinRateLimit(ip);
   if (!allowed) {
-    return error("RATE_LIMITED", "Too many requests. Please wait before retrying.", 429);
+    return error(
+      "RATE_LIMITED",
+      "Too many requests. Please wait before retrying.",
+      429,
+    );
   }
 
   // Increment bucket BEFORE retrieval — every non-429 request must write a row.
   const bucketWritten = await writeBucket(ip);
   if (!bucketWritten) {
-    return error("INGESTION_FAILED", "Service temporarily unavailable. Please retry.", 503);
+    return error(
+      "INGESTION_FAILED",
+      "Service temporarily unavailable. Please retry.",
+      503,
+    );
   }
 
   // ── Step 2: Embed query (Supabase AI Session — gte-small, 384d) ────────────
@@ -782,7 +1353,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   let queryEmbedding: number[];
   try {
-    queryEmbedding = await session.run(query, { mean_pool: true, normalize: true });
+    queryEmbedding = await session.run(query, {
+      mean_pool: true,
+      normalize: true,
+    });
   } catch (embedErr) {
     console.error("embedding error:", embedErr);
     return error("INGESTION_FAILED", "Failed to embed query.", 500);
@@ -813,6 +1387,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const incompleteResponse: QueryResponseData = {
       answer: "",
       citations: [] as CitationChunk[],
+      citationMap: {},
       chunkText: {},
       temporalFlag: false,
       amendmentCaveat: null,
@@ -833,21 +1408,27 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // ── Step 6 (task 2-9): Temporal Judge ──────────────────────────────────────
 
   const historical = isHistoricalQuery(query);
-  const { filtered: preFiltered, amendedNodeIds } = hardFilterSuperseded(enriched, historical);
+  const { filtered: preFiltered, amendedNodeIds } = hardFilterSuperseded(
+    enriched,
+    historical,
+  );
 
   // Tag each remaining candidate so the judge sees has_amendment_history=true
   // for sections where a superseded peer was removed by the pre-filter.
-  const taggedCandidates = preFiltered.map(c => ({
+  const taggedCandidates = preFiltered.map((c) => ({
     ...c,
-    hasAmendmentHistory:
-      c.table === 'ordinance_provisions' &&
+    hasAmendmentHistory: c.table === "ordinance_provisions" &&
       c.municode_node_id !== undefined &&
       amendedNodeIds.has(c.municode_node_id),
   }));
 
   const pendingChanges = await fetchPendingChanges(taggedCandidates);
 
-  const judgeResult = await runTemporalJudge(query, taggedCandidates, pendingChanges);
+  const judgeResult = await runTemporalJudge(
+    query,
+    taggedCandidates,
+    pendingChanges,
+  );
 
   // AC 7: On Ollama exhaustion, return clean error — never silently fall back
   // to the unfiltered chunk set.
@@ -880,22 +1461,40 @@ Deno.serve(async (req: Request): Promise<Response> => {
     judgeResult.amendmentCaveat,
   );
 
-  // ── TODO task 2-11: Answer Drafter LLM call ────────────────────────────────
+  // ── Step 9 (task 2-11): Answer Drafter LLM call ──────────────────────────
+  // Keep the drafter context at the build-plan ceiling. FK traversal appends
+  // linked rows after the selected context, so lower-priority overflow rows are
+  // excluded here rather than expanding the answer prompt beyond 8 chunks.
+
+  const drafterContext = finalContext.slice(0, JUDGE_OUTPUT_LIMIT);
+  const draft = await runAnswerDrafter(
+    query,
+    drafterContext,
+    completeness.amendmentCaveat,
+    pendingChangeNotice,
+    completeness.incompleteSearchWarning,
+  );
+
+  if (draft === null) {
+    return error(
+      "OLLAMA_EXHAUSTED",
+      "Unable to process your query right now. Please try again in a moment.",
+    );
+  }
+
   // ── TODO task 2-12: Verifier LLM call ──────────────────────────────────────
   // ── TODO task 2-13: Freshness timestamp ────────────────────────────────────
 
-  // Incomplete pipeline response — steps 2-11 through 2-13 not yet implemented.
-  // finalContext holds the temporally-filtered chunks plus any required FK rows
-  // ready for the Answer Drafter (task 2-11).
-  const incompleteResponse: QueryResponseData = {
-    answer: "",
-    citations: [] as CitationChunk[],
-    chunkText: {},
+  const responseData: QueryResponseData = {
+    answer: draft.answer,
+    citations: draft.citations,
+    citationMap: draft.citationMap,
+    chunkText: draft.chunkText,
     temporalFlag,
     amendmentCaveat: completeness.amendmentCaveat,
     pendingChangeNotice,
     incompleteSearchWarning: completeness.incompleteSearchWarning,
     freshnessTimestamp: null,
   };
-  return success<QueryResponseData>(incompleteResponse);
+  return success<QueryResponseData>(responseData);
 });
