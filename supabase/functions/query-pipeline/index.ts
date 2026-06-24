@@ -159,6 +159,10 @@ interface RankedCandidate {
   rrfScore: number; // 1/(K+rank_bm25) + 1/(K+rank_vector), missing leg = 0
 }
 
+interface EnrichedCandidate extends RankedCandidate {
+  ancestors: Array<{ municode_node_id: string; title: string; node_depth: number }>;
+}
+
 /**
  * Merge BM25 and vector result lists using Reciprocal Rank Fusion.
  *
@@ -209,6 +213,59 @@ function rrfMerge(
   }
 
   return Array.from(map.values()).sort((a, b) => b.rrfScore - a.rrfScore);
+}
+
+// ── Ancestor enrichment ───────────────────────────────────────────────────────
+
+/**
+ * For each ordinance_provisions candidate, fetch all ancestor nodes via a
+ * single batched recursive DB call and attach them as metadata.
+ * Ancestors do NOT count toward the 8-chunk ceiling.
+ * Non-fatal: if the DB call fails, candidates are returned without ancestors.
+ */
+async function enrichWithAncestors(candidates: RankedCandidate[]): Promise<EnrichedCandidate[]> {
+  const ordinanceCandidates = candidates.filter(c => c.table === 'ordinance_provisions');
+
+  const parentNodeIds = [...new Set(
+    ordinanceCandidates
+      .map(c => c.row.parent_node_id as string | null)
+      .filter((pid): pid is string => pid !== null)
+  )];
+
+  const ancestorMap = new Map<string, { municode_node_id: string; parent_node_id: string | null; title: string; node_depth: number }>();
+
+  if (parentNodeIds.length > 0) {
+    const { data, error: ancestorErr } = await db.rpc('get_ordinance_ancestors', {
+      p_node_ids: parentNodeIds,
+    });
+    if (ancestorErr) {
+      console.error('ancestor lookup error:', ancestorErr.message);
+    } else {
+      for (const row of (data ?? [])) {
+        ancestorMap.set(row.municode_node_id, row);
+      }
+    }
+  }
+
+  return candidates.map(c => {
+    if (c.table !== 'ordinance_provisions') return { ...c, ancestors: [] };
+
+    const myParentId = c.row.parent_node_id as string | null;
+    if (!myParentId) return { ...c, ancestors: [] };
+
+    const ancestors: Array<{ municode_node_id: string; title: string; node_depth: number }> = [];
+    let currentId: string | null = myParentId;
+    const seen = new Set<string>();
+    while (currentId && !seen.has(currentId)) {
+      seen.add(currentId);
+      const ancestor = ancestorMap.get(currentId);
+      if (!ancestor) break;
+      ancestors.push({ municode_node_id: ancestor.municode_node_id, title: ancestor.title, node_depth: ancestor.node_depth });
+      currentId = ancestor.parent_node_id;
+    }
+    ancestors.sort((a, b) => a.node_depth - b.node_depth);
+    return { ...c, ancestors };
+  });
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -294,17 +351,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return success<QueryResponseData>(incompleteResponse);
   }
 
-  return success({
-    candidates: ranked.map((c) => ({
-      key: c.key,
-      table: c.table,
-      id: c.id,
-      rrf_score: c.rrfScore,
-      rank_bm25: c.rankBm25,
-      rank_vector: c.rankVector,
-      row: c.row,
-    })),
-    incomplete_search: false,
-    rrf_max_score: maxScore,
-  });
+  const top8 = ranked.slice(0, 8);
+  const enriched = await enrichWithAncestors(top8);
+  return success({ candidates: enriched, total: ranked.length });
 });
