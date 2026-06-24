@@ -2,9 +2,10 @@
 
 Task 2-21b contract verification. This document describes the implemented Edge
 Function request and response shapes from the function source on this branch.
-Only `query-pipeline`, `ingest-orchestrator`, and `keepalive-health` are present
-in this worktree. The full query response assembly, `change-detection`, and
-`reconciliation` contracts remain planned/pending merge.
+Only `query-pipeline`, `ingest-orchestrator`, `keepalive-health`, and
+`acknowledge-alert` are present in this worktree. The full query response
+assembly, `change-detection`, and `reconciliation` contracts remain
+planned/pending merge.
 
 All functions return the shared envelope from `_shared/response.ts`:
 
@@ -244,3 +245,59 @@ No body required.
 | Status | Error code | Condition |
 | ---: | --- | --- |
 | 500 | `INGESTION_FAILED` | Supabase `ping()` RPC failed. |
+
+---
+
+## acknowledge-alert
+
+**Path:** `/functions/v1/acknowledge-alert`
+**Method:** `POST`
+**Auth:** Admin secret in `x-admin-secret: <ADMIN_SECRET>`. The handler also accepts
+`Authorization: Bearer <ADMIN_SECRET>` for caller compatibility.
+
+Acknowledges one `pending_alerts` row. A wrong or missing secret returns `401`
+before request body parsing or database access.
+
+### Request
+
+```json
+{
+  "id": "pending_alert uuid"
+}
+```
+
+`pending_alert_id` is accepted as a compatibility alias for `id`.
+
+### Success
+
+Unacknowledged alerts are updated and returned:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "id": "uuid",
+    "alert_type": "ingestion_failure",
+    "details": {},
+    "triggered_at": "2026-06-23T12:00:00.000Z",
+    "acknowledged": true,
+    "acknowledged_at": "2026-06-23T13:14:15.000Z",
+    "created_at": "2026-06-23T12:00:00.000Z"
+  }
+}
+```
+
+Already acknowledged alerts are idempotent: the existing row is returned with
+`200` and no timestamp change.
+
+### Errors
+
+| Status | Error code | Condition |
+| ---: | --- | --- |
+| 405 | `NOT_FOUND` | Method is not `POST`. |
+| 400 | `NOT_FOUND` | Body is invalid JSON. |
+| 400 | `NOT_FOUND` | `id` is missing or is not a valid UUID. |
+| 401 | `UNAUTHORIZED` | Admin secret is missing or incorrect. |
+| 404 | `NOT_FOUND` | Alert ID does not exist. |
+| 500 | `INGESTION_FAILED` | `ADMIN_SECRET` is not configured. |
+| 500 | `INGESTION_FAILED` | Alert lookup or update failed. |
