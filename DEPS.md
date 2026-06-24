@@ -34,6 +34,7 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 | Purpose | Library | Import/Submodule | Pinned Version | Notes |
 |---|---|---|---|---|
 | Application-side primary key UUID v7 generation | `@std/uuid` | `@std/uuid/v7` via `jsr:@std/uuid@1.1.1/v7` | `1.1.1` | Canonical exports are `generate`, `validate`, and `extractTimestamp`. Do not use `unstable-v7` or another UUID v7 source. |
+| Supabase Data API client (PostgREST-backed) for all Edge Functions | `@supabase/supabase-js` | `npm:@supabase/supabase-js@2` | `2.x` (npm floating minor) | Service-role client only — bypasses RLS, server-side Edge Functions only, never shipped to frontend. Instantiated once in `_shared/db-client.ts`; all Edge Functions import from there. This is the PostgREST Data API path (`SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`), **not** a raw Postgres pooler connection. If task 2-7 (RRF retrieval) requires raw SQL that PostgREST cannot express, a separate `_shared/db-pool.ts` will be created at that time with documented rationale. |
 
 ## Edge Function Naming Conventions
 
