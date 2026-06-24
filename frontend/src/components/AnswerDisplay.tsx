@@ -1,20 +1,46 @@
 'use client';
 
-import type { QueryResponseData } from '@shared/types';
+import { useState, useCallback } from 'react';
+import type { QueryResponseData, CitationChunk } from '@shared/types';
+import CitationPanel from './CitationPanel';
 
 interface Props {
   result: QueryResponseData;
 }
 
-// Split answer text on [N] citation markers and render them as superscripts.
-function renderAnswerWithCitations(answer: string) {
+interface MarkerClickHandler {
+  (citationIndex: number): void;
+}
+
+// Split answer text on [N] markers; render clickable superscripts when citations are available.
+function renderAnswerWithCitations(
+  answer: string,
+  citations: CitationChunk[],
+  onMarkerClick: MarkerClickHandler,
+) {
   const parts = answer.split(/(\[\d+\])/g);
   return parts.map((part, i) => {
     const match = part.match(/^\[(\d+)\]$/);
     if (match) {
+      const n = parseInt(match[1], 10);
+      const hasCitation = n >= 1 && n <= citations.length;
+      if (hasCitation) {
+        return (
+          <sup key={i}>
+            <button
+              type="button"
+              onClick={() => onMarkerClick(n)}
+              className="text-blue-600 font-medium text-xs hover:text-blue-800 underline decoration-dotted cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded-sm px-0.5"
+              aria-label={`View citation ${n}`}
+            >
+              [{n}]
+            </button>
+          </sup>
+        );
+      }
       return (
         <sup key={i} className="text-blue-600 font-medium text-xs">
-          [{match[1]}]
+          [{n}]
         </sup>
       );
     }
@@ -24,13 +50,25 @@ function renderAnswerWithCitations(answer: string) {
 
 export default function AnswerDisplay({ result }: Props) {
   const citations = result.citations ?? [];
+  const [activeCitationIndex, setActiveCitationIndex] = useState<number | null>(null);
+
+  const handleMarkerClick = useCallback((n: number) => {
+    setActiveCitationIndex(n);
+  }, []);
+
+  const handlePanelClose = useCallback(() => {
+    setActiveCitationIndex(null);
+  }, []);
+
+  const activeCitation =
+    activeCitationIndex != null ? citations[activeCitationIndex - 1] : null;
 
   return (
     <div className="w-full max-w-2xl flex flex-col gap-4">
       {/* Answer */}
       <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
         <p className="text-gray-800 whitespace-pre-wrap leading-relaxed">
-          {renderAnswerWithCitations(result.answer)}
+          {renderAnswerWithCitations(result.answer, citations, handleMarkerClick)}
         </p>
 
         {result.temporalFlag && (
@@ -99,6 +137,16 @@ export default function AnswerDisplay({ result }: Props) {
           </div>
         )}
       </div>
+
+      {/* Citation detail panel (bottom sheet) */}
+      {activeCitation && activeCitationIndex != null && (
+        <CitationPanel
+          citation={activeCitation}
+          chunkText={result.chunkText?.[activeCitation.chunk_id]}
+          citationIndex={activeCitationIndex}
+          onClose={handlePanelClose}
+        />
+      )}
     </div>
   );
 }
