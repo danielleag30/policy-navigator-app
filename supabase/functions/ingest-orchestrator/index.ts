@@ -71,7 +71,7 @@ async function writePendingAlert(
   message: string,
 ): Promise<void> {
   const { error: alertErr } = await db.from("pending_alerts").insert({
-    id: crypto.randomUUID(),
+    id: uuidv7(),
     alert_type: "ingestion_failure" as const,
     details: { pending_ingestion_id: pendingIngestionId, message },
     triggered_at: new Date().toISOString(),
