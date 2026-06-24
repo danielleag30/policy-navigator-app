@@ -12,7 +12,11 @@
  *
  * 3. Model is hardcoded to `gemma4:31b-cloud`. No caller should pass a model string.
  *
- * 4. Temperature is a per-call parameter (not hardcoded). Callers should document their
+ * 4. Ollama Cloud deployments should set the Supabase Edge Function secret
+ *    `OLLAMA_API_KEY`. When present, requests include `Authorization: Bearer <key>`.
+ *    The client still works without the secret for local or unauthenticated endpoints.
+ *
+ * 5. Temperature is a per-call parameter (not hardcoded). Callers should document their
  *    choice in DEPS.md:
  *      - Extraction tasks (2-4): 0.1 — deterministic structured output
  *      - Temporal Judge (2-9):   0.0 — maximum determinism for filtering decisions
@@ -21,7 +25,8 @@
  */
 
 const OLLAMA_MODEL = "gemma4:31b-cloud";
-const OLLAMA_EXHAUSTED_MSG = "Unable to process your query right now. Please try again in a moment.";
+const OLLAMA_EXHAUSTED_MSG =
+  "Unable to process your query right now. Please try again in a moment.";
 const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 500; // exponential: 500ms, 1000ms, 2000ms
 
@@ -55,6 +60,11 @@ export async function ollamaChat(
 
   const timeoutMs = parseInt(Deno.env.get("OLLAMA_TIMEOUT_MS") ?? "15000", 10);
   const endpoint = `${baseUrl.replace(/\/$/, "")}/api/chat`;
+  const apiKey = Deno.env.get("OLLAMA_API_KEY");
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
 
   const body = JSON.stringify({
     model: OLLAMA_MODEL,
@@ -71,7 +81,7 @@ export async function ollamaChat(
     try {
       const resp = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body,
         signal: controller.signal,
       });
@@ -118,9 +128,7 @@ export async function ollamaChat(
 
 /** Exponential backoff: 500ms * 2^(attempt-1) */
 function _backoff(attempt: number): Promise<void> {
-  return new Promise((resolve) =>
-    setTimeout(resolve, BASE_BACKOFF_MS * Math.pow(2, attempt - 1))
-  );
+  return new Promise((resolve) => setTimeout(resolve, BASE_BACKOFF_MS * Math.pow(2, attempt - 1)));
 }
 
 /** The clean user-facing exhaustion message — callers should return this verbatim. */
