@@ -36,6 +36,8 @@ Design decisions:
 import io
 import logging
 import os
+import pathlib
+import tempfile
 from typing import Optional
 
 import httpx
@@ -59,12 +61,6 @@ except ImportError:
         from docling.datamodel.document import TextItem  # type: ignore
     except ImportError:
         from docling.datamodel.base_models import TextItem  # type: ignore
-
-# DocumentStream import — Docling 2.x no longer accepts raw BytesIO
-try:
-    from docling.datamodel.document import DocumentStream
-except ImportError:
-    from docling_core.types.io import DocumentStream  # type: ignore
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("docling-wrapper")
@@ -147,10 +143,20 @@ async def process_document(req: ProcessRequest):
         raise HTTPException(status_code=502, detail="Empty response body")
     log.info(f"Fetched {len(raw):,} bytes")
 
-    # 2. Parse with Docling
+    # 2. Parse with Docling — write to temp file; Path is the only guaranteed-stable
+    #    input type across Docling 2.x (BytesIO and DocumentStream both broke in 2.104.0)
     try:
-        result = _CONVERTER.convert(DocumentStream(stream=io.BytesIO(raw), name="document.pdf"))
-        doc = result.document
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
+        try:
+            with os.fdopen(tmp_fd, "wb") as f:
+                f.write(raw)
+            result = _CONVERTER.convert(pathlib.Path(tmp_path))
+            doc = result.document
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
     except Exception as exc:
         log.error(f"Docling error: {exc}", exc_info=True)
         raise HTTPException(status_code=500,
