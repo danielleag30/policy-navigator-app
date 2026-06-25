@@ -248,7 +248,7 @@ async function callPipeline(
 async function sleepWithCountdown(ms: number): Promise<void> {
   const seconds = Math.ceil(ms / 1000);
   for (let remaining = seconds; remaining > 0; remaining--) {
-    process.stdout?.write?.(`\r  Batch cooldown: ${remaining}s remaining...`);
+    await Deno.stdout.write(new TextEncoder().encode(`\r  Batch cooldown: ${remaining}s remaining...`));
     await new Promise((r) => setTimeout(r, 1000));
   }
   console.log();
@@ -379,7 +379,7 @@ async function main(): Promise<void> {
     );
 
     for (const evalCase of batch) {
-      process.stdout?.write?.(`  [${evalCase.id}] ${evalCase.category} — `);
+      await Deno.stdout.write(new TextEncoder().encode(`  [${evalCase.id}] ${evalCase.category} — `));
 
       let caseResult: CaseResult;
 
