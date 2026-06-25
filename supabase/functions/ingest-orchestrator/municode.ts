@@ -25,6 +25,7 @@
  * Does NOT set documents.status or generate embeddings — orchestrator (task 2-6) owns that.
  */
 
+import { generate as uuidv7 } from "@std/uuid/v7";
 import db from "../_shared/db-client.ts";
 import { contentHash } from "../_shared/hash.ts";
 
@@ -160,7 +161,7 @@ export async function handleMunicode(
 
   // 4. Create Document shell row at status='unknown'
   const now = new Date().toISOString();
-  const documentId = crypto.randomUUID();
+  const documentId = uuidv7();
   const canonicalUrl =
     `${baseUrl}/CodesContent?clientId=${CLIENT_ID}&productId=${PRODUCT_ID}&jobId=${jobId}`;
 
@@ -220,7 +221,7 @@ export async function handleMunicode(
     }
 
     const { error: provErr } = await db.from("ordinance_provisions").insert({
-      id: crypto.randomUUID(),
+      id: uuidv7(),
       document_id: documentId,
       municode_node_id: chapter.Id,
       effective_date: effectiveDate,
