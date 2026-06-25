@@ -628,10 +628,23 @@ Deno.serve(async (req: Request) => {
   let pendingIngestionId: string;
   try {
     const body = await req.json() as { pending_ingestion_id?: string };
-    if (!body?.pending_ingestion_id) {
-      return error("INGESTION_FAILED", "Missing pending_ingestion_id", 400);
+    if (body?.pending_ingestion_id) {
+      pendingIngestionId = body.pending_ingestion_id;
+    } else {
+      // Poll mode: cron invokes with empty body — find the next eligible row.
+      const now = new Date().toISOString();
+      const { data: nextRow, error: pollErr } = await db
+        .from("pending_ingestions")
+        .select("id")
+        .eq("status", "pending")
+        .or(`next_attempt_at.is.null,next_attempt_at.lte.${now}`)
+        .order("detected_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (pollErr) return error("INGESTION_FAILED", "Poll query failed", 500);
+      if (!nextRow) return success({ status: "idle", reason: "no_pending_rows" });
+      pendingIngestionId = nextRow.id;
     }
-    pendingIngestionId = body.pending_ingestion_id;
   } catch {
     return error("INGESTION_FAILED", "Invalid JSON body", 400);
   }
