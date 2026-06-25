@@ -64,7 +64,7 @@ except ImportError:
 try:
     from docling.datamodel.document import DocumentStream
 except ImportError:
-    from docling_core.types.doc import DocumentStream  # type: ignore
+    from docling_core.types.io import DocumentStream  # type: ignore
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("docling-wrapper")
