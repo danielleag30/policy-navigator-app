@@ -60,6 +60,12 @@ except ImportError:
     except ImportError:
         from docling.datamodel.base_models import TextItem  # type: ignore
 
+# DocumentStream import — Docling 2.x no longer accepts raw BytesIO
+try:
+    from docling.datamodel.document import DocumentStream
+except ImportError:
+    from docling_core.types.doc import DocumentStream  # type: ignore
+
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("docling-wrapper")
 
@@ -143,7 +149,7 @@ async def process_document(req: ProcessRequest):
 
     # 2. Parse with Docling
     try:
-        result = _CONVERTER.convert(io.BytesIO(raw))
+        result = _CONVERTER.convert(DocumentStream(stream=io.BytesIO(raw), name="document.pdf"))
         doc = result.document
     except Exception as exc:
         log.error(f"Docling error: {exc}", exc_info=True)
