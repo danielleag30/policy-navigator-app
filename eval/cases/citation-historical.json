@@ -1,0 +1,434 @@
+[
+  {
+    "id": "citation-hist-013",
+    "category": "citation_accuracy_textual",
+    "query": "What ordinance created Chapter 9.2 of the Fairfax County Code relating to cable television?",
+    "chunk_ids": ["4588d2eb-6f2c-4c13-b669-2a44298ebe33"],
+    "criteria": [
+      {
+        "id": "citation-hist-013-cites",
+        "description": "Response cites the FACOCO_CH9.2CATE chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "4588d2eb-6f2c-4c13-b669-2a44298ebe33" }
+      },
+      {
+        "id": "citation-hist-013-contains-ord",
+        "description": "Answer includes ordinance number 35-19-9.2",
+        "check": { "type": "answer_contains", "substring": "35-19-9.2" }
+      },
+      {
+        "id": "citation-hist-013-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Answerable from FACOCO_CH9.2CATE chapter-level node (1 of 47 ingested nodes)"
+  },
+  {
+    "id": "citation-hist-014",
+    "category": "citation_accuracy_textual",
+    "query": "When did Chapter 9.2 of the Fairfax County Code become effective?",
+    "chunk_ids": ["4588d2eb-6f2c-4c13-b669-2a44298ebe33"],
+    "criteria": [
+      {
+        "id": "citation-hist-014-cites",
+        "description": "Response cites the FACOCO_CH9.2CATE chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "4588d2eb-6f2c-4c13-b669-2a44298ebe33" }
+      },
+      {
+        "id": "citation-hist-014-contains-date",
+        "description": "Answer includes effective date January 1, 2020",
+        "check": { "type": "answer_contains", "substring": "January 1, 2020" }
+      },
+      {
+        "id": "citation-hist-014-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Answerable from FACOCO_CH9.2CATE chapter-level node"
+  },
+  {
+    "id": "citation-hist-015",
+    "category": "citation_accuracy_textual",
+    "query": "What happened to Chapter 67 (Sanitary Sewers) of the Fairfax County Code?",
+    "chunk_ids": ["8a7bd1cf-36a3-435b-9592-3f636490628c"],
+    "criteria": [
+      {
+        "id": "citation-hist-015-cites",
+        "description": "Response cites the FACOCO_CH67SASESEDI chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "8a7bd1cf-36a3-435b-9592-3f636490628c" }
+      },
+      {
+        "id": "citation-hist-015-contains-repeal-ord",
+        "description": "Answer includes repealing ordinance 39-93-67.1",
+        "check": { "type": "answer_contains", "substring": "39-93-67.1" }
+      },
+      {
+        "id": "citation-hist-015-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 67 was repealed and replaced by Chapter 67.1"
+  },
+  {
+    "id": "citation-hist-016",
+    "category": "citation_accuracy_textual",
+    "query": "What happened to Chapter 68 (Individual Sewage Disposal Facilities) of the Fairfax County Code?",
+    "chunk_ids": ["94ece474-2d07-44c9-8430-ff18b7c7e074"],
+    "criteria": [
+      {
+        "id": "citation-hist-016-cites",
+        "description": "Response cites the FACOCO_CH68INSEDIFA chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "94ece474-2d07-44c9-8430-ff18b7c7e074" }
+      },
+      {
+        "id": "citation-hist-016-contains-repeal-ord",
+        "description": "Answer includes repealing ordinance 35-03-68",
+        "check": { "type": "answer_contains", "substring": "35-03-68" }
+      },
+      {
+        "id": "citation-hist-016-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 68 was repealed and replaced by Chapter 68.1"
+  },
+  {
+    "id": "citation-hist-017",
+    "category": "citation_accuracy_textual",
+    "query": "What happened to Chapter 70 (Water) of the Fairfax County Code?",
+    "chunk_ids": ["64d6d211-3e28-4b56-a8cc-0b499cc985fb"],
+    "criteria": [
+      {
+        "id": "citation-hist-017-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH70WA chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "64d6d211-3e28-4b56-a8cc-0b499cc985fb" }
+      },
+      {
+        "id": "citation-hist-017-contains-repeal-ord",
+        "description": "Answer includes repealing ordinance 4-05-70.1",
+        "check": { "type": "answer_contains", "substring": "4-05-70.1" }
+      },
+      {
+        "id": "citation-hist-017-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 70 was repealed and replaced by Chapter 70.1"
+  },
+  {
+    "id": "citation-hist-018",
+    "category": "citation_accuracy_textual",
+    "query": "What happened to Chapter 45 (Minimum Housing Hygiene Standards Code) of the Fairfax County Code?",
+    "chunk_ids": ["750acf56-9946-4a9b-b7e2-d83f7cd15a50"],
+    "criteria": [
+      {
+        "id": "citation-hist-018-cites",
+        "description": "Response cites the FACOCO_CH45MIHOHYSTCO chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "750acf56-9946-4a9b-b7e2-d83f7cd15a50" }
+      },
+      {
+        "id": "citation-hist-018-contains-repeal-ord",
+        "description": "Answer includes repealing ordinance 44-86-45",
+        "check": { "type": "answer_contains", "substring": "44-86-45" }
+      },
+      {
+        "id": "citation-hist-018-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 45 was repealed; no replacement chapter"
+  },
+  {
+    "id": "citation-hist-019",
+    "category": "citation_accuracy_textual",
+    "query": "What happened to Chapter 28 of the Fairfax County Code regarding massage establishments?",
+    "chunk_ids": ["9a8651de-c8a0-4687-87b1-17f087766d05"],
+    "criteria": [
+      {
+        "id": "citation-hist-019-cites",
+        "description": "Response cites the FACOCO_CH28RE chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "9a8651de-c8a0-4687-87b1-17f087766d05" }
+      },
+      {
+        "id": "citation-hist-019-contains-repeal-ord",
+        "description": "Answer includes repealing ordinance 08-00-28",
+        "check": { "type": "answer_contains", "substring": "08-00-28" }
+      },
+      {
+        "id": "citation-hist-019-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 28 repealed February 7, 2000 by Ord. 08-00-28"
+  },
+  {
+    "id": "citation-hist-020",
+    "category": "citation_accuracy_textual",
+    "query": "What happened to Chapter 84 (Public Transportation) of the Fairfax County Code?",
+    "chunk_ids": ["72177e40-7242-4bd7-85ad-0c9b75c16ded"],
+    "criteria": [
+      {
+        "id": "citation-hist-020-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH84PUTRRE47-92-84.1 chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "72177e40-7242-4bd7-85ad-0c9b75c16ded" }
+      },
+      {
+        "id": "citation-hist-020-contains-repeal-ord",
+        "description": "Answer includes repealing ordinance 47-92-84.1",
+        "check": { "type": "answer_contains", "substring": "47-92-84.1" }
+      },
+      {
+        "id": "citation-hist-020-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 84 was repealed; replaced by Chapter 84.1"
+  },
+  {
+    "id": "citation-hist-021",
+    "category": "citation_accuracy_textual",
+    "query": "What does Appendix W of the Fairfax County Code designate?",
+    "chunk_ids": ["7c5fe9eb-0792-4af9-a458-b0f1bdcb24e7"],
+    "criteria": [
+      {
+        "id": "citation-hist-021-cites",
+        "description": "Response cites the THCOCOFAVI1976_APXWDEOUREARLI chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "7c5fe9eb-0792-4af9-a458-b0f1bdcb24e7" }
+      },
+      {
+        "id": "citation-hist-021-contains-subject",
+        "description": "Answer mentions Outdoor Refreshment Area",
+        "check": { "type": "answer_contains", "substring": "Outdoor Refreshment Area" }
+      },
+      {
+        "id": "citation-hist-021-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Appendix W designates Designated Outdoor Refreshment Area Licenses"
+  },
+  {
+    "id": "citation-hist-022",
+    "category": "citation_accuracy_textual",
+    "query": "What Virginia Code section governs the outdoor refreshment area licenses referenced in Fairfax County Code Appendix W?",
+    "chunk_ids": ["7c5fe9eb-0792-4af9-a458-b0f1bdcb24e7"],
+    "criteria": [
+      {
+        "id": "citation-hist-022-cites",
+        "description": "Response cites the THCOCOFAVI1976_APXWDEOUREARLI chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "7c5fe9eb-0792-4af9-a458-b0f1bdcb24e7" }
+      },
+      {
+        "id": "citation-hist-022-contains-va-code",
+        "description": "Answer includes Virginia Code citation 4.1-206.3",
+        "check": { "type": "answer_contains", "substring": "4.1-206.3" }
+      },
+      {
+        "id": "citation-hist-022-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Virginia Code section Va. Code § 4.1-206.3(D)(2)(c) is cited directly in the Appendix W node"
+  },
+  {
+    "id": "citation-hist-023",
+    "category": "citation_accuracy_textual",
+    "query": "What does Appendix J of the Fairfax County Code designate?",
+    "chunk_ids": ["a834114f-0f52-4d7a-8d42-2e4571917730"],
+    "criteria": [
+      {
+        "id": "citation-hist-023-cites",
+        "description": "Response cites the THCOCOFAVI1976_APXJORDEARWHFIPNGUMANOBESH chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "a834114f-0f52-4d7a-8d42-2e4571917730" }
+      },
+      {
+        "id": "citation-hist-023-contains-firearms",
+        "description": "Answer mentions firearms or pneumatic guns",
+        "check": { "type": "answer_contains", "substring": "firearms" }
+      },
+      {
+        "id": "citation-hist-023-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Appendix J designates areas where firearms and pneumatic guns may not be shot"
+  },
+  {
+    "id": "citation-hist-024",
+    "category": "citation_accuracy_textual",
+    "query": "When did Chapter 31 (Peddlers, Solicitors, and Canvassers) of the Fairfax County Code undergo its major revision?",
+    "chunk_ids": ["84b8c265-1360-44aa-aac6-ec0d13b4b5ed"],
+    "criteria": [
+      {
+        "id": "citation-hist-024-cites",
+        "description": "Response cites the FACOCO_CH31PESOCA chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "84b8c265-1360-44aa-aac6-ec0d13b4b5ed" }
+      },
+      {
+        "id": "citation-hist-024-contains-ord",
+        "description": "Answer includes ordinance number 22-84-31",
+        "check": { "type": "answer_contains", "substring": "22-84-31" }
+      },
+      {
+        "id": "citation-hist-024-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Major revision Ord. No. 22-84-31 adopted July 30, 1984"
+  },
+  {
+    "id": "citation-hist-025",
+    "category": "citation_accuracy_textual",
+    "query": "What happened to Chapter 29 (Real Estate Salesman) of the Fairfax County Code?",
+    "chunk_ids": ["79b706dc-c9c0-4db2-a35f-19df814ab554"],
+    "criteria": [
+      {
+        "id": "citation-hist-025-cites",
+        "description": "Response cites the FACOCO_CH29REESSA chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "79b706dc-c9c0-4db2-a35f-19df814ab554" }
+      },
+      {
+        "id": "citation-hist-025-contains-repeal-ord",
+        "description": "Answer includes repealing ordinance 31-77-29",
+        "check": { "type": "answer_contains", "substring": "31-77-29" }
+      },
+      {
+        "id": "citation-hist-025-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 29 was repealed by ordinance 31-77-29"
+  },
+  {
+    "id": "citation-hist-040",
+    "category": "citation_accuracy_textual",
+    "query": "What types of trees are protected under Appendix N of the Fairfax County Code?",
+    "chunk_ids": ["60301798-47da-4633-bea6-8cfd13e01570"],
+    "criteria": [
+      {
+        "id": "citation-hist-040-cites",
+        "description": "Response cites the THCOCOFAVI1976_APXNHESPMESTTROR chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "60301798-47da-4633-bea6-8cfd13e01570" }
+      },
+      {
+        "id": "citation-hist-040-contains-heritage",
+        "description": "Answer mentions heritage trees",
+        "check": { "type": "answer_contains", "substring": "heritage" }
+      },
+      {
+        "id": "citation-hist-040-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Appendix N protects heritage, specimen, memorial, and street trees"
+  },
+  {
+    "id": "citation-hist-041",
+    "category": "citation_accuracy_textual",
+    "query": "What roads are designated as snow emergency routes in Fairfax County?",
+    "chunk_ids": ["f0423ffc-d72a-476f-a154-127d5966b4cd"],
+    "criteria": [
+      {
+        "id": "citation-hist-041-cites",
+        "description": "Response cites the THCOCOFAVI1976_APXKDESNEMRO chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "f0423ffc-d72a-476f-a154-127d5966b4cd" }
+      },
+      {
+        "id": "citation-hist-041-contains-route",
+        "description": "Answer mentions Richmond Highway (Route 1)",
+        "check": { "type": "answer_contains", "substring": "Richmond Highway" }
+      },
+      {
+        "id": "citation-hist-041-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Appendix K lists snow emergency routes including Routes 1, 7, 28, 29, 50 with named highways"
+  },
+  {
+    "id": "citation-hist-042",
+    "category": "citation_accuracy_textual",
+    "query": "Under what authority were the Fairfax County snow emergency routes in Appendix K designated?",
+    "chunk_ids": ["f0423ffc-d72a-476f-a154-127d5966b4cd"],
+    "criteria": [
+      {
+        "id": "citation-hist-042-cites",
+        "description": "Response cites the THCOCOFAVI1976_APXKDESNEMRO chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "f0423ffc-d72a-476f-a154-127d5966b4cd" }
+      },
+      {
+        "id": "citation-hist-042-contains-authority",
+        "description": "Answer mentions Board of Supervisors as designating authority",
+        "check": { "type": "answer_contains", "substring": "Board of Supervisors" }
+      },
+      {
+        "id": "citation-hist-042-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Snow emergency routes designated by Board of Supervisors per Appendix K"
+  },
+  {
+    "id": "citation-hist-043",
+    "category": "citation_accuracy_textual",
+    "query": "What does Fairfax County Code Chapter 102 govern regarding streets and sidewalks?",
+    "chunk_ids": ["a8d50305-a9a8-4694-ae9c-d847d04fec1f"],
+    "criteria": [
+      {
+        "id": "citation-hist-043-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH102STSI chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "a8d50305-a9a8-4694-ae9c-d847d04fec1f" }
+      },
+      {
+        "id": "citation-hist-043-contains-subject",
+        "description": "Answer mentions streets or sidewalks",
+        "check": { "type": "answer_contains", "substring": "streets" }
+      },
+      {
+        "id": "citation-hist-043-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 102 is the streets and sidewalks chapter; exact content answerable from chapter-level node"
+  },
+  {
+    "id": "citation-hist-044",
+    "category": "citation_accuracy_textual",
+    "query": "What does Fairfax County Code Chapter 103 regulate?",
+    "chunk_ids": ["405f73df-959d-4f72-8e5f-3068b319ba1e"],
+    "criteria": [
+      {
+        "id": "citation-hist-044-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH103AIPOCO chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "405f73df-959d-4f72-8e5f-3068b319ba1e" }
+      },
+      {
+        "id": "citation-hist-044-contains-subject",
+        "description": "Answer mentions Air Pollution Control",
+        "check": { "type": "answer_contains", "substring": "Air Pollution Control" }
+      },
+      {
+        "id": "citation-hist-044-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 103 governs Air Pollution Control; answerable from chapter-level node"
+  }
+]

@@ -84,8 +84,12 @@ async function loadCases(): Promise<EvalCase[]> {
     for await (const entry of walk(CASES_DIR, { exts: [".json"] })) {
       if (!entry.isFile) continue;
       const raw = await Deno.readTextFile(entry.path);
-      const parsed = JSON.parse(raw) as EvalCase;
-      cases.push(parsed);
+      const parsed = JSON.parse(raw) as EvalCase | EvalCase[];
+      if (Array.isArray(parsed)) {
+        cases.push(...parsed);
+      } else {
+        cases.push(parsed);
+      }
     }
   } catch (err) {
     if (err instanceof Deno.errors.NotFound) {
