@@ -50,7 +50,8 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("DOCLING_ARTIFACTS_PATH", "/home/user/.docling/models")
 
 import docling  # noqa: E402
-from docling.document_converter import DocumentConverter
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.datamodel.base_models import InputFormat
 try:
     from docling.datamodel.pipeline_options import PdfPipelineOptions
 except ImportError:
@@ -70,7 +71,9 @@ log = logging.getLogger("docling-wrapper")
 
 # Single converter instance shared across requests
 _PDF_OPTIONS = PdfPipelineOptions(do_ocr=False, do_table_structure=False)
-_CONVERTER = DocumentConverter(pdf_pipeline_options=_PDF_OPTIONS)
+_CONVERTER = DocumentConverter(
+    format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=_PDF_OPTIONS)}
+)
 
 app = FastAPI(
     title="Policy Navigator — Docling Wrapper",
