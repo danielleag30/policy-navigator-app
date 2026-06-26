@@ -36,6 +36,9 @@ Design decisions:
 import io
 import logging
 import os
+import pathlib
+import tempfile
+import importlib.metadata
 from typing import Optional
 
 import httpx
@@ -48,8 +51,12 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("DOCLING_ARTIFACTS_PATH", "/home/user/.docling/models")
 
 import docling  # noqa: E402
-from docling.document_converter import DocumentConverter
-from docling.pipeline.standard_pdf_pipeline import PdfPipelineOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.datamodel.base_models import InputFormat
+try:
+    from docling.datamodel.pipeline_options import PdfPipelineOptions
+except ImportError:
+    from docling.pipeline.standard_pdf_pipeline import PdfPipelineOptions  # type: ignore
 
 # TextItem import with fallback for Docling internal module reorganisations
 try:
@@ -65,11 +72,13 @@ log = logging.getLogger("docling-wrapper")
 
 # Single converter instance shared across requests
 _PDF_OPTIONS = PdfPipelineOptions(do_ocr=False, do_table_structure=False)
-_CONVERTER = DocumentConverter(pdf_pipeline_options=_PDF_OPTIONS)
+_CONVERTER = DocumentConverter(
+    format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=_PDF_OPTIONS)}
+)
 
 app = FastAPI(
     title="Policy Navigator — Docling Wrapper",
-    version=docling.__version__,
+    version=importlib.metadata.version("docling"),
 )
 
 
@@ -141,10 +150,20 @@ async def process_document(req: ProcessRequest):
         raise HTTPException(status_code=502, detail="Empty response body")
     log.info(f"Fetched {len(raw):,} bytes")
 
-    # 2. Parse with Docling
+    # 2. Parse with Docling — write to temp file; Path is the only guaranteed-stable
+    #    input type across Docling 2.x (BytesIO and DocumentStream both broke in 2.104.0)
     try:
-        result = _CONVERTER.convert(io.BytesIO(raw))
-        doc = result.document
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
+        try:
+            with os.fdopen(tmp_fd, "wb") as f:
+                f.write(raw)
+            result = _CONVERTER.convert(pathlib.Path(tmp_path))
+            doc = result.document
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
     except Exception as exc:
         log.error(f"Docling error: {exc}", exc_info=True)
         raise HTTPException(status_code=500,
@@ -179,7 +198,7 @@ async def process_document(req: ProcessRequest):
                         "bbox": bbox, "reading_order_index": idx})
         idx += 1
 
-    ver = docling.__version__
+    ver = importlib.metadata.version("docling")
     log.info(f"Emitting {len(blocks)} blocks (Docling {ver})")
     return JSONResponse({"blocks": blocks, "docling_version": ver,
                          "block_count": len(blocks)})
