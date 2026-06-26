@@ -51,7 +51,10 @@ os.environ.setdefault("DOCLING_ARTIFACTS_PATH", "/home/user/.docling/models")
 
 import docling  # noqa: E402
 from docling.document_converter import DocumentConverter
-from docling.pipeline.standard_pdf_pipeline import PdfPipelineOptions
+try:
+    from docling.datamodel.pipeline_options import PdfPipelineOptions
+except ImportError:
+    from docling.pipeline.standard_pdf_pipeline import PdfPipelineOptions  # type: ignore
 
 # TextItem import with fallback for Docling internal module reorganisations
 try:
