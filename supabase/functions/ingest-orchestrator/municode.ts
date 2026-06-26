@@ -112,10 +112,12 @@ function defaultEffectiveDate(): string {
  */
 async function fetchNodeChildren(
   baseUrl: string,
+  jobId: string,
   nodeId: string,
   userAgent: string,
 ): Promise<TocNode[]> {
-  const url = `${baseUrl}/products/${CLIENT_ID}/nodes/${nodeId}/children?depth=-1`;
+  const url =
+    `${baseUrl}/codesToc/children?jobId=${jobId}&productId=${PRODUCT_ID}&nodeId=${nodeId}`;
   const result = await fetchJson(url, userAgent);
   if (!Array.isArray(result)) {
     console.warn(`[municode] unexpected non-array children response for node ${nodeId}`);
@@ -163,6 +165,7 @@ async function ingestNodeAndDescendants(
         is_current: true,
         section_title: node.Heading ?? null,
         content: plainContent,
+        content_hash: await contentHash(plainContent),
       });
 
       if (provErr?.code === "23505") {
@@ -187,7 +190,7 @@ async function ingestNodeAndDescendants(
   if (!children || children.length === 0) {
     await sleep(SUBSECTION_DELAY_MS);
     try {
-      children = await fetchNodeChildren(ctx.baseUrl, node.Id, ctx.userAgent);
+      children = await fetchNodeChildren(ctx.baseUrl, ctx.jobId, node.Id, ctx.userAgent);
     } catch (e) {
       console.warn(`[municode] children fetch failed for ${node.Id}: ${(e as Error).message}`);
       return;

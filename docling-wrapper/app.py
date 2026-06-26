@@ -36,8 +36,6 @@ Design decisions:
 import io
 import logging
 import os
-import pathlib
-import tempfile
 from typing import Optional
 
 import httpx
@@ -51,10 +49,7 @@ os.environ.setdefault("DOCLING_ARTIFACTS_PATH", "/home/user/.docling/models")
 
 import docling  # noqa: E402
 from docling.document_converter import DocumentConverter
-try:
-    from docling.datamodel.pipeline_options import PdfPipelineOptions
-except ImportError:
-    from docling.pipeline.standard_pdf_pipeline import PdfPipelineOptions  # type: ignore
+from docling.pipeline.standard_pdf_pipeline import PdfPipelineOptions
 
 # TextItem import with fallback for Docling internal module reorganisations
 try:
@@ -146,20 +141,10 @@ async def process_document(req: ProcessRequest):
         raise HTTPException(status_code=502, detail="Empty response body")
     log.info(f"Fetched {len(raw):,} bytes")
 
-    # 2. Parse with Docling — write to temp file; Path is the only guaranteed-stable
-    #    input type across Docling 2.x (BytesIO and DocumentStream both broke in 2.104.0)
+    # 2. Parse with Docling
     try:
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
-        try:
-            with os.fdopen(tmp_fd, "wb") as f:
-                f.write(raw)
-            result = _CONVERTER.convert(pathlib.Path(tmp_path))
-            doc = result.document
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+        result = _CONVERTER.convert(io.BytesIO(raw))
+        doc = result.document
     except Exception as exc:
         log.error(f"Docling error: {exc}", exc_info=True)
         raise HTTPException(status_code=500,
