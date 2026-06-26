@@ -15,12 +15,16 @@
  *        NOTE: Children are only populated at the root call (depth -1→1).
  *              Chapters with HasChildren=true must be expanded separately.
  *
- *   3. /CodesContent?clientId=5335&productId=10051&jobId=<jobId>&nodeId=<Id>
+ *   3. /products/<clientId>/nodes/<nodeId>/children?depth=-1
+ *        → TocNode[]  (full subtree for a given node, used for recursive expansion)
+ *
+ *   4. /CodesContent?clientId=5335&productId=10051&jobId=<jobId>&nodeId=<Id>
  *        → { Docs: [{ Id, Content, NodeDepth, IsAmended, AmendedBy, Drafts }], ... }
  *        Content is an HTML string; root node Content is null.
  *
- *   This version ingests all depth-1 chapter nodes (105 for Fairfax County).
- *   Recursive sub-section ingestion is a v1.1 enhancement.
+ *   This version recursively ingests all nodes at all depths.  Every node with
+ *   non-null HTML content is inserted as an ordinance_provisions row with
+ *   parent_node_id and depth populated.
  *
  * Does NOT set documents.status or generate embeddings — orchestrator (task 2-6) owns that.
  */
@@ -31,8 +35,10 @@ import { contentHash } from "../_shared/hash.ts";
 
 const PRODUCT_ID = "10051";
 const CLIENT_ID = "5335";
-/** Polite inter-request delay in ms. */
+/** Polite delay between top-level API calls (job, TOC, chapter content). */
 const REQUEST_DELAY_MS = 300;
+/** Polite delay between recursive sub-section API calls (≥100ms per spec). */
+const SUBSECTION_DELAY_MS = 100;
 
 interface TocNode {
   Id: string;
@@ -50,6 +56,15 @@ interface ContentDoc {
   IsAmended: boolean;
   AmendedBy: unknown[];
   Drafts: unknown[];
+}
+
+interface IngestContext {
+  baseUrl: string;
+  userAgent: string;
+  jobId: string;
+  documentId: string;
+  effectiveDate: string;
+  nodeIds: string[];
 }
 
 function requireEnv(name: string): string {
@@ -91,6 +106,106 @@ function defaultEffectiveDate(): string {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Fetch all children of a given TOC node.
+ * Returns an empty array when the response is not a JSON array.
+ */
+async function fetchNodeChildren(
+  baseUrl: string,
+  jobId: string,
+  nodeId: string,
+  userAgent: string,
+): Promise<TocNode[]> {
+  const url =
+    `${baseUrl}/codesToc/children?jobId=${jobId}&productId=${PRODUCT_ID}&nodeId=${nodeId}`;
+  const result = await fetchJson(url, userAgent);
+  if (!Array.isArray(result)) {
+    console.warn(`[municode] unexpected non-array children response for node ${nodeId}`);
+    return [];
+  }
+  return result as TocNode[];
+}
+
+/**
+ * Fetch content for a node, insert as ordinance_provisions, then recurse into children.
+ * Skips nodes with null/empty content.  Catches 23505 (duplicate) without throwing.
+ */
+async function ingestNodeAndDescendants(
+  node: TocNode,
+  parentNodeId: string | null,
+  depth: number,
+  ctx: IngestContext,
+): Promise<void> {
+  let contentDoc: ContentDoc | null = null;
+  try {
+    const contentUrl =
+      `${ctx.baseUrl}/CodesContent?clientId=${CLIENT_ID}&productId=${PRODUCT_ID}&jobId=${ctx.jobId}&nodeId=${node.Id}`;
+    const contentResp = await fetchJson(contentUrl, ctx.userAgent) as Record<string, unknown>;
+    const docs = contentResp?.Docs;
+    if (Array.isArray(docs) && docs.length > 0) {
+      contentDoc = docs[0] as ContentDoc;
+    }
+  } catch (e) {
+    console.warn(
+      `[municode] content fetch failed for ${node.Id} (depth ${depth}): ${(e as Error).message}`,
+    );
+  }
+
+  const rawContent = contentDoc?.Content ?? null;
+  if (rawContent !== null && rawContent !== "") {
+    const plainContent = stripHtml(rawContent);
+    if (plainContent) {
+      const { error: provErr } = await db.from("ordinance_provisions").insert({
+        id: uuidv7(),
+        document_id: ctx.documentId,
+        municode_node_id: node.Id,
+        parent_node_id: parentNodeId,
+        depth,
+        effective_date: ctx.effectiveDate,
+        is_current: true,
+        section_title: node.Heading ?? null,
+        content: plainContent,
+        content_hash: await contentHash(plainContent),
+      });
+
+      if (provErr?.code === "23505") {
+        console.warn(`[municode] duplicate provision skipped: ${node.Id} (depth ${depth})`);
+      } else if (provErr) {
+        throw new Error(`Municode provision insert failed for ${node.Id}: ${provErr.message}`);
+      } else {
+        ctx.nodeIds.push(node.Id);
+      }
+    } else {
+      console.log(`[municode] skipping ${node.Id} (depth ${depth}) — empty after HTML strip`);
+    }
+  } else {
+    console.log(`[municode] skipping ${node.Id} (depth ${depth}) — null content`);
+  }
+
+  if (!node.HasChildren) return;
+
+  // Children may already be embedded in the response (depth=-1 endpoint returns a full subtree);
+  // only make a separate fetch when the Children array is absent/empty.
+  let children = node.Children;
+  if (!children || children.length === 0) {
+    await sleep(SUBSECTION_DELAY_MS);
+    try {
+      children = await fetchNodeChildren(ctx.baseUrl, ctx.jobId, node.Id, ctx.userAgent);
+    } catch (e) {
+      console.warn(`[municode] children fetch failed for ${node.Id}: ${(e as Error).message}`);
+      return;
+    }
+  }
+
+  if (children.length === 0) return;
+  console.log(`[municode] depth ${depth + 1}: ${children.length} children of ${node.Id}`);
+
+  for (const child of children) {
+    await sleep(SUBSECTION_DELAY_MS);
+    await ingestNodeAndDescendants(child, node.Id, depth + 1, ctx);
+  }
+}
+
 export interface MunicodeResult {
   documentId: string;
   nodeIds: string[];
@@ -99,7 +214,7 @@ export interface MunicodeResult {
 
 /**
  * Fetch Municode TOC + per-node content, create Document shell row,
- * insert ordinance_provisions rows for all depth-1 chapter nodes.
+ * recursively insert ordinance_provisions rows for all nodes at all depths.
  */
 export async function handleMunicode(
   pendingIngestionId: string,
@@ -186,62 +301,23 @@ export async function handleMunicode(
   }
   console.log(`[municode] document shell created: ${documentId}`);
 
-  // 5. Fetch content for each chapter node and insert ordinance_provisions
+  // 5. Recursively ingest all nodes at all depths
   const nodeIds: string[] = [];
   const effectiveDate = defaultEffectiveDate();
 
+  const ctx: IngestContext = {
+    baseUrl,
+    userAgent,
+    jobId,
+    documentId,
+    effectiveDate,
+    nodeIds,
+  };
+
+  const rootId = (tocPayload as TocNode).Id ?? null;
   for (const chapter of chapterNodes) {
     await sleep(REQUEST_DELAY_MS);
-
-    let contentDoc: ContentDoc | null = null;
-    try {
-      const contentUrl =
-        `${baseUrl}/CodesContent?clientId=${CLIENT_ID}&productId=${PRODUCT_ID}&jobId=${jobId}&nodeId=${chapter.Id}`;
-      const contentResp = await fetchJson(contentUrl, userAgent) as Record<string, unknown>;
-      const docs = contentResp?.Docs;
-      if (Array.isArray(docs) && docs.length > 0) {
-        contentDoc = docs[0] as ContentDoc;
-      }
-    } catch (e) {
-      console.warn(`[municode] content fetch failed for ${chapter.Id}: ${(e as Error).message}`);
-      continue;
-    }
-
-    const rawContent = contentDoc?.Content ?? null;
-    if (rawContent === null || rawContent === "") {
-      // Skip nodes with no content (e.g. root node, reserved/repealed chapters)
-      console.log(`[municode] skipping ${chapter.Id} — null content`);
-      continue;
-    }
-
-    const plainContent = stripHtml(rawContent);
-    if (!plainContent) {
-      console.log(`[municode] skipping ${chapter.Id} — empty after HTML strip`);
-      continue;
-    }
-
-    const { error: provErr } = await db.from("ordinance_provisions").insert({
-      id: uuidv7(),
-      document_id: documentId,
-      municode_node_id: chapter.Id,
-      effective_date: effectiveDate,
-      is_current: true,
-      section_title: chapter.Heading ?? null,
-      content: plainContent,
-    });
-
-    if (provErr?.code === "23505") {
-      console.warn(`[municode] duplicate provision skipped: ${chapter.Id}`);
-      continue;
-    }
-
-    if (provErr) {
-      throw new Error(
-        `Municode provision insert failed for ${chapter.Id}: ${provErr.message}`,
-      );
-    }
-
-    nodeIds.push(chapter.Id);
+    await ingestNodeAndDescendants(chapter, rootId, 1, ctx);
   }
 
   console.log(
