@@ -16,3 +16,7 @@ ALTER TABLE ordinance_provisions
 CREATE INDEX IF NOT EXISTS ordinance_provisions_content_hash_idx
   ON ordinance_provisions (content_hash)
   WHERE content_hash IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS ordinance_provisions_depth_idx
+  ON ordinance_provisions (depth)
+  WHERE depth IS NOT NULL;
