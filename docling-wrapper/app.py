@@ -38,6 +38,7 @@ import logging
 import os
 import pathlib
 import tempfile
+import importlib.metadata
 from typing import Optional
 
 import httpx
@@ -77,7 +78,7 @@ _CONVERTER = DocumentConverter(
 
 app = FastAPI(
     title="Policy Navigator — Docling Wrapper",
-    version=docling.__version__,
+    version=importlib.metadata.version("docling"),
 )
 
 
@@ -197,7 +198,7 @@ async def process_document(req: ProcessRequest):
                         "bbox": bbox, "reading_order_index": idx})
         idx += 1
 
-    ver = docling.__version__
+    ver = importlib.metadata.version("docling")
     log.info(f"Emitting {len(blocks)} blocks (Docling {ver})")
     return JSONResponse({"blocks": blocks, "docling_version": ver,
                          "block_count": len(blocks)})
