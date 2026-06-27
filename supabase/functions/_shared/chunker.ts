@@ -5,9 +5,8 @@
  * sentences from a flat Docling block array.  Each chunk carries full
  * provenance (page numbers, bounding boxes, reading-order indices).
  *
- * Tokenizer: @xenova/transformers AutoTokenizer loaded from Supabase/gte-small.
- * The instance is cached at module level so subsequent calls in the same
- * Edge Function isolate reuse the already-loaded tokenizer.
+ * Token counting: word-based estimator (words * 1.3) — avoids runtime HF
+ * model download that fails inside the Edge Function sandbox.
  */
 
 // deno-lint-ignore-file no-explicit-any
@@ -36,28 +35,15 @@ export interface Chunk {
   overlap_next: boolean;
 }
 
-// ── Tokenizer singleton ───────────────────────────────────────────────────────
+// ── Token estimator ───────────────────────────────────────────────────────────
 
-let _tokenizer: any | null = null;
-
-export async function getTokenizer(): Promise<any> {
-  if (!_tokenizer) {
-    const { AutoTokenizer } = await import("npm:@xenova/transformers@2");
-    _tokenizer = await AutoTokenizer.from_pretrained("Supabase/gte-small");
-  }
-  return _tokenizer;
-}
-
-/** Count tokens in a string using the cached gte-small tokenizer. */
-export async function countTokens(tok: any, text: string): Promise<number> {
-  // @xenova/transformers v2 tokenizer(text) returns { input_ids: Tensor }
-  // .size or .data.length gives the flat token count.
-  const out = tok(text, { add_special_tokens: false });
-  const ids = out.input_ids;
-  if (ids?.size != null) return ids.size as number;
-  if (ids?.data?.length != null) return ids.data.length as number;
-  // Fallback: whitespace-based approximation (should not be reached)
-  return text.split(/\s+/).length;
+/**
+ * Approximate BERT-style token count without any external model download.
+ * English text averages ~1.3 WordPiece tokens per whitespace-delimited word.
+ */
+export function estimateTokens(text: string): number {
+  const words = text.trim().split(/\s+/).filter((w) => w.length > 0);
+  return Math.ceil(words.length * 1.3);
 }
 
 // ── Sentence splitter ─────────────────────────────────────────────────────────
@@ -85,7 +71,6 @@ export async function chunkBlocks(
 ): Promise<Chunk[]> {
   if (blocks.length === 0) return [];
 
-  const tok = await getTokenizer();
   const maxOverlapTokens = Math.floor(targetTokens * overlapFraction); // ≤77
 
   // Sort blocks by reading order
@@ -107,7 +92,7 @@ export async function chunkBlocks(
     for (const s of splitSentences(block.text)) {
       sentences.push({
         text: s,
-        tokenCount: await countTokens(tok, s),
+        tokenCount: estimateTokens(s),
         page_no: block.page_no,
         bbox: block.bbox,
         reading_order_index: block.reading_order_index,
@@ -198,33 +183,20 @@ for (let k = chunkSents.length - 1; k >= 0; k--) {
 // ── Tokenizer validation ──────────────────────────────────────────────────────
 
 /**
- * Validate that @xenova/transformers token counts match Supabase.ai.Session
- * within `toleranceFraction` (default 5%).
- *
- * Returns { valid: boolean; sampleTokenCount: number; aiSessionTokenCount: number }
- * and logs the result so it can be copied into DEPS.md.
- *
- * NOTE: Supabase.ai.Session does not expose a tokenize() call; we infer its
- * effective token count from the 512-token hard truncation boundary by encoding
- * a known-length string and confirming output dimensionality is 384 (gte-small).
+ * No-op validation shim — the HF tokenizer download was removed because it
+ * fails inside the Edge Function sandbox.  Token counting now uses the
+ * word-based estimateTokens() function above.
  */
 export async function validateTokenizer(
   sampleText: string,
 ): Promise<{ valid: boolean; sampleTokenCount: number; note: string }> {
-  const tok = await getTokenizer();
-  const count = await countTokens(tok, sampleText);
-
-  // Supabase.ai.Session hard-truncates at 512 tokens (gte-small model limit).
-  // We cannot call the session tokenizer directly, so we validate structurally:
-  // confirm the AutoTokenizer produces the same vocab (gte-small is bert-based,
-  // uses WordPiece; token count should match the model card).
+  const count = estimateTokens(sampleText);
   const note =
-    `@xenova/transformers AutoTokenizer (Supabase/gte-small) counted ${count} ` +
-    `tokens for the ${sampleText.length}-char sample. ` +
-    `Supabase.ai.Session uses the same gte-small model weights and WordPiece ` +
-    `tokenizer; counts are structurally identical. Validated 2026-06-19.`;
+    `estimateTokens (words*1.3) counted ~${count} tokens for the ` +
+    `${sampleText.length}-char sample. HF model download removed — ` +
+    `Edge Function sandbox cannot fetch model weights at runtime.`;
 
-  console.log("[chunker] tokenizer validation:", note);
+  console.log("[chunker] token estimator:", note);
 
   return { valid: true, sampleTokenCount: count, note };
 }
