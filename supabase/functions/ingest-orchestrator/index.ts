@@ -170,11 +170,13 @@ async function pdfBranch(
   // Without this, a retry hits the unique constraint on documents.url when an
   // earlier run created a status='unknown' row that the content_hash dedup above
   // won't find (it only matches status='current').
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   const { error: orphanErr } = await db
     .from("documents")
     .delete()
     .eq("url", sourceUrl)
-    .eq("status", "unknown");
+    .eq("status", "unknown")
+    .lt("created_at", fiveMinutesAgo);
   if (orphanErr) throw new Error(`Orphan cleanup failed: ${orphanErr.message}`);
 
   const { data: docRow, error: docErr } = await db
