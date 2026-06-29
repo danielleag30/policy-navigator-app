@@ -166,7 +166,19 @@ async function pdfBranch(
     return { documentId: existing.id, chunks: [], doclingVersion: "", skipped: true };
   }
 
-  // 3. Create Document shell row at status='unknown'
+  // 3. Remove any orphaned shell left by a prior failed attempt, then insert fresh.
+  // Without this, a retry hits the unique constraint on documents.url when an
+  // earlier run created a status='unknown' row that the content_hash dedup above
+  // won't find (it only matches status='current').
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const { error: orphanErr } = await db
+    .from("documents")
+    .delete()
+    .eq("url", sourceUrl)
+    .eq("status", "unknown")
+    .lt("created_at", fiveMinutesAgo);
+  if (orphanErr) throw new Error(`Orphan cleanup failed: ${orphanErr.message}`);
+
   const { data: docRow, error: docErr } = await db
     .from("documents")
     .insert({
@@ -826,7 +838,7 @@ Deno.serve(async (req: Request) => {
     if (newAttempts >= MAX_ATTEMPTS) {
       const { error: failedErr } = await db
         .from("pending_ingestions")
-        .update({ status: "failed", updated_at: new Date().toISOString() })
+        .update({ status: "failed", last_error: msg, updated_at: new Date().toISOString() })
         .eq("id", pendingIngestionId);
       if (failedErr) {
         throw new Error(`Failed to persist 'failed' status after max attempts: ${failedErr.message}`);
@@ -839,7 +851,7 @@ Deno.serve(async (req: Request) => {
     // Reset to pending for next pg_cron retry
     const { error: resetErr } = await db
       .from("pending_ingestions")
-      .update({ status: "pending", updated_at: new Date().toISOString() })
+      .update({ status: "pending", last_error: msg, updated_at: new Date().toISOString() })
       .eq("id", pendingIngestionId);
     if (resetErr) {
       throw new Error(`Failed to reset ingestion to 'pending' for retry: ${resetErr.message}`);
