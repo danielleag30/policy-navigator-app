@@ -17,7 +17,7 @@ SELECT cron.schedule(
   '0 */6 * * *',
   $$
     SELECT private.cron_invoke_edge_function(
-      'functions/v1/change-detection',
+      'change-detection',
       '{}'::jsonb
     );
   $$
@@ -29,7 +29,7 @@ SELECT cron.schedule(
   '*/15 * * * *',
   $$
     SELECT private.cron_invoke_edge_function(
-      'functions/v1/ingest-orchestrator',
+      'ingest-orchestrator',
       '{}'::jsonb
     );
   $$
