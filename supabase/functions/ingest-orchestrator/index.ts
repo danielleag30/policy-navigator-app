@@ -128,6 +128,7 @@ async function pdfBranch(
   pendingIngestionId: string,
   sourceUrl: string,
   docType: string,
+  deadlineMs?: number,
 ): Promise<PdfBranchResult> {
   const doclingUrl = Deno.env.get("HF_SPACES_DOCLING_URL");
   if (!doclingUrl) throw new Error("HF_SPACES_DOCLING_URL not set");
@@ -269,7 +270,7 @@ async function pdfBranch(
 
   // 8. LLM extraction (task 2-4): write structured rows and/or narrative_chunks
   // Note: does NOT set documents.status — finalization is task 2-6's responsibility.
-  await extractAndPersist(documentId, docType, chunks);
+  await extractAndPersist(documentId, docType, chunks, deadlineMs);
 
   return { documentId, chunks, doclingVersion, skipped: false };
 }
@@ -644,6 +645,9 @@ async function triggerReconciliationIfNeeded(
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
+  const FUNCTION_START_MS = Date.now();
+  const SOFT_DEADLINE_MS = FUNCTION_START_MS + 120_000; // 120 s — well under ~150 s hard kill
+
   if (req.method !== "POST") {
     return error("NOT_FOUND", "Method not allowed", 405);
   }
@@ -735,6 +739,7 @@ Deno.serve(async (req: Request) => {
         pendingIngestionId,
         row.url,
         row.doc_type,
+        SOFT_DEADLINE_MS,
       );
 
       if (skipped) {
