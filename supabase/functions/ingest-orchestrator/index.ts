@@ -170,14 +170,25 @@ async function pdfBranch(
   // Without this, a retry hits the unique constraint on documents.url when an
   // earlier run created a status='unknown' row that the content_hash dedup above
   // won't find (it only matches status='current').
+  // Children must be deleted before the parent to avoid FK violations.
   const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-  const { error: orphanErr } = await db
+  const { data: orphanDocs } = await db
     .from("documents")
-    .delete()
+    .select("id")
     .eq("url", sourceUrl)
     .eq("status", "unknown")
     .lt("created_at", fiveMinutesAgo);
-  if (orphanErr) throw new Error(`Orphan cleanup failed: ${orphanErr.message}`);
+
+  if (orphanDocs && orphanDocs.length > 0) {
+    const orphanIds = orphanDocs.map((d) => d.id);
+    await db.from("narrative_chunks").delete().in("document_id", orphanIds);
+    await db.from("vote_tallies").delete().in("document_id", orphanIds);
+    await db.from("policy_decisions").delete().in("document_id", orphanIds);
+    await db.from("budget_indicators").delete().in("document_id", orphanIds);
+    await db.from("ordinance_provisions").delete().in("document_id", orphanIds);
+    const { error: orphanErr } = await db.from("documents").delete().in("id", orphanIds);
+    if (orphanErr) throw new Error(`Orphan cleanup failed: ${orphanErr.message}`);
+  }
 
   const { data: docRow, error: docErr } = await db
     .from("documents")
