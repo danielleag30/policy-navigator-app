@@ -1,9 +1,5 @@
--- Migration: stuck_ingestion_recovery
--- Task 2-17: recovers pending_ingestions rows stuck in 'processing'
--- and writes ingestion_failure alerts.  Runs every 5 minutes via pg_cron.
--- NOTE: threshold updated from 30 min → 5 min by 20260629000002_watchdog_threshold_5min.sql
-
--- ── Function ─────────────────────────────────────────────────────────────────
+-- Fix: shorten stuck-ingestion watchdog threshold from 30 minutes to 5 minutes.
+-- The edge function wall-clock limit is ~150 s; anything processing for > 5 min is dead.
 
 CREATE OR REPLACE FUNCTION private.recover_stuck_ingestions()
 RETURNS void
@@ -21,7 +17,9 @@ BEGIN
       AND updated_at < now() - stuck_threshold
   LOOP
     UPDATE pending_ingestions
-    SET status = 'pending'
+    SET status     = 'pending',
+        last_error = 'auto-reset: stuck in processing > 5 min',
+        updated_at = now()
     WHERE id = rec.id;
 
     INSERT INTO pending_alerts (alert_type, details, triggered_at)
@@ -38,14 +36,11 @@ BEGIN
 END;
 $$;
 
--- ── pg_cron job ───────────────────────────────────────────────────────────────
-
--- Idempotent cleanup before registering
+-- Re-schedule to run every 5 minutes (was every 30).
 SELECT cron.unschedule(jobid)
   FROM cron.job
- WHERE jobname = 'stuck-ingestion-recovery-5m';
+ WHERE jobname = 'stuck-ingestion-recovery-30m';
 
--- Register job: every 5 minutes
 SELECT cron.schedule(
   'stuck-ingestion-recovery-5m',
   '*/5 * * * *',
