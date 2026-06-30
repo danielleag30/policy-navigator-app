@@ -375,6 +375,8 @@ async function writeNarrativeChunk(
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
+const DEADLINE_BUFFER_MS = 20_000; // 20 s buffer before hard kill
+
 /**
  * Run LLM extraction on all chunks and persist to the appropriate tables.
  * Any chunk without structured extraction falls back to narrative_chunks.
@@ -386,11 +388,16 @@ async function writeNarrativeChunk(
  * @param documentId  UUID of the Document shell row (created in task 2-1)
  * @param docType     doc_type string from documents table
  * @param chunks      Ordered ChunkLike array from chunkBlocks() (task 2-3)
+ * @param deadlineMs  Optional Date.now() value of the soft cutoff; when
+ *                    within DEADLINE_BUFFER_MS of this value, remaining
+ *                    chunks are bulk-inserted as narrative_chunks and the
+ *                    loop exits early so embedNarrativeChunks can finish.
  */
 export async function extractAndPersist(
   documentId: string,
   docType: string,
   chunks: ChunkLike[],
+  deadlineMs?: number,
 ): Promise<void> {
   const isBosType = docType === "bos_minutes" || docType === "bos_summary";
   const isBudgetType = docType === "budget_pdf";
@@ -402,6 +409,37 @@ export async function extractAndPersist(
     const chunk = chunks[idx];
     // chunk_sequence is 1-based; idx is 0-based
     const chunkSequence = idx + 1;
+
+    // Soft deadline: bulk-insert all remaining chunks as narrative_chunks so
+    // the pipeline can still embed and finalize within the wall-clock limit.
+    if (deadlineMs !== undefined && Date.now() >= deadlineMs - DEADLINE_BUFFER_MS) {
+      const remainingChunks = chunks.slice(idx);
+      if (remainingChunks.length > 0) {
+        const rows = remainingChunks.map((c, offset) => ({
+          id: uuidv7(),
+          document_id: documentId,
+          chunk_sequence: chunkSequence + offset,
+          content: c.text,
+          token_count: c.token_count,
+          overlap_prev: c.overlap_prev,
+          overlap_next: c.overlap_next,
+          page_number_start: c.page_number_start,
+          page_number_end: c.page_number_end,
+          bbox_start: c.bbox_start,
+          bbox_end: c.bbox_end,
+        }));
+        const { error: deadlineErr } = await db.from("narrative_chunks").insert(rows);
+        if (deadlineErr) {
+          throw new Error(`deadline bulk-insert narrative_chunks: ${deadlineErr.message}`);
+        }
+        console.warn(
+          `[extractor] soft deadline hit at chunk ${chunkSequence}/${chunks.length}; inserted ${remainingChunks.length} remaining as narrative_chunks`,
+        );
+        narrativeCount += remainingChunks.length;
+      }
+      break;
+    }
+
     let hasStructured = false;
 
     try {
