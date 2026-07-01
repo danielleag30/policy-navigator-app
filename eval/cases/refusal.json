@@ -1,0 +1,282 @@
+[
+  {
+    "id": "refusal-state-law-001",
+    "category": "refusal",
+    "query": "What does the Virginia Code say about maximum interest rates for consumer loans?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-state-law-001-is-refusal",
+        "description": "Pipeline declines to answer — Virginia Code is outside the Fairfax County Code corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: state-law. Virginia Code consumer lending rules are not in the Fairfax County Code corpus."
+  },
+  {
+    "id": "refusal-state-law-002",
+    "category": "refusal",
+    "query": "What are the mandatory minimum sentences for DUI convictions in Virginia?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-state-law-002-is-refusal",
+        "description": "Pipeline declines to answer — Virginia criminal sentencing is outside the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: state-law. DUI sentencing is Virginia Code Title 18.2, not Fairfax County ordinances."
+  },
+  {
+    "id": "refusal-state-law-003",
+    "category": "refusal",
+    "query": "How does the Virginia Freedom of Information Act define a public record?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-state-law-003-is-refusal",
+        "description": "Pipeline declines to answer — VFOIA is outside the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: state-law. Virginia FOIA (Va. Code § 2.2-3700 et seq.) is not in the Fairfax County Code corpus."
+  },
+  {
+    "id": "refusal-state-law-004",
+    "category": "refusal",
+    "query": "What does the Virginia Dillon Rule restrict counties from doing?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-state-law-004-is-refusal",
+        "description": "Pipeline declines to answer — Dillon Rule doctrine is outside the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: state-law. Dillon Rule is a Virginia constitutional/judicial doctrine, not codified in the County Code."
+  },
+  {
+    "id": "refusal-state-law-005",
+    "category": "refusal",
+    "query": "What are the educational requirements to become a licensed real estate agent in Virginia?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-state-law-005-is-refusal",
+        "description": "Pipeline declines to answer — real estate licensure is a state-level matter outside the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: state-law. Real estate agent licensing is regulated by DPOR under Virginia Code, not Fairfax County."
+  },
+  {
+    "id": "refusal-federal-law-006",
+    "category": "refusal",
+    "query": "What does the Fair Housing Act prohibit regarding housing discrimination?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-federal-law-006-is-refusal",
+        "description": "Pipeline declines to answer — Fair Housing Act is federal law outside the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: federal-law. The Fair Housing Act (42 U.S.C. § 3601 et seq.) is not in the Fairfax County Code corpus."
+  },
+  {
+    "id": "refusal-federal-law-007",
+    "category": "refusal",
+    "query": "What federal stormwater discharge regulations apply to Fairfax County under the Clean Water Act?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-federal-law-007-is-refusal",
+        "description": "Pipeline declines to answer — Clean Water Act NPDES rules are federal, not in the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: federal-law. Clean Water Act NPDES regulations (EPA/40 CFR) are not in the Fairfax County Code corpus."
+  },
+  {
+    "id": "refusal-other-jurisdiction-008",
+    "category": "refusal",
+    "query": "What are the building codes applicable to Dulles Airport property?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-other-jurisdiction-008-is-refusal",
+        "description": "Pipeline declines to answer — Dulles Airport (MWAA jurisdiction) is not subject to Fairfax County Code",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: other-jurisdictions. Dulles International Airport is under Metropolitan Washington Airports Authority (MWAA) jurisdiction, not Fairfax County."
+  },
+  {
+    "id": "refusal-other-jurisdiction-009",
+    "category": "refusal",
+    "query": "What does Arlington County Code say about accessory dwelling units?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-other-jurisdiction-009-is-refusal",
+        "description": "Pipeline declines to answer — Arlington County is a separate jurisdiction not in the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: other-jurisdictions. Arlington County is an independent jurisdiction; its code is not in the Fairfax County corpus."
+  },
+  {
+    "id": "refusal-other-jurisdiction-010",
+    "category": "refusal",
+    "query": "What are the zoning regulations for the City of Fairfax?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-other-jurisdiction-010-is-refusal",
+        "description": "Pipeline declines to answer — City of Fairfax is an independent municipality separate from Fairfax County",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: other-jurisdictions. The City of Fairfax is an independent incorporated city with its own code, not governed by Fairfax County."
+  },
+  {
+    "id": "refusal-realtime-011",
+    "category": "refusal",
+    "query": "What is the current commercial vacancy rate in Tysons Corner?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-realtime-011-is-refusal",
+        "description": "Pipeline declines to answer — real-time market data is not in the static corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: realtime-data. Commercial vacancy rates are live market data, not codified in the Fairfax County Code."
+  },
+  {
+    "id": "refusal-realtime-012",
+    "category": "refusal",
+    "query": "Who is the current Chair of the Fairfax County Board of Supervisors?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-realtime-012-is-refusal",
+        "description": "Pipeline declines to answer — elected personnel data is not in the static corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: realtime-data. Current officeholder information is not codified in ordinances."
+  },
+  {
+    "id": "refusal-realtime-013",
+    "category": "refusal",
+    "query": "What was the outcome of last Tuesday's Board of Supervisors vote on the data center moratorium?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-realtime-013-is-refusal",
+        "description": "Pipeline declines to answer — recent vote outcome is not in the ingested corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: realtime-data. Recent Board votes are not yet ingested; corpus covers Supplement 179 only."
+  },
+  {
+    "id": "refusal-realtime-014",
+    "category": "refusal",
+    "query": "What is Fairfax County's current fiscal year budget surplus?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-realtime-014-is-refusal",
+        "description": "Pipeline declines to answer — live fiscal data is outside the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: realtime-data. Current budget surplus is live financial data, not in the Fairfax County Code corpus."
+  },
+  {
+    "id": "refusal-fcps-015",
+    "category": "refusal",
+    "query": "What does Fairfax County Public Schools policy say about cell phone use in classrooms?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-fcps-015-is-refusal",
+        "description": "Pipeline declines to answer — FCPS is a separate governing body whose policies are not in the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: fcps. Fairfax County Public Schools is governed by the School Board, a separate body from the Board of Supervisors; its policies are not in the County Code corpus."
+  },
+  {
+    "id": "refusal-fcps-016",
+    "category": "refusal",
+    "query": "What are the attendance boundary policies for elementary schools in Fairfax County?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-fcps-016-is-refusal",
+        "description": "Pipeline declines to answer — school attendance boundaries are FCPS policy, not Fairfax County Code",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: fcps. School attendance boundaries are set by the FCPS School Board, a separate governmental body."
+  },
+  {
+    "id": "refusal-private-017",
+    "category": "refusal",
+    "query": "What are the Reston Association HOA rules regarding fence installation?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-private-017-is-refusal",
+        "description": "Pipeline declines to answer — HOA rules are private governing documents, not in the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: private-entities. Reston Association is a private HOA; its covenants and rules are not in the Fairfax County Code corpus."
+  },
+  {
+    "id": "refusal-private-018",
+    "category": "refusal",
+    "query": "What are the visitor policies at Inova Fairfax Medical Campus?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-private-018-is-refusal",
+        "description": "Pipeline declines to answer — hospital visitor policies are a private institutional matter, not in the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: private-entities. Inova Fairfax is a private hospital; its visitor policies are not codified in the Fairfax County Code."
+  },
+  {
+    "id": "refusal-advice-019",
+    "category": "refusal",
+    "query": "Is it legal for me to build a 6-foot fence on the property line at my home in Fairfax County?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-advice-019-is-refusal",
+        "description": "Pipeline declines to answer — requires site-specific zoning lookup and constitutes legal advice",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: advice-seeking. Site-specific determinations requiring knowledge of the property's zoning district are outside the pipeline's scope."
+  },
+  {
+    "id": "refusal-advice-020",
+    "category": "refusal",
+    "query": "What permits do I need for a 400-square-foot addition to my house in Herndon, Virginia?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "refusal-advice-020-is-refusal",
+        "description": "Pipeline declines to answer — Herndon is an incorporated town with its own building code authority, outside Fairfax County jurisdiction",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Category: advice-seeking / other-jurisdictions. The Town of Herndon is an incorporated municipality with its own building code authority, separate from Fairfax County."
+  }
+]
