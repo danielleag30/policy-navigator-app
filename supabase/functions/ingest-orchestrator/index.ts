@@ -66,6 +66,14 @@ const DOCLING_500_MAX_ATTEMPTS = 10;
 /** When Supabase AI Session is unavailable, defer for this many minutes. */
 const AI_SESSION_DEFER_MINUTES = 15;
 
+/**
+ * Hard-abort budget for the raw source-PDF fetch (content-hash step), in ms.
+ * Sized so SOURCE_FETCH_TIMEOUT_MS + the Docling call's 100s budget lands
+ * exactly at the 120s SOFT_DEADLINE_MS, leaving the remaining ~30s of the
+ * ~150s wall-clock ceiling for chunking/extraction/embedding.
+ */
+const SOURCE_FETCH_TIMEOUT_MS = 20_000;
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function nextAttemptAt(attempt: number): string {
@@ -140,14 +148,29 @@ async function pdfBranch(
   const doclingUrl = Deno.env.get("HF_SPACES_DOCLING_URL");
   if (!doclingUrl) throw new Error("HF_SPACES_DOCLING_URL not set");
 
-  // 1. Fetch source PDF bytes for content_hash
+  // 1. Fetch source PDF bytes for content_hash — hard-abort well before the
+  // wall-clock kill so a slow/hanging source host can't burn the whole ~150s
+  // budget before execution ever reaches the (already time-boxed) Docling call.
   let pdfBytes: Uint8Array;
+  const sourceFetchController = new AbortController();
+  const sourceFetchTimer = setTimeout(
+    () => sourceFetchController.abort(),
+    SOURCE_FETCH_TIMEOUT_MS,
+  );
   try {
-    const resp = await fetch(sourceUrl, { redirect: "follow" });
+    const resp = await fetch(sourceUrl, {
+      redirect: "follow",
+      signal: sourceFetchController.signal,
+    });
     if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching source PDF`);
     pdfBytes = new Uint8Array(await resp.arrayBuffer());
   } catch (e) {
+    if (e instanceof DOMException && (e as DOMException).name === "AbortError") {
+      throw new Error(`Source PDF fetch timed out after ${SOURCE_FETCH_TIMEOUT_MS / 1000}s`);
+    }
     throw new Error(`Source fetch failed: ${(e as Error).message}`);
+  } finally {
+    clearTimeout(sourceFetchTimer);
   }
 
   // 2. Compute content_hash; check for duplicate
@@ -875,6 +898,8 @@ Deno.serve(async (req: Request) => {
 
     const isDoclingTimeout = msg === "Docling call timed out after 100s";
     const isDoclingHttp500 = msg.includes("Docling wrapper returned HTTP 500");
+    const isSourceFetchTimeout =
+      msg === `Source PDF fetch timed out after ${SOURCE_FETCH_TIMEOUT_MS / 1000}s`;
 
     // writePendingAlert now throws on failure.  Capture it so we can still
     // complete the status update below before propagating.
@@ -903,7 +928,7 @@ Deno.serve(async (req: Request) => {
     // Reset to pending for retry.
     // Timeout: override next_attempt_at to 15 min (the processing-mark value may be
     // longer than needed for a transient wall-clock hang).
-    const nextRetryAt = isDoclingTimeout
+    const nextRetryAt = (isDoclingTimeout || isSourceFetchTimeout)
       ? new Date(Date.now() + 15 * 60 * 1000).toISOString()
       : nextAttemptAt(newAttempts);
 
@@ -924,6 +949,9 @@ Deno.serve(async (req: Request) => {
     // Return 200 for expected timeouts so pg_cron logs stay clean.
     if (isDoclingTimeout) {
       return success({ status: "deferred", reason: "docling_timeout" });
+    }
+    if (isSourceFetchTimeout) {
+      return success({ status: "deferred", reason: "source_fetch_timeout" });
     }
     return error("INGESTION_FAILED", "Ingestion attempt failed — will retry", 500);
   }
