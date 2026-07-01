@@ -54,7 +54,14 @@ const PDF_DOC_TYPES = ["bos_minutes", "bos_summary", "budget_pdf"] as const;
 /** Exponential backoff schedule (minutes) indexed by attempt number (1-based). */
 const BACKOFF_MINUTES: Record<number, number> = { 1: 1, 2: 5, 3: 30 };
 
-const MAX_ATTEMPTS = 3;
+/** Absolute retry ceiling — skip the row when newAttempts exceeds this. */
+const ABSOLUTE_MAX_ATTEMPTS = 50;
+
+/**
+ * After this many Docling HTTP 500 attempts the PDF is considered too large
+ * for the free-tier HF Spaces instance; skip rather than retry forever.
+ */
+const DOCLING_500_MAX_ATTEMPTS = 10;
 
 /** When Supabase AI Session is unavailable, defer for this many minutes. */
 const AI_SESSION_DEFER_MINUTES = 15;
@@ -211,15 +218,18 @@ async function pdfBranch(
   const documentId: string = docRow.id;
   console.log(`[pdf-branch] Document shell created: ${documentId}`);
 
-  // 4. Call Docling wrapper
+  // 4. Call Docling wrapper — hard-abort at 100s to stay under the 150s wall-clock limit.
   let blocks: FlatBlock[];
   let doclingVersion: string;
 
+  const doclingController = new AbortController();
+  const doclingTimer = setTimeout(() => doclingController.abort(), 100_000);
   try {
     const docResp = await fetch(`${doclingUrl}/process`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: sourceUrl }),
+      signal: doclingController.signal,
     });
     if (!docResp.ok) {
       throw new Error(`Docling wrapper returned HTTP ${docResp.status}`);
@@ -232,7 +242,12 @@ async function pdfBranch(
     blocks = payload.blocks;
     doclingVersion = payload.docling_version;
   } catch (e) {
+    if (e instanceof DOMException && (e as DOMException).name === "AbortError") {
+      throw new Error("Docling call timed out after 100s");
+    }
     throw new Error(`Docling call failed: ${(e as Error).message}`);
+  } finally {
+    clearTimeout(doclingTimer);
   }
 
   if (!blocks || blocks.length === 0) {
@@ -697,6 +712,22 @@ Deno.serve(async (req: Request) => {
 
   const newAttempts = (row.attempts ?? 0) + 1;
 
+  // Skip rows that have hit the absolute retry ceiling before wasting a processing slot.
+  if (newAttempts > ABSOLUTE_MAX_ATTEMPTS) {
+    const { error: skipErr } = await db
+      .from("pending_ingestions")
+      .update({
+        status: "skipped",
+        last_error: "Max attempts exceeded",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", pendingIngestionId);
+    if (skipErr) {
+      return error("INGESTION_FAILED", "Failed to persist skipped status", 500);
+    }
+    return success({ status: "skipped", reason: "max_attempts_exceeded" });
+  }
+
   // Mark processing — fail loudly so later logic does not proceed on a write that never persisted.
   // If this fails the row stays 'pending' and pg_cron will pick it up again with no attempt consumed.
   const { error: processingErr } = await db
@@ -842,6 +873,9 @@ Deno.serve(async (req: Request) => {
     const msg = (e as Error).message ?? "unknown error";
     console.error(`[orchestrator] error on attempt ${newAttempts}:`, msg);
 
+    const isDoclingTimeout = msg === "Docling call timed out after 100s";
+    const isDoclingHttp500 = msg.includes("Docling wrapper returned HTTP 500");
+
     // writePendingAlert now throws on failure.  Capture it so we can still
     // complete the status update below before propagating.
     let pendingAlertErr: Error | undefined;
@@ -851,30 +885,46 @@ Deno.serve(async (req: Request) => {
       pendingAlertErr = ae as Error;
     }
 
-    if (newAttempts >= MAX_ATTEMPTS) {
-      const { error: failedErr } = await db
+    // PDFs that reliably 500 Docling are too large for the free HF Spaces tier — skip them.
+    if (isDoclingHttp500 && newAttempts >= DOCLING_500_MAX_ATTEMPTS) {
+      const skipMsg =
+        "skipped: Docling HTTP 500 after max attempts (PDF too large for free HF Spaces)";
+      const { error: skipErr } = await db
         .from("pending_ingestions")
-        .update({ status: "failed", last_error: msg, updated_at: new Date().toISOString() })
+        .update({ status: "skipped", last_error: skipMsg, updated_at: new Date().toISOString() })
         .eq("id", pendingIngestionId);
-      if (failedErr) {
-        throw new Error(`Failed to persist 'failed' status after max attempts: ${failedErr.message}`);
+      if (skipErr) {
+        throw new Error(`Failed to persist skipped status: ${skipErr.message}`);
       }
-      // Status is persisted; now surface the alert write failure loudly.
       if (pendingAlertErr) throw pendingAlertErr;
-      return error("INGESTION_FAILED", "Max attempts reached", 500);
+      return success({ status: "skipped", reason: "docling_http500_too_large" });
     }
 
-    // Reset to pending for next pg_cron retry
+    // Reset to pending for retry.
+    // Timeout: override next_attempt_at to 15 min (the processing-mark value may be
+    // longer than needed for a transient wall-clock hang).
+    const nextRetryAt = isDoclingTimeout
+      ? new Date(Date.now() + 15 * 60 * 1000).toISOString()
+      : nextAttemptAt(newAttempts);
+
     const { error: resetErr } = await db
       .from("pending_ingestions")
-      .update({ status: "pending", last_error: msg, updated_at: new Date().toISOString() })
+      .update({
+        status: "pending",
+        last_error: msg,
+        next_attempt_at: nextRetryAt,
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", pendingIngestionId);
     if (resetErr) {
       throw new Error(`Failed to reset ingestion to 'pending' for retry: ${resetErr.message}`);
     }
-    // Status is persisted; now surface the alert write failure loudly.
     if (pendingAlertErr) throw pendingAlertErr;
 
+    // Return 200 for expected timeouts so pg_cron logs stay clean.
+    if (isDoclingTimeout) {
+      return success({ status: "deferred", reason: "docling_timeout" });
+    }
     return error("INGESTION_FAILED", "Ingestion attempt failed — will retry", 500);
   }
 });
