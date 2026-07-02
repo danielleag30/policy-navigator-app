@@ -59,6 +59,23 @@
  *   with unchanged content are left untouched (no duplicate, no
  *   supersession) while previously-unexplored children get inserted.
  *
+ * CONCURRENCY (audit remediation, this file's current revision):
+ *
+ *   Two hazards exist when concurrent ingest-orchestrator invocations both
+ *   process municode_api rows (plausible given overlapping pending_ingestions
+ *   triggers from the watchdog):
+ *     1. Resume-state race: findResumableDocument() now atomically claims a
+ *        paused document via a single conditional UPDATE ... WHERE ...
+ *        RETURNING against documents.resume_claim_expires_at before draining
+ *        its queue, instead of read-then-write. A losing invocation reports
+ *        complete:false without starting a duplicate fresh job.
+ *     2. Supersession race: the supersede UPDATE in upsertProvision() is
+ *        guarded by `WHERE is_current = true` (atomic conditional update),
+ *        and the ordinance_provisions_one_current_per_node_idx partial
+ *        unique index (migration 002) makes a duplicate is_current=true
+ *        insert impossible even under a race — the resulting 23505 is
+ *        caught and treated as "already inserted by another process, skip".
+ *
  * Does NOT set documents.status or generate embeddings — orchestrator (task 2-6) owns that.
  */
 
@@ -212,6 +229,15 @@ async function upsertProvision(
   }
 
   if (existing) {
+    // WHERE is_current = true (not just id) makes this an atomic conditional
+    // update: Postgres row-level locking serializes concurrent UPDATEs on the
+    // same row, so a second concurrent supersede attempt naturally matches
+    // zero rows once the first has already flipped it. The remaining half of
+    // the race — two concurrent processes both reaching the INSERT below
+    // with is_current=true for the same node — is closed by the
+    // ordinance_provisions_one_current_per_node_idx partial unique index
+    // (migration 002); the 23505 catch after the insert treats that as
+    // "another process already inserted the current version — skip".
     const { error: supersedeErr } = await db
       .from("ordinance_provisions")
       .update({
@@ -219,7 +245,8 @@ async function upsertProvision(
         superseded_date: ctx.effectiveDate,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", existing.id);
+      .eq("id", existing.id)
+      .eq("is_current", true);
     if (supersedeErr) {
       throw new Error(
         `Failed to supersede prior ordinance_provisions row for ${item.id}: ${supersedeErr.message}`,
@@ -380,6 +407,10 @@ async function drainQueue(
         .from("documents")
         .update({
           municode_resume_state: state,
+          // Release the claim lease immediately (rather than waiting out the
+          // lease window) so the next invocation's findResumableDocument()
+          // can reclaim this document right away instead of stalling.
+          resume_claim_expires_at: null,
           updated_at: new Date().toISOString(),
         })
         .eq("id", ctx.documentId);
@@ -412,6 +443,7 @@ async function drainQueue(
       .from("documents")
       .update({
         municode_resume_state: null,
+        resume_claim_expires_at: null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", ctx.documentId);
@@ -445,13 +477,32 @@ async function drainQueue(
   };
 }
 
-/** Finds an in-progress Municode document (soft-deadline-paused mid-walk) to resume, if any. */
-async function findResumableDocument(): Promise<
-  { documentId: string; state: ResumeState } | null
-> {
-  const { data, error: findErr } = await db
+/** Minutes an exclusive resume-claim lease is held before it's considered stale. */
+const RESUME_LEASE_MINUTES = 5;
+
+type ResumableLookup =
+  | { kind: "claimed"; documentId: string; state: ResumeState }
+  | { kind: "leased"; documentId: string }
+  | { kind: "none" };
+
+/**
+ * Finds an in-progress Municode document (soft-deadline-paused mid-walk) to
+ * resume, if any, and atomically claims exclusive ownership of it via a
+ * single conditional UPDATE ... WHERE ... RETURNING (not read-then-write).
+ *
+ * Two concurrent ingest-orchestrator invocations (plausible given overlapping
+ * pending_ingestions triggers from the watchdog) can both reach the initial
+ * SELECT and see the same candidate row, but only one's claim UPDATE will
+ * affect a row — Postgres serializes concurrent UPDATEs on the same row, and
+ * the WHERE guard re-checks lease eligibility at UPDATE time, so the loser's
+ * UPDATE matches zero rows. The loser must NOT start a fresh job (that would
+ * duplicate the resumed walk); it reports "leased" so the caller requeues
+ * without doing any work this invocation.
+ */
+async function findResumableDocument(): Promise<ResumableLookup> {
+  const { data: candidate, error: findErr } = await db
     .from("documents")
-    .select("id, municode_resume_state")
+    .select("id")
     .eq("doc_type", "municode_api")
     .eq("status", "unknown")
     .not("municode_resume_state", "is", null)
@@ -464,11 +515,36 @@ async function findResumableDocument(): Promise<
       `Municode resumable-document lookup failed: ${findErr.message}`,
     );
   }
-  if (!data) return null;
+  if (!candidate) return { kind: "none" };
+
+  const nowIso = new Date().toISOString();
+  const leaseExpiresAt = new Date(
+    Date.now() + RESUME_LEASE_MINUTES * 60 * 1000,
+  ).toISOString();
+
+  const { data: claimed, error: claimErr } = await db
+    .from("documents")
+    .update({ resume_claim_expires_at: leaseExpiresAt })
+    .eq("id", candidate.id)
+    .not("municode_resume_state", "is", null)
+    .or(`resume_claim_expires_at.is.null,resume_claim_expires_at.lt.${nowIso}`)
+    .select("id, municode_resume_state")
+    .maybeSingle();
+
+  if (claimErr) {
+    throw new Error(
+      `Municode resume-claim update failed: ${claimErr.message}`,
+    );
+  }
+  if (!claimed) {
+    // Someone else holds an unexpired lease on this document right now.
+    return { kind: "leased", documentId: candidate.id as string };
+  }
 
   return {
-    documentId: data.id as string,
-    state: data.municode_resume_state as ResumeState,
+    kind: "claimed",
+    documentId: claimed.id as string,
+    state: claimed.municode_resume_state as ResumeState,
   };
 }
 
@@ -500,7 +576,22 @@ export async function handleMunicode(
 
   // 0. Resume in-progress walk, if any — skip Jobs/TOC/dedup entirely.
   const resumable = await findResumableDocument();
-  if (resumable) {
+  if (resumable.kind === "leased") {
+    // Another invocation holds the exclusive claim on this paused document
+    // right now. Do NOT start a fresh job (that would duplicate the resumed
+    // walk) — just requeue so this invocation retries shortly without doing
+    // any work.
+    console.log(
+      `[municode] resume lease held by another invocation for document ${resumable.documentId} — requeueing`,
+    );
+    return {
+      documentId: resumable.documentId,
+      nodeIds: [],
+      skipped: false,
+      complete: false,
+    };
+  }
+  if (resumable.kind === "claimed") {
     console.log(
       `[municode] resuming in-progress walk for document ${resumable.documentId}`,
     );
