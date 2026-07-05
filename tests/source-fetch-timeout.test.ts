@@ -95,7 +95,7 @@ Deno.test("outer catch block treats source-fetch timeout the same way as Docling
   const tailBody = extractBetween(
     src,
     "// Return 200 for expected timeouts so pg_cron logs stay clean.",
-    'return error("INGESTION_FAILED"',
+    "return error(",
   );
   assert(
     tailBody.includes('reason: "source_fetch_timeout"'),
