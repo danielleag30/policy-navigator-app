@@ -28,18 +28,19 @@ import db from "../_shared/db-client.ts";
 import { error, success } from "../_shared/response.ts";
 import { contentHash } from "../_shared/hash.ts";
 import {
-  chunkBlocks,
-  validateTokenizer,
   type Chunk,
+  chunkBlocks,
   type FlatBlock,
+  validateTokenizer,
 } from "../_shared/chunker.ts";
 import { extractAndPersist } from "../_shared/extractor.ts";
 import {
-  preflight,
-  generateEmbeddings,
   type AiSession,
+  generateEmbeddings,
+  preflight,
 } from "../_shared/embedder.ts";
 import { handleMunicode } from "./municode.ts";
+import { requestSecret } from "../_shared/admin-auth.ts";
 
 // Supabase.ai.Session is injected by the Edge Function runtime.
 // Declare here so TypeScript resolves it; actual availability is checked at runtime.
@@ -120,7 +121,9 @@ async function deferIngestion(
   if (deferErr) {
     // Cannot guarantee the no-retry contract without the DB write succeeding.
     // Throw so the outer catch resets the row to 'pending' rather than leaving it stuck in 'processing'.
-    throw new Error(`Defer-without-retry DB update failed (${reason}): ${deferErr.message}`);
+    throw new Error(
+      `Defer-without-retry DB update failed (${reason}): ${deferErr.message}`,
+    );
   }
   await writePendingAlert(
     pendingIngestionId,
@@ -128,6 +131,38 @@ async function deferIngestion(
   );
   console.warn(`[orchestrator] deferred ingestion: ${reason}`);
   return success({ status: "deferred", reason: "ai_session_unavailable" });
+}
+
+/**
+ * Requeue a Municode ingestion that paused mid-walk after hitting the soft
+ * deadline. Not a failure — the walk's resume state was already persisted
+ * to documents.municode_resume_state by handleMunicode(), so this just
+ * undoes the attempt-count consumption and schedules an immediate retry so
+ * the next invocation (cron poll or manual) picks the walk back up.
+ */
+async function requeueForResume(
+  pendingIngestionId: string,
+  currentAttempts: number,
+): Promise<Response> {
+  const { error: requeueErr } = await db
+    .from("pending_ingestions")
+    .update({
+      status: "pending",
+      attempts: currentAttempts - 1,
+      next_attempt_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", pendingIngestionId);
+  if (requeueErr) {
+    throw new Error(`Resume requeue DB update failed: ${requeueErr.message}`);
+  }
+  console.log(
+    "[orchestrator] Municode soft deadline hit — requeued for resume",
+  );
+  return success({
+    status: "in_progress",
+    reason: "soft_deadline_resume_scheduled",
+  });
 }
 
 // ── PDF branch (tasks 2-3, 2-4) ───────────────────────────────────────────────
@@ -191,10 +226,17 @@ async function pdfBranch(
       .update({ status: "skipped", updated_at: new Date().toISOString() })
       .eq("id", pendingIngestionId);
     if (skipErr) {
-      throw new Error(`Failed to mark ingestion as skipped: ${skipErr.message}`);
+      throw new Error(
+        `Failed to mark ingestion as skipped: ${skipErr.message}`,
+      );
     }
     console.log(`[pdf-branch] duplicate content_hash ${hash} — skipped`);
-    return { documentId: existing.id, chunks: [], doclingVersion: "", skipped: true };
+    return {
+      documentId: existing.id,
+      chunks: [],
+      doclingVersion: "",
+      skipped: true,
+    };
   }
 
   // 3. Remove any orphaned shell left by a prior failed attempt, then insert fresh.
@@ -217,8 +259,13 @@ async function pdfBranch(
     await db.from("policy_decisions").delete().in("document_id", orphanIds);
     await db.from("budget_indicators").delete().in("document_id", orphanIds);
     await db.from("ordinance_provisions").delete().in("document_id", orphanIds);
-    const { error: orphanErr } = await db.from("documents").delete().in("id", orphanIds);
-    if (orphanErr) throw new Error(`Orphan cleanup failed: ${orphanErr.message}`);
+    const { error: orphanErr } = await db.from("documents").delete().in(
+      "id",
+      orphanIds,
+    );
+    if (orphanErr) {
+      throw new Error(`Orphan cleanup failed: ${orphanErr.message}`);
+    }
   }
 
   const { data: docRow, error: docErr } = await db
@@ -265,7 +312,9 @@ async function pdfBranch(
     blocks = payload.blocks;
     doclingVersion = payload.docling_version;
   } catch (e) {
-    if (e instanceof DOMException && (e as DOMException).name === "AbortError") {
+    if (
+      e instanceof DOMException && (e as DOMException).name === "AbortError"
+    ) {
       throw new Error("Docling call timed out after 100s");
     }
     throw new Error(`Docling call failed: ${(e as Error).message}`);
@@ -282,7 +331,9 @@ async function pdfBranch(
 
   // 6. Chunk
   const chunks = await chunkBlocks(blocks, 512, 0.15);
-  console.log(`[pdf-branch] ${chunks.length} chunks from ${blocks.length} blocks`);
+  console.log(
+    `[pdf-branch] ${chunks.length} chunks from ${blocks.length} blocks`,
+  );
 
   // 7. Persist raw chunks to document_chunks (task 2-3 handoff)
   if (chunks.length > 0) {
@@ -302,7 +353,9 @@ async function pdfBranch(
       overlap_next: c.overlap_next,
     }));
 
-    const { error: chunkErr } = await db.from("document_chunks").insert(chunkRows);
+    const { error: chunkErr } = await db.from("document_chunks").insert(
+      chunkRows,
+    );
     if (chunkErr) throw new Error(`Chunk insert failed: ${chunkErr.message}`);
   }
 
@@ -325,7 +378,9 @@ async function embedDocumentChunks(
     .eq("document_id", documentId)
     .order("chunk_index");
 
-  if (fetchErr) throw new Error(`Fetching document_chunks failed: ${fetchErr.message}`);
+  if (fetchErr) {
+    throw new Error(`Fetching document_chunks failed: ${fetchErr.message}`);
+  }
   if (!rows || rows.length === 0) {
     console.log(`[embedder] no document_chunks for document ${documentId}`);
     return;
@@ -341,7 +396,11 @@ async function embedDocumentChunks(
       .update({ embedding: embeddings[i] })
       .eq("id", rows[i].id);
     if (chunkErr) {
-      throw new Error(`Failed to write embedding for chunk ${rows[i].id}: ${chunkErr.message}`);
+      throw new Error(
+        `Failed to write embedding for chunk ${
+          rows[i].id
+        }: ${chunkErr.message}`,
+      );
     }
   }
 
@@ -351,10 +410,14 @@ async function embedDocumentChunks(
     .select("id", { count: "exact", head: true })
     .eq("document_id", documentId)
     .not("embedding", "is", null);
-  if (countErr) throw new Error(`Embedding count check failed: ${countErr.message}`);
+  if (countErr) {
+    throw new Error(`Embedding count check failed: ${countErr.message}`);
+  }
   if ((nonNullCount ?? 0) !== rows.length) {
     throw new Error(
-      `Embedding count mismatch: expected ${rows.length}, got ${nonNullCount ?? 0} non-null in DB`,
+      `Embedding count mismatch: expected ${rows.length}, got ${
+        nonNullCount ?? 0
+      } non-null in DB`,
     );
   }
 }
@@ -370,7 +433,9 @@ async function embedVoteTallies(
     .select("id, motion_text")
     .eq("document_id", documentId);
 
-  if (fetchErr) throw new Error(`Fetching vote_tallies failed: ${fetchErr.message}`);
+  if (fetchErr) {
+    throw new Error(`Fetching vote_tallies failed: ${fetchErr.message}`);
+  }
   if (!rows || rows.length === 0) {
     console.log(`[embedder] no vote_tallies for document ${documentId}`);
     return;
@@ -392,7 +457,9 @@ async function embedVoteTallies(
         .eq("id", row.id)
         .then(({ error: updErr }) => {
           if (updErr) {
-            throw new Error(`Failed to persist embedding for vote_tally ${row.id}: ${updErr.message}`);
+            throw new Error(
+              `Failed to persist embedding for vote_tally ${row.id}: ${updErr.message}`,
+            );
           }
         });
     }),
@@ -405,10 +472,14 @@ async function embedVoteTallies(
     .is("embedding", null);
 
   if (countErr) {
-    throw new Error(`Null-check query failed for vote_tallies: ${countErr.message}`);
+    throw new Error(
+      `Null-check query failed for vote_tallies: ${countErr.message}`,
+    );
   }
   if (count && count > 0) {
-    throw new Error(`${count} vote_tallies still have null embedding after generation`);
+    throw new Error(
+      `${count} vote_tallies still have null embedding after generation`,
+    );
   }
 }
 
@@ -421,7 +492,9 @@ async function embedPolicyDecisions(
     .select("id, raw_extracted_text")
     .eq("document_id", documentId);
 
-  if (fetchErr) throw new Error(`Fetching policy_decisions failed: ${fetchErr.message}`);
+  if (fetchErr) {
+    throw new Error(`Fetching policy_decisions failed: ${fetchErr.message}`);
+  }
   if (!rows || rows.length === 0) {
     console.log(`[embedder] no policy_decisions for document ${documentId}`);
     return;
@@ -434,7 +507,9 @@ async function embedPolicyDecisions(
     rows.map((row, i) => {
       const emb = embeddings[i];
       if (emb === null) {
-        console.error(`[embedder] null embedding for policy_decision ${row.id}`);
+        console.error(
+          `[embedder] null embedding for policy_decision ${row.id}`,
+        );
         return Promise.resolve();
       }
       return db
@@ -443,7 +518,9 @@ async function embedPolicyDecisions(
         .eq("id", row.id)
         .then(({ error: updErr }) => {
           if (updErr) {
-            throw new Error(`Failed to persist embedding for policy_decision ${row.id}: ${updErr.message}`);
+            throw new Error(
+              `Failed to persist embedding for policy_decision ${row.id}: ${updErr.message}`,
+            );
           }
         });
     }),
@@ -456,10 +533,14 @@ async function embedPolicyDecisions(
     .is("embedding", null);
 
   if (countErr) {
-    throw new Error(`Null-check query failed for policy_decisions: ${countErr.message}`);
+    throw new Error(
+      `Null-check query failed for policy_decisions: ${countErr.message}`,
+    );
   }
   if (count && count > 0) {
-    throw new Error(`${count} policy_decisions still have null embedding after generation`);
+    throw new Error(
+      `${count} policy_decisions still have null embedding after generation`,
+    );
   }
 }
 
@@ -472,7 +553,9 @@ async function embedBudgetIndicators(
     .select("id, raw_extracted_text")
     .eq("document_id", documentId);
 
-  if (fetchErr) throw new Error(`Fetching budget_indicators failed: ${fetchErr.message}`);
+  if (fetchErr) {
+    throw new Error(`Fetching budget_indicators failed: ${fetchErr.message}`);
+  }
   if (!rows || rows.length === 0) {
     console.log(`[embedder] no budget_indicators for document ${documentId}`);
     return;
@@ -485,7 +568,9 @@ async function embedBudgetIndicators(
     rows.map((row, i) => {
       const emb = embeddings[i];
       if (emb === null) {
-        console.error(`[embedder] null embedding for budget_indicator ${row.id}`);
+        console.error(
+          `[embedder] null embedding for budget_indicator ${row.id}`,
+        );
         return Promise.resolve();
       }
       return db
@@ -494,7 +579,9 @@ async function embedBudgetIndicators(
         .eq("id", row.id)
         .then(({ error: updErr }) => {
           if (updErr) {
-            throw new Error(`Failed to persist embedding for budget_indicator ${row.id}: ${updErr.message}`);
+            throw new Error(
+              `Failed to persist embedding for budget_indicator ${row.id}: ${updErr.message}`,
+            );
           }
         });
     }),
@@ -507,10 +594,14 @@ async function embedBudgetIndicators(
     .is("embedding", null);
 
   if (countErr) {
-    throw new Error(`Null-check query failed for budget_indicators: ${countErr.message}`);
+    throw new Error(
+      `Null-check query failed for budget_indicators: ${countErr.message}`,
+    );
   }
   if (count && count > 0) {
-    throw new Error(`${count} budget_indicators still have null embedding after generation`);
+    throw new Error(
+      `${count} budget_indicators still have null embedding after generation`,
+    );
   }
 }
 
@@ -523,7 +614,9 @@ async function embedNarrativeChunks(
     .select("id, content")
     .eq("document_id", documentId);
 
-  if (fetchErr) throw new Error(`Fetching narrative_chunks failed: ${fetchErr.message}`);
+  if (fetchErr) {
+    throw new Error(`Fetching narrative_chunks failed: ${fetchErr.message}`);
+  }
   if (!rows || rows.length === 0) {
     console.log(`[embedder] no narrative_chunks for document ${documentId}`);
     return;
@@ -536,7 +629,9 @@ async function embedNarrativeChunks(
     rows.map((row, i) => {
       const emb = embeddings[i];
       if (emb === null) {
-        console.error(`[embedder] null embedding for narrative_chunk ${row.id}`);
+        console.error(
+          `[embedder] null embedding for narrative_chunk ${row.id}`,
+        );
         return Promise.resolve();
       }
       return db
@@ -545,7 +640,9 @@ async function embedNarrativeChunks(
         .eq("id", row.id)
         .then(({ error: updErr }) => {
           if (updErr) {
-            throw new Error(`Failed to persist embedding for narrative_chunk ${row.id}: ${updErr.message}`);
+            throw new Error(
+              `Failed to persist embedding for narrative_chunk ${row.id}: ${updErr.message}`,
+            );
           }
         });
     }),
@@ -558,10 +655,14 @@ async function embedNarrativeChunks(
     .is("embedding", null);
 
   if (countErr) {
-    throw new Error(`Null-check query failed for narrative_chunks: ${countErr.message}`);
+    throw new Error(
+      `Null-check query failed for narrative_chunks: ${countErr.message}`,
+    );
   }
   if (count && count > 0) {
-    throw new Error(`${count} narrative_chunks still have null embedding after generation`);
+    throw new Error(
+      `${count} narrative_chunks still have null embedding after generation`,
+    );
   }
 }
 
@@ -577,10 +678,14 @@ async function embedOrdinanceProvisions(
     .eq("document_id", documentId);
 
   if (fetchErr) {
-    throw new Error(`Fetching ordinance_provisions failed: ${fetchErr.message}`);
+    throw new Error(
+      `Fetching ordinance_provisions failed: ${fetchErr.message}`,
+    );
   }
   if (!rows || rows.length === 0) {
-    console.log(`[embedder] no ordinance_provisions for document ${documentId}`);
+    console.log(
+      `[embedder] no ordinance_provisions for document ${documentId}`,
+    );
     return;
   }
 
@@ -600,7 +705,9 @@ async function embedOrdinanceProvisions(
         .eq("id", row.id)
         .then(({ error: updErr }) => {
           if (updErr) {
-            throw new Error(`Failed to persist embedding for provision ${row.id}: ${updErr.message}`);
+            throw new Error(
+              `Failed to persist embedding for provision ${row.id}: ${updErr.message}`,
+            );
           }
         });
     }),
@@ -614,7 +721,9 @@ async function embedOrdinanceProvisions(
     .is("embedding", null);
 
   if (countErr) {
-    throw new Error(`Null-check query failed for ordinance_provisions: ${countErr.message}`);
+    throw new Error(
+      `Null-check query failed for ordinance_provisions: ${countErr.message}`,
+    );
   }
   if (count && count > 0) {
     throw new Error(
@@ -638,7 +747,10 @@ async function triggerReconciliationIfNeeded(
     .eq("codification_status", "pending");
 
   if (pendingErr) {
-    console.error("[orchestrator] PendingCodeChange lookup failed:", pendingErr.message);
+    console.error(
+      "[orchestrator] PendingCodeChange lookup failed:",
+      pendingErr.message,
+    );
     return;
   }
 
@@ -656,14 +768,17 @@ async function triggerReconciliationIfNeeded(
   }
 
   try {
-    const resp = await fetch(`${supabaseUrl}/functions/v1/reconcile-ordinances`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${serviceKey}`,
-        "Content-Type": "application/json",
+    const resp = await fetch(
+      `${supabaseUrl}/functions/v1/reconcile-ordinances`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${serviceKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ document_id: documentId }),
       },
-      body: JSON.stringify({ document_id: documentId }),
-    });
+    );
     if (!resp.ok) {
       console.warn(
         `[orchestrator] reconcile-ordinances returned HTTP ${resp.status}`,
@@ -691,7 +806,8 @@ Deno.serve(async (req: Request) => {
   }
 
   let pendingIngestionId: string;
-  let body: { pending_ingestion_id?: string } = {};
+  let body: { pending_ingestion_id?: string; force_full_reingest?: boolean } =
+    {};
   try {
     const text = await req.text();
     if (text.trim()) {
@@ -700,6 +816,23 @@ Deno.serve(async (req: Request) => {
   } catch {
     return error("INGESTION_FAILED", "Invalid JSON body", 400);
   }
+
+  // force_full_reingest bypasses the Municode branch's top-level content_hash
+  // skip for a one-off admin backfill/verification run — never set by the
+  // cron poll path, so normal periodic-recheck dedup is unaffected.
+  let forceFullReingest = false;
+  if (body?.force_full_reingest === true) {
+    const adminSecret = Deno.env.get("ADMIN_SECRET");
+    if (!adminSecret || requestSecret(req) !== adminSecret) {
+      return error(
+        "UNAUTHORIZED",
+        "force_full_reingest requires a valid admin secret",
+        401,
+      );
+    }
+    forceFullReingest = true;
+  }
+
   if (body?.pending_ingestion_id) {
     pendingIngestionId = body.pending_ingestion_id;
   } else {
@@ -779,12 +912,20 @@ Deno.serve(async (req: Request) => {
       // deno-lint-ignore no-explicit-any
       session = new (Supabase as any).ai.Session("gte-small") as AiSession;
     } catch {
-      return await deferIngestion(pendingIngestionId, newAttempts, "ai_session_construct_failed");
+      return await deferIngestion(
+        pendingIngestionId,
+        newAttempts,
+        "ai_session_construct_failed",
+      );
     }
 
     const ready = await preflight(session);
     if (!ready) {
-      return await deferIngestion(pendingIngestionId, newAttempts, "ai_session_unavailable");
+      return await deferIngestion(
+        pendingIngestionId,
+        newAttempts,
+        "ai_session_unavailable",
+      );
     }
 
     // ── PDF branch ──────────────────────────────────────────────────────────
@@ -807,7 +948,8 @@ Deno.serve(async (req: Request) => {
       // vote_tallies and policy_decisions are written for bos_minutes/bos_summary;
       // budget_indicators for budget_pdf; narrative_chunks for any PDF type
       // that had chunks without structured extraction.
-      const isBosDoc = row.doc_type === "bos_minutes" || row.doc_type === "bos_summary";
+      const isBosDoc = row.doc_type === "bos_minutes" ||
+        row.doc_type === "bos_summary";
       const isBudgetDoc = row.doc_type === "budget_pdf";
 
       if (isBosDoc) {
@@ -840,7 +982,9 @@ Deno.serve(async (req: Request) => {
         .update({ status: "done", updated_at: new Date().toISOString() })
         .eq("id", pendingIngestionId);
       if (ingestDoneErr) {
-        throw new Error(`Ingestion completion update failed: ${ingestDoneErr.message}`);
+        throw new Error(
+          `Ingestion completion update failed: ${ingestDoneErr.message}`,
+        );
       }
 
       return success({
@@ -852,9 +996,15 @@ Deno.serve(async (req: Request) => {
 
     // ── Municode branch ─────────────────────────────────────────────────────
     if (isMunicode) {
-      const { documentId, nodeIds, skipped } = await handleMunicode(
+      const { documentId, nodeIds, skipped, complete } = await handleMunicode(
         pendingIngestionId,
+        SOFT_DEADLINE_MS,
+        forceFullReingest,
       );
+
+      if (!complete) {
+        return await requeueForResume(pendingIngestionId, newAttempts);
+      }
 
       if (skipped) {
         return success({ status: "skipped", document_id: documentId });
@@ -881,7 +1031,9 @@ Deno.serve(async (req: Request) => {
         .update({ status: "done", updated_at: new Date().toISOString() })
         .eq("id", pendingIngestionId);
       if (ingestDoneErr) {
-        throw new Error(`Ingestion completion update failed: ${ingestDoneErr.message}`);
+        throw new Error(
+          `Ingestion completion update failed: ${ingestDoneErr.message}`,
+        );
       }
 
       return success({
@@ -916,13 +1068,20 @@ Deno.serve(async (req: Request) => {
         "skipped: Docling HTTP 500 after max attempts (PDF too large for free HF Spaces)";
       const { error: skipErr } = await db
         .from("pending_ingestions")
-        .update({ status: "skipped", last_error: skipMsg, updated_at: new Date().toISOString() })
+        .update({
+          status: "skipped",
+          last_error: skipMsg,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", pendingIngestionId);
       if (skipErr) {
         throw new Error(`Failed to persist skipped status: ${skipErr.message}`);
       }
       if (pendingAlertErr) throw pendingAlertErr;
-      return success({ status: "skipped", reason: "docling_http500_too_large" });
+      return success({
+        status: "skipped",
+        reason: "docling_http500_too_large",
+      });
     }
 
     // Reset to pending for retry.
@@ -942,7 +1101,9 @@ Deno.serve(async (req: Request) => {
       })
       .eq("id", pendingIngestionId);
     if (resetErr) {
-      throw new Error(`Failed to reset ingestion to 'pending' for retry: ${resetErr.message}`);
+      throw new Error(
+        `Failed to reset ingestion to 'pending' for retry: ${resetErr.message}`,
+      );
     }
     if (pendingAlertErr) throw pendingAlertErr;
 
@@ -953,6 +1114,10 @@ Deno.serve(async (req: Request) => {
     if (isSourceFetchTimeout) {
       return success({ status: "deferred", reason: "source_fetch_timeout" });
     }
-    return error("INGESTION_FAILED", "Ingestion attempt failed — will retry", 500);
+    return error(
+      "INGESTION_FAILED",
+      "Ingestion attempt failed — will retry",
+      500,
+    );
   }
 });
