@@ -92,6 +92,12 @@
  *       ordinance_provisions rows are already written (walk was complete), or
  *     - reusing it and re-walking from the root if no provisions exist yet
  *       (the prior attempt crashed before making any progress).
+ *   Before acting on either outcome, the orphan row is atomically claimed via
+ *   the same conditional UPDATE ... WHERE ... RETURNING pattern (and the
+ *   same resume_claim_expires_at column) findResumableDocument() uses below,
+ *   closing the same class of concurrent-invocation race CONCURRENCY hazard
+ *   1 addresses for the resume-state lease — see the claim in the
+ *   fresh-insert branch.
  *
  * Does NOT set documents.status or generate embeddings — orchestrator (task 2-6) owns that.
  */
@@ -758,6 +764,60 @@ export async function handleMunicode(
         : null,
       provisionCount,
     );
+
+    if (action === "finalize-only" || action === "rewalk-from-root") {
+      // Atomically claim the orphaned document row before acting on it, via
+      // the same conditional UPDATE ... WHERE ... RETURNING pattern (not
+      // read-then-write) findResumableDocument() uses for the resume-state
+      // lease above, reusing the same resume_claim_expires_at column. Two
+      // concurrent ingest-orchestrator invocations (plausible given
+      // overlapping pending_ingestions triggers from the watchdog) can both
+      // reach the SELECT above and see the same orphan snapshot, but only
+      // one's claim UPDATE will affect a row — Postgres serializes
+      // concurrent UPDATEs on the same row, and the WHERE guard re-checks
+      // lease eligibility (and that the row hasn't meanwhile entered an
+      // active resume-state walk) at UPDATE time, so the loser's UPDATE
+      // matches zero rows. The loser must NOT proceed to finalize or
+      // re-walk (that would duplicate the work); it requeues without doing
+      // any work this invocation.
+      const nowIso = new Date().toISOString();
+      const leaseExpiresAt = new Date(
+        Date.now() + RESUME_LEASE_MINUTES * 60 * 1000,
+      ).toISOString();
+
+      const { data: claimedOrphan, error: claimOrphanErr } = await db
+        .from("documents")
+        .update({ resume_claim_expires_at: leaseExpiresAt })
+        .eq("id", orphan!.id as string)
+        .is("municode_resume_state", null)
+        .or(
+          `resume_claim_expires_at.is.null,resume_claim_expires_at.lt.${nowIso}`,
+        )
+        .select("id")
+        .maybeSingle();
+
+      if (claimOrphanErr) {
+        throw new Error(
+          `Orphan-recovery claim update failed for document ${
+            orphan!.id
+          }: ${claimOrphanErr.message}`,
+        );
+      }
+      if (!claimedOrphan) {
+        // Someone else holds an unexpired claim on this document right now.
+        console.log(
+          `[municode] orphan-recovery claim held by another invocation for document ${
+            orphan!.id
+          } — requeueing`,
+        );
+        return {
+          documentId: orphan!.id as string,
+          nodeIds: [],
+          skipped: false,
+          complete: false,
+        };
+      }
+    }
 
     if (action === "finalize-only") {
       // Walk already fully drained by a prior invocation — only the

@@ -152,3 +152,69 @@ Deno.test("wiring: only the insert-fresh (else) branch performs the documents in
     "the insert-fresh branch must still perform the original insert for genuinely new documents",
   );
 });
+
+// ---------------------------------------------------------------------------
+// Static source-inspection: orphan-recovery claim (concurrency race closure)
+//
+// Cross-review finding: two concurrent invocations could both read the same
+// orphan snapshot and both proceed to finalize-only or both re-walk from
+// root — the same class of race PR #75 closed for the resume-state lease via
+// an atomic UPDATE ... WHERE ... RETURNING claim. These tests verify the same
+// pattern was applied here, mirroring findResumableDocument()'s claim.
+// ---------------------------------------------------------------------------
+
+Deno.test("wiring: orphan-recovery claim runs for both finalize-only and rewalk-from-root, before either branch", async () => {
+  const src = await Deno.readTextFile(MUNICODE_SRC);
+  const claimGuardIdx = src.indexOf(
+    'if (action === "finalize-only" || action === "rewalk-from-root") {',
+  );
+  const finalizeBranchIdx = src.indexOf('if (action === "finalize-only") {');
+  assert(claimGuardIdx !== -1, "combined claim guard for both recovery actions not found");
+  assert(finalizeBranchIdx !== -1, "finalize-only branch not found");
+  assert(
+    claimGuardIdx < finalizeBranchIdx,
+    "the claim must be attempted before the finalize-only/rewalk-from-root branches execute",
+  );
+});
+
+Deno.test("wiring: orphan-recovery claim atomically updates resume_claim_expires_at guarded by lease + resume_state", async () => {
+  const src = await Deno.readTextFile(MUNICODE_SRC);
+  const claimBlock = extractBetween(
+    src,
+    'if (action === "finalize-only" || action === "rewalk-from-root") {',
+    'if (action === "finalize-only") {',
+  );
+  assert(
+    claimBlock.includes(".update({ resume_claim_expires_at: leaseExpiresAt })"),
+    "claim must be an UPDATE against resume_claim_expires_at, not a plain read",
+  );
+  assert(
+    claimBlock.includes('.is("municode_resume_state", null)'),
+    "claim WHERE guard must re-check the row hasn't entered an active resume-state walk",
+  );
+  assert(
+    claimBlock.includes(
+      "resume_claim_expires_at.is.null,resume_claim_expires_at.lt.",
+    ),
+    "claim WHERE guard must re-check lease eligibility (null or expired) at UPDATE time, same as findResumableDocument()",
+  );
+});
+
+Deno.test("wiring: a lost orphan-recovery claim requeues (complete:false) without finalizing or re-walking", async () => {
+  const src = await Deno.readTextFile(MUNICODE_SRC);
+  const claimBlock = extractBetween(
+    src,
+    'if (action === "finalize-only" || action === "rewalk-from-root") {',
+    'if (action === "finalize-only") {',
+  );
+  const lossBranch = extractBetween(claimBlock, "if (!claimedOrphan) {", "\n      }\n    }");
+  assert(
+    lossBranch.includes("complete: false"),
+    "losing the claim must report complete: false (requeue), not proceed",
+  );
+  assert(
+    !lossBranch.includes("ordinance_provisions") &&
+      !lossBranch.includes('db.from("documents").insert'),
+    "losing the claim must not read back provisions or insert — no work this invocation",
+  );
+});
