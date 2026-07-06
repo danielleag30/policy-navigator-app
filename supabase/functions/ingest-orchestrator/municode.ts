@@ -76,12 +76,36 @@
  *        insert impossible even under a race — the resulting 23505 is
  *        caught and treated as "already inserted by another process, skip".
  *
+ * ORPHAN RECOVERY (fix, this file's current revision):
+ *
+ *   findResumableDocument() only recognizes an in-progress walk via a
+ *   non-null municode_resume_state. If a walk fully drains (resume_state
+ *   cleared) but the calling Edge Function invocation crashes before
+ *   index.ts finishes embedOrdinanceProvisions()/finalization,
+ *   documents.status never flips to 'current' and resume_state stays null —
+ *   a third state findResumableDocument() cannot see. Every subsequent
+ *   retry would fall through to the fresh-insert branch and fail forever on
+ *   the documents_url_key unique constraint. The fresh-insert branch now
+ *   first looks up any existing document row at the canonical URL
+ *   (classifyOrphanRecovery() in _municode-helpers.ts) and recovers by:
+ *     - reusing it and skipping straight to finalization if its
+ *       ordinance_provisions rows are already written (walk was complete), or
+ *     - reusing it and re-walking from the root if no provisions exist yet
+ *       (the prior attempt crashed before making any progress).
+ *   Before acting on either outcome, the orphan row is atomically claimed via
+ *   the same conditional UPDATE ... WHERE ... RETURNING pattern (and the
+ *   same resume_claim_expires_at column) findResumableDocument() uses below,
+ *   closing the same class of concurrent-invocation race CONCURRENCY hazard
+ *   1 addresses for the resume-state lease — see the claim in the
+ *   fresh-insert branch.
+ *
  * Does NOT set documents.status or generate embeddings — orchestrator (task 2-6) owns that.
  */
 
 import { generate as uuidv7 } from "@std/uuid/v7";
 import db from "../_shared/db-client.ts";
 import { contentHash } from "../_shared/hash.ts";
+import { classifyOrphanRecovery } from "./_municode-helpers.ts";
 
 const PRODUCT_ID = "10051";
 const CLIENT_ID = "5335";
@@ -696,32 +720,162 @@ export async function handleMunicode(
       `[municode] force_full_reingest — reopened existing document ${documentId}`,
     );
   } else {
-    // 4. Create Document shell row at status='unknown'
-    const now = new Date().toISOString();
-    documentId = uuidv7();
     const canonicalUrl =
       `${baseUrl}/CodesContent?clientId=${CLIENT_ID}&productId=${PRODUCT_ID}&jobId=${jobId}`;
 
-    const { error: docErr } = await db.from("documents").insert({
-      id: documentId,
-      url: canonicalUrl,
-      filename: null,
-      doc_type: "municode_api",
-      status: "unknown",
-      ingested_at: now,
-      last_checked_at: now,
-      content_hash: hash,
-      source_published_at: null,
-      title: `Fairfax County Code of Ordinances — Supplement ${jobId}`,
-      fiscal_year: null,
-      docling_version: null,
-      raw_api_response: { jobId, toc_node_count: chapterNodes.length },
-    });
-
-    if (docErr) {
-      throw new Error(`Municode document insert failed: ${docErr.message}`);
+    // Orphan-recovery check: a document row may already exist at this URL
+    // from a prior invocation that crashed after its walk fully drained but
+    // before index.ts finished embedOrdinanceProvisions()/finalization (so
+    // documents.status never flipped to 'current'). findResumableDocument()
+    // above only catches documents with a non-null municode_resume_state, so
+    // this case falls through — without this check, every retry would hit
+    // the plain insert below and fail forever on documents_url_key.
+    const { data: orphan, error: orphanErr } = await db
+      .from("documents")
+      .select("id, status, municode_resume_state")
+      .eq("url", canonicalUrl)
+      .maybeSingle();
+    if (orphanErr) {
+      throw new Error(
+        `Municode orphan-document lookup failed: ${orphanErr.message}`,
+      );
     }
-    console.log(`[municode] document shell created: ${documentId}`);
+
+    let provisionCount = 0;
+    if (orphan) {
+      const { count, error: countErr } = await db
+        .from("ordinance_provisions")
+        .select("id", { count: "exact", head: true })
+        .eq("document_id", orphan.id as string);
+      if (countErr) {
+        throw new Error(
+          `Orphan provision-count check failed for document ${orphan.id}: ${countErr.message}`,
+        );
+      }
+      provisionCount = count ?? 0;
+    }
+
+    const action = classifyOrphanRecovery(
+      orphan
+        ? {
+          status: orphan.status as string,
+          municode_resume_state: orphan.municode_resume_state,
+        }
+        : null,
+      provisionCount,
+    );
+
+    if (action === "finalize-only" || action === "rewalk-from-root") {
+      // Atomically claim the orphaned document row before acting on it, via
+      // the same conditional UPDATE ... WHERE ... RETURNING pattern (not
+      // read-then-write) findResumableDocument() uses for the resume-state
+      // lease above, reusing the same resume_claim_expires_at column. Two
+      // concurrent ingest-orchestrator invocations (plausible given
+      // overlapping pending_ingestions triggers from the watchdog) can both
+      // reach the SELECT above and see the same orphan snapshot, but only
+      // one's claim UPDATE will affect a row — Postgres serializes
+      // concurrent UPDATEs on the same row, and the WHERE guard re-checks
+      // lease eligibility (and that the row hasn't meanwhile entered an
+      // active resume-state walk) at UPDATE time, so the loser's UPDATE
+      // matches zero rows. The loser must NOT proceed to finalize or
+      // re-walk (that would duplicate the work); it requeues without doing
+      // any work this invocation.
+      const nowIso = new Date().toISOString();
+      const leaseExpiresAt = new Date(
+        Date.now() + RESUME_LEASE_MINUTES * 60 * 1000,
+      ).toISOString();
+
+      const { data: claimedOrphan, error: claimOrphanErr } = await db
+        .from("documents")
+        .update({ resume_claim_expires_at: leaseExpiresAt })
+        .eq("id", orphan!.id as string)
+        .is("municode_resume_state", null)
+        .or(
+          `resume_claim_expires_at.is.null,resume_claim_expires_at.lt.${nowIso}`,
+        )
+        .select("id")
+        .maybeSingle();
+
+      if (claimOrphanErr) {
+        throw new Error(
+          `Orphan-recovery claim update failed for document ${
+            orphan!.id
+          }: ${claimOrphanErr.message}`,
+        );
+      }
+      if (!claimedOrphan) {
+        // Someone else holds an unexpired claim on this document right now.
+        console.log(
+          `[municode] orphan-recovery claim held by another invocation for document ${
+            orphan!.id
+          } — requeueing`,
+        );
+        return {
+          documentId: orphan!.id as string,
+          nodeIds: [],
+          skipped: false,
+          complete: false,
+        };
+      }
+    }
+
+    if (action === "finalize-only") {
+      // Walk already fully drained by a prior invocation — only the
+      // finalization step (embedding + status flip, owned by index.ts)
+      // never ran. Skip straight to that instead of re-walking or
+      // re-inserting a duplicate document row.
+      documentId = orphan!.id as string;
+      console.log(
+        `[municode] recovering orphaned document ${documentId} — walk already drained (${provisionCount} provisions), skipping to finalization`,
+      );
+      const { data: rows, error: nodeIdsErr } = await db
+        .from("ordinance_provisions")
+        .select("municode_node_id")
+        .eq("document_id", documentId);
+      if (nodeIdsErr) {
+        throw new Error(
+          `Failed to read back ordinance_provisions node ids for orphan recovery: ${nodeIdsErr.message}`,
+        );
+      }
+      return {
+        documentId,
+        nodeIds: (rows ?? []).map((r) => r.municode_node_id as string),
+        skipped: false,
+        complete: true,
+      };
+    } else if (action === "rewalk-from-root") {
+      // Prior attempt crashed before any walk progress was made. Reuse the
+      // existing shell rather than inserting a second row at the same URL.
+      documentId = orphan!.id as string;
+      console.log(
+        `[municode] recovering orphaned document ${documentId} — no provisions written yet, re-walking from root`,
+      );
+    } else {
+      // 4. Create Document shell row at status='unknown'
+      const now = new Date().toISOString();
+      documentId = uuidv7();
+
+      const { error: docErr } = await db.from("documents").insert({
+        id: documentId,
+        url: canonicalUrl,
+        filename: null,
+        doc_type: "municode_api",
+        status: "unknown",
+        ingested_at: now,
+        last_checked_at: now,
+        content_hash: hash,
+        source_published_at: null,
+        title: `Fairfax County Code of Ordinances — Supplement ${jobId}`,
+        fiscal_year: null,
+        docling_version: null,
+        raw_api_response: { jobId, toc_node_count: chapterNodes.length },
+      });
+
+      if (docErr) {
+        throw new Error(`Municode document insert failed: ${docErr.message}`);
+      }
+      console.log(`[municode] document shell created: ${documentId}`);
+    }
   }
 
   // 5. Iteratively walk all nodes at all depths (LIFO stack — DFS pre-order,
