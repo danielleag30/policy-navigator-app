@@ -1,3 +1,13 @@
+/**
+ * NOTE on coverage limits: every session.run() below is a fake that resolves
+ * immediately with a fixed vector. These tests validate wiring -- fetch
+ * paging, the keyset cursor, per-row deadline checks, resume behavior -- not
+ * real CPU cost. The WORKER_RESOURCE_LIMIT crash this module's sequential
+ * design works around only reproduces against real gte-small inference on
+ * real ordinance content; it was confirmed by live invocation against the
+ * production backlog, not by a unit test, and no fake session here can catch
+ * a regression back toward concurrent embedding calls.
+ */
 import type { AiSession } from "../_shared/embedder.ts";
 import {
   embedOrdinanceProvisionsBatched,
@@ -264,6 +274,63 @@ Deno.test("pages through more rows than fit in a single batch", async () => {
   }
 });
 
+Deno.test("embeds one row fully (embed + persist) before starting the next, even within a single fetched page", async () => {
+  // Regression test for the CPU-budget fix: a prior design called
+  // generateEmbeddings/session.run() concurrently (via Promise.all) across an
+  // entire fetched page, which is exactly what exhausted the Edge Function
+  // CPU ceiling against real content. This asserts the row-processing order
+  // is strictly interleaved embed-then-persist-then-next-embed, never two
+  // session.run() calls in flight at once.
+  const batchSize = 4;
+  const rows: FakeRow[] = Array.from(
+    { length: batchSize },
+    (_, i) => makeRow(i),
+  );
+  const fake = new FakeOrdinanceDb(rows);
+
+  const events: string[] = [];
+  let inFlight = 0;
+  const trackingSession: AiSession = {
+    async run(_input: string) {
+      inFlight++;
+      assertEquals(
+        inFlight,
+        1,
+        "session.run() must never overlap with another in-flight call",
+      );
+      events.push("embed-start");
+      await Promise.resolve(); // yield, so a concurrent implementation would interleave here
+      events.push("embed-end");
+      inFlight--;
+      return [1, 2, 3];
+    },
+  };
+  const originalUpdate = fake.updateCalls.push.bind(fake.updateCalls);
+  fake.updateCalls.push = (...ids: string[]) => {
+    events.push("persist");
+    return originalUpdate(...ids);
+  };
+
+  const { processed, complete } = await embedOrdinanceProvisionsBatched(
+    asDb(fake),
+    trackingSession,
+    DOC_ID,
+    batchSize,
+  );
+
+  assertEquals(processed, batchSize);
+  assertEquals(complete, true);
+  const expectedEvents = Array.from(
+    { length: batchSize },
+    () => ["embed-start", "embed-end", "persist"],
+  ).flat();
+  assertEquals(
+    events,
+    expectedEvents,
+    "each row's embed must fully complete (and persist) before the next row's embed starts",
+  );
+});
+
 Deno.test("advances the cursor past a row even if its embedding fails, avoiding an infinite loop", async () => {
   const rows: FakeRow[] = [makeRow(1), makeRow(2), makeRow(3)];
   const fake = new FakeOrdinanceDb(rows);
@@ -352,8 +419,10 @@ Deno.test("returns complete: false and stops early once the soft deadline is exc
   const fake = new FakeOrdinanceDb(rows);
   const session = countingSession();
 
-  // softDeadlineMs = 0: the very first post-chunk check (elapsed >= 0) trips,
-  // so exactly one page should be processed before the function returns.
+  // softDeadlineMs = 0: the deadline is checked after every row (not just
+  // after a full page), so the very first row's post-embed check (elapsed
+  // >= 0) trips -- exactly one row should be processed before the function
+  // returns.
   const { processed, complete } = await embedOrdinanceProvisionsBatched(
     asDb(fake),
     session,
@@ -362,16 +431,20 @@ Deno.test("returns complete: false and stops early once the soft deadline is exc
     0,
   );
 
-  assertEquals(processed, batchSize);
+  assertEquals(processed, 1);
   assertEquals(complete, false);
-  assertEquals(fake.fetchCalls.length, 1, "should stop after a single page");
+  assertEquals(fake.fetchCalls.length, 1, "should stop within the first page");
   assertEquals(
     fake.countCalls,
     0,
     "should skip the final verification query on a deadline-triggered return",
   );
   assertEquals(rows[0].embedding, [1, 2, 3]);
-  assertEquals(rows[1].embedding, [1, 2, 3]);
+  assertEquals(
+    rows[1].embedding,
+    null,
+    "rows after the first should be untouched this invocation",
+  );
   assertEquals(
     rows[2].embedding,
     null,
@@ -389,7 +462,7 @@ Deno.test("a subsequent call after a deadline-triggered partial run resumes with
   const fake = new FakeOrdinanceDb(rows);
   const session = countingSession();
 
-  // Invocation 1: deadline trips immediately after the first page.
+  // Invocation 1: deadline trips immediately after the first row.
   const first = await embedOrdinanceProvisionsBatched(
     asDb(fake),
     session,
@@ -397,7 +470,7 @@ Deno.test("a subsequent call after a deadline-triggered partial run resumes with
     batchSize,
     0,
   );
-  assertEquals(first.processed, batchSize);
+  assertEquals(first.processed, 1);
   assertEquals(first.complete, false);
 
   // Invocation 2 (simulating the next cron tick): default/generous deadline,
@@ -408,7 +481,7 @@ Deno.test("a subsequent call after a deadline-triggered partial run resumes with
     DOC_ID,
     batchSize,
   );
-  assertEquals(second.processed, rowCount - batchSize);
+  assertEquals(second.processed, rowCount - 1);
   assertEquals(second.complete, true);
 
   // Every row embedded exactly once in total, no throws, no crash.
