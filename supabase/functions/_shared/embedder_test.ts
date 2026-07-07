@@ -1,4 +1,13 @@
-import { EMBED_BATCH_SIZE, type EmbeddingWriteDb, persistEmbeddings } from "./embedder.ts";
+import {
+  EMBED_BATCH_SIZE,
+  type EmbeddingWriteDb,
+  generateEmbeddings,
+  MAX_EMBEDDING_TOKENS,
+  persistEmbeddings,
+  truncateForEmbedding,
+} from "./embedder.ts";
+import { estimateTokens } from "./chunker.ts";
+import type { AiSession } from "./embedder.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -134,6 +143,55 @@ Deno.test("persistEmbeddings: a failure in a later batch does not roll back writ
       `row-${i} from the already-completed first batch should remain persisted`,
     );
   }
+});
+
+Deno.test("truncateForEmbedding leaves short text untouched", () => {
+  const text = "a short provision about zoning setbacks";
+  assertEquals(truncateForEmbedding(text), text);
+});
+
+Deno.test("truncateForEmbedding shortens text over the token cap", () => {
+  const words = Array.from({ length: 2000 }, (_, i) => `word${i}`);
+  const text = words.join(" ");
+  const truncated = truncateForEmbedding(text);
+
+  assert(
+    estimateTokens(truncated) <= MAX_EMBEDDING_TOKENS,
+    "truncated text should be at or under the token cap",
+  );
+  assert(truncated.length < text.length, "truncated text should be shorter than the original");
+  assert(
+    text.startsWith(truncated),
+    "truncation should keep a leading prefix of the original text",
+  );
+});
+
+Deno.test("truncateForEmbedding respects a custom maxTokens", () => {
+  const words = Array.from({ length: 200 }, (_, i) => `word${i}`);
+  const text = words.join(" ");
+  const truncated = truncateForEmbedding(text, 10);
+
+  assert(estimateTokens(truncated) <= 10, "should honor the smaller custom cap");
+});
+
+Deno.test("generateEmbeddings truncates outlier text before calling session.run", async () => {
+  const words = Array.from({ length: 20000 }, (_, i) => `word${i}`);
+  const hugeText = words.join(" ");
+  const seenLengths: number[] = [];
+  const session: AiSession = {
+    run: (input: string) => {
+      seenLengths.push(input.length);
+      return Promise.resolve([0]);
+    },
+  };
+
+  await generateEmbeddings(session, [hugeText]);
+
+  assertEquals(seenLengths.length, 1);
+  assert(
+    seenLengths[0] < hugeText.length,
+    "session.run should receive truncated text, not the full outlier row",
+  );
 });
 
 Deno.test("persistEmbeddings: sibling writes in the same batch as a failing row are not lost", async () => {
