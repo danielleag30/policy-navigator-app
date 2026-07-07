@@ -27,16 +27,12 @@ import { generate as uuidv7 } from "@std/uuid/v7";
 import db from "../_shared/db-client.ts";
 import { error, success } from "../_shared/response.ts";
 import { contentHash } from "../_shared/hash.ts";
-import {
-  type Chunk,
-  chunkBlocks,
-  type FlatBlock,
-  validateTokenizer,
-} from "../_shared/chunker.ts";
+import { type Chunk, chunkBlocks, type FlatBlock, validateTokenizer } from "../_shared/chunker.ts";
 import { extractAndPersist } from "../_shared/extractor.ts";
 import {
   type AiSession,
   generateEmbeddings,
+  persistEmbeddings,
   preflight,
 } from "../_shared/embedder.ts";
 import { handleMunicode } from "./municode.ts";
@@ -397,9 +393,7 @@ async function embedDocumentChunks(
       .eq("id", rows[i].id);
     if (chunkErr) {
       throw new Error(
-        `Failed to write embedding for chunk ${
-          rows[i].id
-        }: ${chunkErr.message}`,
+        `Failed to write embedding for chunk ${rows[i].id}: ${chunkErr.message}`,
       );
     }
   }
@@ -415,9 +409,7 @@ async function embedDocumentChunks(
   }
   if ((nonNullCount ?? 0) !== rows.length) {
     throw new Error(
-      `Embedding count mismatch: expected ${rows.length}, got ${
-        nonNullCount ?? 0
-      } non-null in DB`,
+      `Embedding count mismatch: expected ${rows.length}, got ${nonNullCount ?? 0} non-null in DB`,
     );
   }
 }
@@ -444,26 +436,7 @@ async function embedVoteTallies(
   const texts = rows.map((r) => r.motion_text as string);
   const embeddings = await generateEmbeddings(session, texts);
 
-  await Promise.all(
-    rows.map((row, i) => {
-      const emb = embeddings[i];
-      if (emb === null) {
-        console.error(`[embedder] null embedding for vote_tally ${row.id}`);
-        return Promise.resolve();
-      }
-      return db
-        .from("vote_tallies")
-        .update({ embedding: emb, updated_at: new Date().toISOString() })
-        .eq("id", row.id)
-        .then(({ error: updErr }) => {
-          if (updErr) {
-            throw new Error(
-              `Failed to persist embedding for vote_tally ${row.id}: ${updErr.message}`,
-            );
-          }
-        });
-    }),
-  );
+  await persistEmbeddings(db, "vote_tallies", "vote_tally", rows, embeddings);
 
   const { count, error: countErr } = await db
     .from("vote_tallies")
@@ -503,27 +476,12 @@ async function embedPolicyDecisions(
   const texts = rows.map((r) => r.raw_extracted_text as string);
   const embeddings = await generateEmbeddings(session, texts);
 
-  await Promise.all(
-    rows.map((row, i) => {
-      const emb = embeddings[i];
-      if (emb === null) {
-        console.error(
-          `[embedder] null embedding for policy_decision ${row.id}`,
-        );
-        return Promise.resolve();
-      }
-      return db
-        .from("policy_decisions")
-        .update({ embedding: emb, updated_at: new Date().toISOString() })
-        .eq("id", row.id)
-        .then(({ error: updErr }) => {
-          if (updErr) {
-            throw new Error(
-              `Failed to persist embedding for policy_decision ${row.id}: ${updErr.message}`,
-            );
-          }
-        });
-    }),
+  await persistEmbeddings(
+    db,
+    "policy_decisions",
+    "policy_decision",
+    rows,
+    embeddings,
   );
 
   const { count, error: countErr } = await db
@@ -564,27 +522,12 @@ async function embedBudgetIndicators(
   const texts = rows.map((r) => r.raw_extracted_text as string);
   const embeddings = await generateEmbeddings(session, texts);
 
-  await Promise.all(
-    rows.map((row, i) => {
-      const emb = embeddings[i];
-      if (emb === null) {
-        console.error(
-          `[embedder] null embedding for budget_indicator ${row.id}`,
-        );
-        return Promise.resolve();
-      }
-      return db
-        .from("budget_indicators")
-        .update({ embedding: emb, updated_at: new Date().toISOString() })
-        .eq("id", row.id)
-        .then(({ error: updErr }) => {
-          if (updErr) {
-            throw new Error(
-              `Failed to persist embedding for budget_indicator ${row.id}: ${updErr.message}`,
-            );
-          }
-        });
-    }),
+  await persistEmbeddings(
+    db,
+    "budget_indicators",
+    "budget_indicator",
+    rows,
+    embeddings,
   );
 
   const { count, error: countErr } = await db
@@ -625,27 +568,12 @@ async function embedNarrativeChunks(
   const texts = rows.map((r) => r.content as string);
   const embeddings = await generateEmbeddings(session, texts);
 
-  await Promise.all(
-    rows.map((row, i) => {
-      const emb = embeddings[i];
-      if (emb === null) {
-        console.error(
-          `[embedder] null embedding for narrative_chunk ${row.id}`,
-        );
-        return Promise.resolve();
-      }
-      return db
-        .from("narrative_chunks")
-        .update({ embedding: emb, updated_at: new Date().toISOString() })
-        .eq("id", row.id)
-        .then(({ error: updErr }) => {
-          if (updErr) {
-            throw new Error(
-              `Failed to persist embedding for narrative_chunk ${row.id}: ${updErr.message}`,
-            );
-          }
-        });
-    }),
+  await persistEmbeddings(
+    db,
+    "narrative_chunks",
+    "narrative_chunk",
+    rows,
+    embeddings,
   );
 
   const { count, error: countErr } = await db
@@ -692,25 +620,12 @@ async function embedOrdinanceProvisions(
   const texts = rows.map((r) => r.content as string);
   const embeddings = await generateEmbeddings(session, texts);
 
-  await Promise.all(
-    rows.map((row, i) => {
-      const emb = embeddings[i];
-      if (emb === null) {
-        console.error(`[embedder] null embedding for provision ${row.id}`);
-        return Promise.resolve();
-      }
-      return db
-        .from("ordinance_provisions")
-        .update({ embedding: emb, updated_at: new Date().toISOString() })
-        .eq("id", row.id)
-        .then(({ error: updErr }) => {
-          if (updErr) {
-            throw new Error(
-              `Failed to persist embedding for provision ${row.id}: ${updErr.message}`,
-            );
-          }
-        });
-    }),
+  await persistEmbeddings(
+    db,
+    "ordinance_provisions",
+    "provision",
+    rows,
+    embeddings,
   );
 
   // Verify no nulls remain
@@ -806,8 +721,7 @@ Deno.serve(async (req: Request) => {
   }
 
   let pendingIngestionId: string;
-  let body: { pending_ingestion_id?: string; force_full_reingest?: boolean } =
-    {};
+  let body: { pending_ingestion_id?: string; force_full_reingest?: boolean } = {};
   try {
     const text = await req.text();
     if (text.trim()) {

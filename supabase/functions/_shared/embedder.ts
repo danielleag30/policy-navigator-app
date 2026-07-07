@@ -10,6 +10,22 @@
 export const EMBED_BATCH_SIZE = 20;
 export const EMBED_BATCH_PAUSE_MS = 150;
 
+/** Minimal surface of a PostgREST-style row update needed to persist an embedding. */
+export interface EmbeddingWriteDb {
+  from(table: string): {
+    update(values: Record<string, unknown>): {
+      eq(
+        column: string,
+        value: string,
+      ): PromiseLike<{ error: { message: string } | null }>;
+    };
+  };
+}
+
+export interface EmbeddableRow {
+  id: string;
+}
+
 /** Minimal surface of Supabase.ai.Session used by this module. */
 export interface AiSession {
   run(
@@ -65,4 +81,53 @@ export async function generateEmbeddings(
   }
 
   return results;
+}
+
+/**
+ * Persist generated embeddings back onto their source rows.
+ *
+ * Mirrors generateEmbeddings' concurrency shape: writes are grouped into
+ * batches of EMBED_BATCH_SIZE via Promise.all, with a short pause between
+ * groups, instead of firing one concurrent request per row. A null embedding
+ * at a given index is logged and skipped (not treated as a failure, matching
+ * the previous per-row behavior). A DB error on any write rejects the call;
+ * rows in batches that already completed remain persisted, so a failure part
+ * way through does not lose or roll back prior writes.
+ */
+export async function persistEmbeddings<T extends EmbeddableRow>(
+  db: EmbeddingWriteDb,
+  table: string,
+  label: string,
+  rows: T[],
+  embeddings: Array<number[] | null>,
+): Promise<void> {
+  for (let i = 0; i < rows.length; i += EMBED_BATCH_SIZE) {
+    const batchRows = rows.slice(i, i + EMBED_BATCH_SIZE);
+    const batchEmbeddings = embeddings.slice(i, i + EMBED_BATCH_SIZE);
+
+    await Promise.all(
+      batchRows.map((row, j) => {
+        const emb = batchEmbeddings[j];
+        if (emb === null) {
+          console.error(`[embedder] null embedding for ${label} ${row.id}`);
+          return Promise.resolve();
+        }
+        return db
+          .from(table)
+          .update({ embedding: emb, updated_at: new Date().toISOString() })
+          .eq("id", row.id)
+          .then(({ error }) => {
+            if (error) {
+              throw new Error(
+                `Failed to persist embedding for ${label} ${row.id}: ${error.message}`,
+              );
+            }
+          });
+      }),
+    );
+
+    if (i + EMBED_BATCH_SIZE < rows.length) {
+      await new Promise<void>((resolve) => setTimeout(resolve, EMBED_BATCH_PAUSE_MS));
+    }
+  }
 }
