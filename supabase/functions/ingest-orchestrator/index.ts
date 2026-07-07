@@ -140,6 +140,8 @@ async function deferIngestion(
 async function requeueForResume(
   pendingIngestionId: string,
   currentAttempts: number,
+  logMessage: string =
+    "[orchestrator] Municode soft deadline hit — requeued for resume",
 ): Promise<Response> {
   const { error: requeueErr } = await db
     .from("pending_ingestions")
@@ -153,9 +155,7 @@ async function requeueForResume(
   if (requeueErr) {
     throw new Error(`Resume requeue DB update failed: ${requeueErr.message}`);
   }
-  console.log(
-    "[orchestrator] Municode soft deadline hit — requeued for resume",
-  );
+  console.log(logMessage);
   return success({
     status: "in_progress",
     reason: "soft_deadline_resume_scheduled",
@@ -873,7 +873,19 @@ Deno.serve(async (req: Request) => {
       }
 
       // ── Task 2-6: embed ordinance_provisions ─────────────────────────────
-      await embedOrdinanceProvisionsBatched(db, session, documentId);
+      const ordinanceEmbedResult = await embedOrdinanceProvisionsBatched(
+        db,
+        session,
+        documentId,
+      );
+      if (!ordinanceEmbedResult.complete) {
+        return await requeueForResume(
+          pendingIngestionId,
+          newAttempts,
+          `[orchestrator] ordinance_provisions embedding soft deadline hit ` +
+            `(${ordinanceEmbedResult.processed} row(s) embedded this invocation) — requeued for resume`,
+        );
+      }
 
       // ── Task 2-6: finalize Document row ──────────────────────────────────
       const { error: docFinalErr } = await db

@@ -186,13 +186,14 @@ Deno.test("embeds only current rows, skipping superseded ones", async () => {
   const fake = new FakeOrdinanceDb(rows);
   const session = countingSession();
 
-  const processed = await embedOrdinanceProvisionsBatched(
+  const { processed, complete } = await embedOrdinanceProvisionsBatched(
     asDb(fake),
     session,
     DOC_ID,
   );
 
   assertEquals(processed, 2);
+  assertEquals(complete, true);
   assertEquals(session.calls, 2);
   assert(
     !fake.updateCalls.includes(id(2)),
@@ -214,13 +215,14 @@ Deno.test("skips rows that already have an embedding from a prior partial run", 
   const fake = new FakeOrdinanceDb(rows);
   const session = countingSession();
 
-  const processed = await embedOrdinanceProvisionsBatched(
+  const { processed, complete } = await embedOrdinanceProvisionsBatched(
     asDb(fake),
     session,
     DOC_ID,
   );
 
   assertEquals(processed, 1);
+  assertEquals(complete, true);
   assertEquals(session.calls, 1);
   assert(
     !fake.updateCalls.includes(id(1)),
@@ -243,7 +245,7 @@ Deno.test("pages through more rows than fit in a single batch", async () => {
   const fake = new FakeOrdinanceDb(rows);
   const session = countingSession();
 
-  const processed = await embedOrdinanceProvisionsBatched(
+  const { processed, complete } = await embedOrdinanceProvisionsBatched(
     asDb(fake),
     session,
     DOC_ID,
@@ -251,6 +253,7 @@ Deno.test("pages through more rows than fit in a single batch", async () => {
   );
 
   assertEquals(processed, rowCount);
+  assertEquals(complete, true);
   assertEquals(session.calls, rowCount);
   assert(
     fake.fetchCalls.length >= 4,
@@ -299,13 +302,14 @@ Deno.test("no-op when there are no ordinance_provisions rows for the document", 
   const fake = new FakeOrdinanceDb([]);
   const session = countingSession();
 
-  const processed = await embedOrdinanceProvisionsBatched(
+  const { processed, complete } = await embedOrdinanceProvisionsBatched(
     asDb(fake),
     session,
     DOC_ID,
   );
 
   assertEquals(processed, 0);
+  assertEquals(complete, true);
   assertEquals(session.calls, 0);
   assertEquals(
     fake.countCalls,
@@ -323,16 +327,101 @@ Deno.test("fetches document-scoped rows only, never leaking another document's p
   const fake = new FakeOrdinanceDb(rows);
   const session = countingSession();
 
-  const processed = await embedOrdinanceProvisionsBatched(
+  const { processed, complete } = await embedOrdinanceProvisionsBatched(
     asDb(fake),
     session,
     DOC_ID,
   );
 
   assertEquals(processed, 1);
+  assertEquals(complete, true);
   assertEquals(
     rows[1].embedding,
     null,
     "other document's row should be untouched",
+  );
+});
+
+Deno.test("returns complete: false and stops early once the soft deadline is exceeded mid-backlog, without throwing", async () => {
+  const batchSize = 2;
+  const rowCount = batchSize * 3; // three full pages available
+  const rows: FakeRow[] = Array.from(
+    { length: rowCount },
+    (_, i) => makeRow(i),
+  );
+  const fake = new FakeOrdinanceDb(rows);
+  const session = countingSession();
+
+  // softDeadlineMs = 0: the very first post-chunk check (elapsed >= 0) trips,
+  // so exactly one page should be processed before the function returns.
+  const { processed, complete } = await embedOrdinanceProvisionsBatched(
+    asDb(fake),
+    session,
+    DOC_ID,
+    batchSize,
+    0,
+  );
+
+  assertEquals(processed, batchSize);
+  assertEquals(complete, false);
+  assertEquals(fake.fetchCalls.length, 1, "should stop after a single page");
+  assertEquals(
+    fake.countCalls,
+    0,
+    "should skip the final verification query on a deadline-triggered return",
+  );
+  assertEquals(rows[0].embedding, [1, 2, 3]);
+  assertEquals(rows[1].embedding, [1, 2, 3]);
+  assertEquals(
+    rows[2].embedding,
+    null,
+    "rows beyond the first page should be untouched this invocation",
+  );
+});
+
+Deno.test("a subsequent call after a deadline-triggered partial run resumes without re-processing already-embedded rows", async () => {
+  const batchSize = 2;
+  const rowCount = batchSize * 3 + 1; // 7 rows, uneven w.r.t. batchSize
+  const rows: FakeRow[] = Array.from(
+    { length: rowCount },
+    (_, i) => makeRow(i),
+  );
+  const fake = new FakeOrdinanceDb(rows);
+  const session = countingSession();
+
+  // Invocation 1: deadline trips immediately after the first page.
+  const first = await embedOrdinanceProvisionsBatched(
+    asDb(fake),
+    session,
+    DOC_ID,
+    batchSize,
+    0,
+  );
+  assertEquals(first.processed, batchSize);
+  assertEquals(first.complete, false);
+
+  // Invocation 2 (simulating the next cron tick): default/generous deadline,
+  // same fake DB instance carrying forward the embeddings persisted above.
+  const second = await embedOrdinanceProvisionsBatched(
+    asDb(fake),
+    session,
+    DOC_ID,
+    batchSize,
+  );
+  assertEquals(second.processed, rowCount - batchSize);
+  assertEquals(second.complete, true);
+
+  // Every row embedded exactly once in total, no throws, no crash.
+  assertEquals(session.calls, rowCount);
+  for (const row of rows) {
+    assertEquals(row.embedding, [1, 2, 3]);
+  }
+  // Invocation 2 starts its own fresh cursor (no persisted resume state) and
+  // relies solely on the embedding-IS-NULL filter to skip invocation 1's rows.
+  const MIN_UUID = "00000000-0000-0000-0000-000000000000";
+  assertEquals(
+    fake.fetchCalls[1].cursor,
+    MIN_UUID,
+    "invocation 2's first fetch should start from a fresh cursor, not a persisted one",
   );
 });

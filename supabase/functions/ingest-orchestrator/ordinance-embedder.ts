@@ -18,12 +18,36 @@
 
 import {
   type AiSession,
-  EMBED_BATCH_SIZE,
   type EmbeddableRow,
   type EmbeddingWriteDb,
   generateEmbeddings,
   persistEmbeddings,
 } from "../_shared/embedder.ts";
+
+/**
+ * Row-fetch/embed concurrency for this path only. Supabase Edge Functions cap
+ * CPU time at ~2s per invocation on every plan (free and paid alike), and
+ * gte-small inference via Supabase.ai.Session.run() is synchronous CPU-bound
+ * compute that counts fully against that budget -- generateEmbeddings' default
+ * EMBED_BATCH_SIZE (20) concurrent session.run() calls is enough on its own to
+ * exhaust it before a single row is persisted, crashing the invocation with
+ * WORKER_RESOURCE_LIMIT. This constant is intentionally local to the
+ * ordinance_provisions path -- embedNarrativeChunks/embedBudgetIndicators in
+ * index.ts are not exhibiting this problem, so EMBED_BATCH_SIZE itself is
+ * left untouched.
+ */
+export const ORDINANCE_EMBED_CHUNK_SIZE = 3;
+
+/**
+ * Wall-clock budget for this function's own batching loop, independent of the
+ * outer ~120s SOFT_DEADLINE_MS used elsewhere in index.ts. This is
+ * deliberately tight: given the current per-chunk CPU cost, at most one chunk
+ * will typically complete before this trips. It exists so that, if the
+ * CPU-cost problem above is fixed independently, more chunks simply start
+ * fitting under this same budget with no code change here -- it is not itself
+ * a fix for the CPU ceiling.
+ */
+export const ORDINANCE_EMBED_SOFT_DEADLINE_MS = 1_500;
 
 export interface OrdinanceProvisionRow extends EmbeddableRow {
   content: string;
@@ -75,17 +99,28 @@ export interface OrdinanceEmbedDb extends EmbeddingWriteDb {
 /** Minimum possible uuid value — a safe "start of keyset" sentinel for the id cursor below. */
 const MIN_UUID = "00000000-0000-0000-0000-000000000000";
 
+export interface OrdinanceEmbedResult {
+  /** Rows attempted (whether or not their embedding call ultimately succeeded) this invocation. */
+  processed: number;
+  /** false when the soft deadline was hit mid-backlog; the remaining rows resume on the next invocation. */
+  complete: boolean;
+}
+
 /**
  * Fetch, embed, and persist ordinance_provisions for a document in aligned
- * batches. Returns the number of rows processed (attempted, whether or not
- * their embedding call ultimately succeeded).
+ * batches, stopping early (without throwing) if the soft deadline is hit
+ * mid-backlog. Safe to call again on the next invocation: the
+ * is_current=true AND embedding IS NULL filter plus the keyset cursor mean an
+ * already-embedded row is never refetched or reprocessed.
  */
 export async function embedOrdinanceProvisionsBatched(
   db: OrdinanceEmbedDb,
   session: AiSession,
   documentId: string,
-  batchSize: number = EMBED_BATCH_SIZE,
-): Promise<number> {
+  batchSize: number = ORDINANCE_EMBED_CHUNK_SIZE,
+  softDeadlineMs: number = ORDINANCE_EMBED_SOFT_DEADLINE_MS,
+): Promise<OrdinanceEmbedResult> {
+  const startMs = Date.now();
   let cursor = MIN_UUID;
   let processed = 0;
 
@@ -119,16 +154,26 @@ export async function embedOrdinanceProvisionsBatched(
 
     processed += rows.length;
     cursor = rows[rows.length - 1].id;
+
+    if (Date.now() - startMs >= softDeadlineMs) {
+      console.warn(
+        `[embedder] ordinance_provisions soft deadline hit after ${processed} row(s) for document ${documentId} -- resuming next invocation`,
+      );
+      return { processed, complete: false };
+    }
   }
 
   if (processed === 0) {
     console.log(
       `[embedder] no ordinance_provisions to embed for document ${documentId}`,
     );
-    return 0;
+    return { processed: 0, complete: true };
   }
 
   // DB-side re-verification: no current provision should be missing an embedding.
+  // Only reached on a natural drain (loop broke on an empty page) -- a
+  // deadline-triggered return above always exits before this point, since a
+  // partial run leaving nulls behind is expected, not a failure.
   const { count, error: countErr } = await db
     .from("ordinance_provisions")
     .select("id", { count: "exact", head: true })
@@ -147,5 +192,5 @@ export async function embedOrdinanceProvisionsBatched(
     );
   }
 
-  return processed;
+  return { processed, complete: true };
 }
