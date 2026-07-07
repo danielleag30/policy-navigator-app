@@ -63,7 +63,9 @@ class FakeOrdinanceDb {
                     is(_c3: string, _v: null) {
                       self.countCalls++;
                       const count = self.rows.filter(
-                        (r) => r.document_id === docId && r.is_current && r.embedding === null,
+                        (r) =>
+                          r.document_id === docId && r.is_current &&
+                          r.embedding === null,
                       ).length;
                       return Promise.resolve({ count, error: null });
                     },
@@ -97,7 +99,10 @@ class FakeOrdinanceDb {
                                   .sort((a, b) => a.id.localeCompare(b.id))
                                   .slice(0, n)
                                   .map(({ id, content }) => ({ id, content }));
-                                return Promise.resolve({ data: matching, error: null });
+                                return Promise.resolve({
+                                  data: matching,
+                                  error: null,
+                                });
                               },
                             };
                           },
@@ -150,6 +155,28 @@ function countingSession(): AiSession & { calls: number } {
   };
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+Deno.test("initial fetch uses a syntactically valid uuid cursor, not an empty string", async () => {
+  // Regression test: id is a `uuid` column in Postgres, so an empty-string
+  // cursor on the first page fails with "invalid input syntax for type uuid"
+  // once this hits real Postgres (a fake string-keyed DB can't catch this).
+  const rows: FakeRow[] = [makeRow(1)];
+  const fake = new FakeOrdinanceDb(rows);
+  const session = countingSession();
+
+  await embedOrdinanceProvisionsBatched(asDb(fake), session, DOC_ID);
+
+  assert(fake.fetchCalls.length > 0, "expected at least one fetch call");
+  assert(
+    UUID_RE.test(fake.fetchCalls[0].cursor),
+    `initial cursor must be a valid uuid literal, got ${
+      JSON.stringify(fake.fetchCalls[0].cursor)
+    }`,
+  );
+});
+
 Deno.test("embeds only current rows, skipping superseded ones", async () => {
   const rows: FakeRow[] = [
     makeRow(1),
@@ -159,12 +186,22 @@ Deno.test("embeds only current rows, skipping superseded ones", async () => {
   const fake = new FakeOrdinanceDb(rows);
   const session = countingSession();
 
-  const processed = await embedOrdinanceProvisionsBatched(asDb(fake), session, DOC_ID);
+  const processed = await embedOrdinanceProvisionsBatched(
+    asDb(fake),
+    session,
+    DOC_ID,
+  );
 
   assertEquals(processed, 2);
   assertEquals(session.calls, 2);
-  assert(!fake.updateCalls.includes(id(2)), "superseded row should never be embedded");
-  assert(rows[1].embedding === null, "superseded row's embedding should remain null");
+  assert(
+    !fake.updateCalls.includes(id(2)),
+    "superseded row should never be embedded",
+  );
+  assert(
+    rows[1].embedding === null,
+    "superseded row's embedding should remain null",
+  );
   assertEquals(rows[0].embedding, [1, 2, 3]);
   assertEquals(rows[2].embedding, [1, 2, 3]);
 });
@@ -177,7 +214,11 @@ Deno.test("skips rows that already have an embedding from a prior partial run", 
   const fake = new FakeOrdinanceDb(rows);
   const session = countingSession();
 
-  const processed = await embedOrdinanceProvisionsBatched(asDb(fake), session, DOC_ID);
+  const processed = await embedOrdinanceProvisionsBatched(
+    asDb(fake),
+    session,
+    DOC_ID,
+  );
 
   assertEquals(processed, 1);
   assertEquals(session.calls, 1);
@@ -185,21 +226,36 @@ Deno.test("skips rows that already have an embedding from a prior partial run", 
     !fake.updateCalls.includes(id(1)),
     "already-embedded row should not be re-fetched or rewritten",
   );
-  assertEquals(rows[0].embedding, [9, 9, 9], "pre-existing embedding should be untouched");
+  assertEquals(
+    rows[0].embedding,
+    [9, 9, 9],
+    "pre-existing embedding should be untouched",
+  );
 });
 
 Deno.test("pages through more rows than fit in a single batch", async () => {
   const batchSize = 5;
   const rowCount = batchSize * 3 + 2; // forces 4 fetch pages
-  const rows: FakeRow[] = Array.from({ length: rowCount }, (_, i) => makeRow(i));
+  const rows: FakeRow[] = Array.from(
+    { length: rowCount },
+    (_, i) => makeRow(i),
+  );
   const fake = new FakeOrdinanceDb(rows);
   const session = countingSession();
 
-  const processed = await embedOrdinanceProvisionsBatched(asDb(fake), session, DOC_ID, batchSize);
+  const processed = await embedOrdinanceProvisionsBatched(
+    asDb(fake),
+    session,
+    DOC_ID,
+    batchSize,
+  );
 
   assertEquals(processed, rowCount);
   assertEquals(session.calls, rowCount);
-  assert(fake.fetchCalls.length >= 4, "should have paged across multiple fetch calls");
+  assert(
+    fake.fetchCalls.length >= 4,
+    "should have paged across multiple fetch calls",
+  );
   for (const row of rows) {
     assertEquals(row.embedding, [1, 2, 3]);
   }
@@ -220,12 +276,20 @@ Deno.test("advances the cursor past a row even if its embedding fails, avoiding 
 
   let threw = false;
   try {
-    await embedOrdinanceProvisionsBatched(asDb(fake), failingSession, DOC_ID, 1);
+    await embedOrdinanceProvisionsBatched(
+      asDb(fake),
+      failingSession,
+      DOC_ID,
+      1,
+    );
   } catch {
     threw = true;
   }
 
-  assert(threw, "a permanently null embedding should surface as a final error, not loop forever");
+  assert(
+    threw,
+    "a permanently null embedding should surface as a final error, not loop forever",
+  );
   assertEquals(rows[0].embedding, null);
   assertEquals(rows[1].embedding, [1, 2, 3]);
   assertEquals(rows[2].embedding, [1, 2, 3]);
@@ -235,7 +299,11 @@ Deno.test("no-op when there are no ordinance_provisions rows for the document", 
   const fake = new FakeOrdinanceDb([]);
   const session = countingSession();
 
-  const processed = await embedOrdinanceProvisionsBatched(asDb(fake), session, DOC_ID);
+  const processed = await embedOrdinanceProvisionsBatched(
+    asDb(fake),
+    session,
+    DOC_ID,
+  );
 
   assertEquals(processed, 0);
   assertEquals(session.calls, 0);
@@ -255,8 +323,16 @@ Deno.test("fetches document-scoped rows only, never leaking another document's p
   const fake = new FakeOrdinanceDb(rows);
   const session = countingSession();
 
-  const processed = await embedOrdinanceProvisionsBatched(asDb(fake), session, DOC_ID);
+  const processed = await embedOrdinanceProvisionsBatched(
+    asDb(fake),
+    session,
+    DOC_ID,
+  );
 
   assertEquals(processed, 1);
-  assertEquals(rows[1].embedding, null, "other document's row should be untouched");
+  assertEquals(
+    rows[1].embedding,
+    null,
+    "other document's row should be untouched",
+  );
 });

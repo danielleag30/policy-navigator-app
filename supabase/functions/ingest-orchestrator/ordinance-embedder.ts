@@ -57,7 +57,9 @@ export interface OrdinanceEmbedDb extends EmbeddingWriteDb {
           is(
             column: "embedding",
             value: null,
-          ): PromiseLike<{ count: number | null; error: { message: string } | null }>;
+          ): PromiseLike<
+            { count: number | null; error: { message: string } | null }
+          >;
         };
       };
     };
@@ -70,6 +72,9 @@ export interface OrdinanceEmbedDb extends EmbeddingWriteDb {
   };
 }
 
+/** Minimum possible uuid value — a safe "start of keyset" sentinel for the id cursor below. */
+const MIN_UUID = "00000000-0000-0000-0000-000000000000";
+
 /**
  * Fetch, embed, and persist ordinance_provisions for a document in aligned
  * batches. Returns the number of rows processed (attempted, whether or not
@@ -81,7 +86,7 @@ export async function embedOrdinanceProvisionsBatched(
   documentId: string,
   batchSize: number = EMBED_BATCH_SIZE,
 ): Promise<number> {
-  let cursor = "";
+  let cursor = MIN_UUID;
   let processed = 0;
 
   while (true) {
@@ -104,7 +109,13 @@ export async function embedOrdinanceProvisionsBatched(
 
     const texts = rows.map((r) => r.content);
     const embeddings = await generateEmbeddings(session, texts);
-    await persistEmbeddings(db, "ordinance_provisions", "provision", rows, embeddings);
+    await persistEmbeddings(
+      db,
+      "ordinance_provisions",
+      "provision",
+      rows,
+      embeddings,
+    );
 
     processed += rows.length;
     cursor = rows[rows.length - 1].id;
