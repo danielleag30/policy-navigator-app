@@ -7,8 +7,30 @@
  * using Promise.all, with a short pause between groups.
  */
 
+import { estimateTokens } from "./chunker.ts";
+
 export const EMBED_BATCH_SIZE = 20;
 export const EMBED_BATCH_PAUSE_MS = 150;
+
+/** gte-small's max sequence length; inputs longer than this are truncated before embedding. */
+export const MAX_EMBEDDING_TOKENS = 512;
+
+/**
+ * Truncate text so the embedding model never receives more than maxTokens
+ * (estimated via the same word-based estimator the chunker uses). This only
+ * affects the vector fed to session.run() — callers must persist the original,
+ * untruncated text to the database themselves.
+ */
+export function truncateForEmbedding(
+  text: string,
+  maxTokens: number = MAX_EMBEDDING_TOKENS,
+): string {
+  if (estimateTokens(text) <= maxTokens) return text;
+
+  const words = text.trim().split(/\s+/);
+  const maxWords = Math.floor(maxTokens / 1.3);
+  return words.slice(0, maxWords).join(" ");
+}
 
 /** Minimal surface of a PostgREST-style row update needed to persist an embedding. */
 export interface EmbeddingWriteDb {
@@ -67,7 +89,7 @@ export async function generateEmbeddings(
     const batchResults = await Promise.all(
       batch.map(async (text) => {
         try {
-          return await session.run(text, RUN_OPTS);
+          return await session.run(truncateForEmbedding(text), RUN_OPTS);
         } catch {
           return null;
         }

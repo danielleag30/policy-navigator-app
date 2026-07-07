@@ -36,6 +36,7 @@ import {
   preflight,
 } from "../_shared/embedder.ts";
 import { handleMunicode } from "./municode.ts";
+import { embedOrdinanceProvisionsBatched } from "./ordinance-embedder.ts";
 import { requestSecret } from "../_shared/admin-auth.ts";
 
 // Supabase.ai.Session is injected by the Edge Function runtime.
@@ -594,59 +595,6 @@ async function embedNarrativeChunks(
   }
 }
 
-// ── Task 2-6: embedding generation for ordinance_provisions ───────────────────
-
-async function embedOrdinanceProvisions(
-  documentId: string,
-  session: AiSession,
-): Promise<void> {
-  const { data: rows, error: fetchErr } = await db
-    .from("ordinance_provisions")
-    .select("id, content")
-    .eq("document_id", documentId);
-
-  if (fetchErr) {
-    throw new Error(
-      `Fetching ordinance_provisions failed: ${fetchErr.message}`,
-    );
-  }
-  if (!rows || rows.length === 0) {
-    console.log(
-      `[embedder] no ordinance_provisions for document ${documentId}`,
-    );
-    return;
-  }
-
-  const texts = rows.map((r) => r.content as string);
-  const embeddings = await generateEmbeddings(session, texts);
-
-  await persistEmbeddings(
-    db,
-    "ordinance_provisions",
-    "provision",
-    rows,
-    embeddings,
-  );
-
-  // Verify no nulls remain
-  const { count, error: countErr } = await db
-    .from("ordinance_provisions")
-    .select("id", { count: "exact", head: true })
-    .eq("document_id", documentId)
-    .is("embedding", null);
-
-  if (countErr) {
-    throw new Error(
-      `Null-check query failed for ordinance_provisions: ${countErr.message}`,
-    );
-  }
-  if (count && count > 0) {
-    throw new Error(
-      `${count} ordinance_provisions still have null embedding after generation`,
-    );
-  }
-}
-
 // ── Task 2-6: Municode reconciliation trigger ─────────────────────────────────
 
 async function triggerReconciliationIfNeeded(
@@ -925,7 +873,7 @@ Deno.serve(async (req: Request) => {
       }
 
       // ── Task 2-6: embed ordinance_provisions ─────────────────────────────
-      await embedOrdinanceProvisions(documentId, session);
+      await embedOrdinanceProvisionsBatched(db, session, documentId);
 
       // ── Task 2-6: finalize Document row ──────────────────────────────────
       const { error: docFinalErr } = await db
