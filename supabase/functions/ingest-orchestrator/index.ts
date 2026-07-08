@@ -36,7 +36,10 @@ import {
   preflight,
 } from "../_shared/embedder.ts";
 import { handleMunicode } from "./municode.ts";
-import { embedOrdinanceProvisionsBatched } from "./ordinance-embedder.ts";
+import {
+  embedOrdinanceProvisionsBatched,
+  ORDINANCE_EMBED_FETCH_PAGE_SIZE,
+} from "./ordinance-embedder.ts";
 import { requestSecret } from "../_shared/admin-auth.ts";
 import { reconciliationInvokeUrl } from "./_reconciliation-url.ts";
 
@@ -141,8 +144,7 @@ async function deferIngestion(
 async function requeueForResume(
   pendingIngestionId: string,
   currentAttempts: number,
-  logMessage: string =
-    "[orchestrator] Municode soft deadline hit — requeued for resume",
+  logMessage: string = "[orchestrator] Municode soft deadline hit — requeued for resume",
 ): Promise<Response> {
   const { error: requeueErr } = await db
     .from("pending_ingestions")
@@ -198,8 +200,12 @@ async function pdfBranch(
     if (!resp.ok) throw new Error(`HTTP ${resp.status} fetching source PDF`);
     pdfBytes = new Uint8Array(await resp.arrayBuffer());
   } catch (e) {
-    if (e instanceof DOMException && (e as DOMException).name === "AbortError") {
-      throw new Error(`Source PDF fetch timed out after ${SOURCE_FETCH_TIMEOUT_MS / 1000}s`);
+    if (
+      e instanceof DOMException && (e as DOMException).name === "AbortError"
+    ) {
+      throw new Error(
+        `Source PDF fetch timed out after ${SOURCE_FETCH_TIMEOUT_MS / 1000}s`,
+      );
     }
     throw new Error(`Source fetch failed: ${(e as Error).message}`);
   } finally {
@@ -874,10 +880,20 @@ Deno.serve(async (req: Request) => {
       }
 
       // ── Task 2-6: embed ordinance_provisions ─────────────────────────────
+      // Runs as an HTTP call (see generateEmbeddingsHttp), not the local AI
+      // Session, so it isn't subject to the CPU-time budget that throttled
+      // this path to 1-3 rows/invocation -- give it the actual time left
+      // before this invocation's own SOFT_DEADLINE_MS rather than the small
+      // CPU-era default, so a single invocation can drain far more backlog.
+      const embedUrl = Deno.env.get("HF_SPACES_DOCLING_URL");
+      if (!embedUrl) throw new Error("HF_SPACES_DOCLING_URL not set");
+
       const ordinanceEmbedResult = await embedOrdinanceProvisionsBatched(
         db,
-        session,
+        embedUrl,
         documentId,
+        ORDINANCE_EMBED_FETCH_PAGE_SIZE,
+        Math.max(0, SOFT_DEADLINE_MS - Date.now()),
       );
       if (!ordinanceEmbedResult.complete) {
         return await requeueForResume(
@@ -925,8 +941,8 @@ Deno.serve(async (req: Request) => {
 
     const isDoclingTimeout = msg === "Docling call timed out after 100s";
     const isDoclingHttp500 = msg.includes("Docling wrapper returned HTTP 500");
-    const isSourceFetchTimeout =
-      msg === `Source PDF fetch timed out after ${SOURCE_FETCH_TIMEOUT_MS / 1000}s`;
+    const isSourceFetchTimeout = msg ===
+      `Source PDF fetch timed out after ${SOURCE_FETCH_TIMEOUT_MS / 1000}s`;
 
     // writePendingAlert now throws on failure.  Capture it so we can still
     // complete the status update below before propagating.

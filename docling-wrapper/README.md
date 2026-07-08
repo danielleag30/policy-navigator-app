@@ -46,13 +46,32 @@ Convert a PDF at `url` to an ordered list of text blocks.
 }
 ```
 
+### `POST /embed`
+Embed a batch of texts with `thenlper/gte-small` (mean-pooled, L2-normalized, 384d).
+
+**Request**
+```json
+{"texts": ["Section 1. Purpose...", "Section 2. Definitions..."]}
+```
+
+**Response**
+```json
+{
+  "embeddings": [[0.01, -0.02, "..."], [0.03, 0.01, "..."]],
+  "model": "thenlper/gte-small",
+  "dimensions": 384
+}
+```
+
 See [CONTRACT.md](./CONTRACT.md) for the full API contract.
 
 ## Configuration
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `DOCLING_ARTIFACTS_PATH` | `/home/user/.docling/models` | Pre-downloaded model cache |
 | `TOKENIZERS_PARALLELISM` | `false` | Suppress HuggingFace tokenizer warning |
 
-Models (~1–2 GB) are pre-downloaded at Docker build time to avoid cold-start latency.
+Docling models are pre-downloaded at Docker build time via `docling-tools
+models download` into docling's default cache dir (no
+`DOCLING_ARTIFACTS_PATH` override -- see Dockerfile). The gte-small
+embedding model is pre-downloaded the same way via sentence-transformers.

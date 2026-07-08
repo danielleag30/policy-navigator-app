@@ -16,20 +16,28 @@
  * advance so that already-attempted rows are never refetched even if their
  * embedding failed to generate.
  *
- * Confirmed by live invocation against the real production backlog (2,676
- * stuck rows, real Fairfax County ordinance content): even 3-way *concurrent*
- * session.run() calls (the previous design) reliably exhausted the ~2s Edge
- * Function CPU ceiling before a single row was persisted, crashing with
- * WORKER_RESOURCE_LIMIT. Processing strictly one row at a time, with the
- * deadline checked between each row rather than only after a full page, is
- * what keeps a single invocation inside the CPU budget.
+ * Embedding generation itself was originally an in-process
+ * Supabase.ai.Session('gte-small').run() call. Live invocation against the
+ * real production backlog (2,676 stuck rows, real Fairfax County ordinance
+ * content) confirmed even 3-way *concurrent* session.run() calls reliably
+ * exhausted the ~2s Edge Function CPU-time ceiling before a single row was
+ * persisted, crashing with WORKER_RESOURCE_LIMIT -- CPU time, not wall clock,
+ * was the binding constraint. That ceiling only counts CPU-bound work, so
+ * embedding generation now runs as an HTTP call to the docling-wrapper HF
+ * Space's POST /embed (see _shared/embedder.ts generateEmbeddingsHttp) --
+ * awaiting a fetch is I/O, exempt from the CPU budget, which removes the
+ * constraint that throttled this path to 1-3 rows per invocation.
+ *
+ * The one-row-at-a-time sequential loop is kept regardless: the HF Space runs
+ * a single Uvicorn worker (see docling-wrapper/CONTRACT.md), so concurrent
+ * /embed requests would just queue server-side, and there's no reason to
+ * reintroduce the concurrency this module was written to eliminate.
  */
 
 import {
-  type AiSession,
   type EmbeddableRow,
   type EmbeddingWriteDb,
-  generateEmbeddings,
+  generateEmbeddingsHttp,
   persistEmbeddings,
 } from "../_shared/embedder.ts";
 
@@ -45,17 +53,15 @@ import {
 export const ORDINANCE_EMBED_FETCH_PAGE_SIZE = 3;
 
 /**
- * Wall-clock budget for this function's own batching loop, independent of the
- * outer ~120s SOFT_DEADLINE_MS used elsewhere in index.ts. Checked after
- * every individual row's embed+persist, not just after a full fetched page:
- * live testing showed a single gte-small session.run() call plus its DB
- * write is already a meaningful fraction of the ~2s Edge Function CPU
- * ceiling on real ordinance content, so a page-level check alone still risked
- * exhausting the budget mid-page. At this deadline, expect roughly 1-3 rows
- * embedded per invocation -- the rest resume on the next cron tick via the
- * keyset cursor + embedding IS NULL filter.
+ * Fallback wall-clock budget for this function's own batching loop, used
+ * only when the caller doesn't pass an explicit softDeadlineMs. index.ts
+ * passes the actual remaining time until the invocation's own SOFT_DEADLINE_MS
+ * (itself well under the ~150s Edge Function wall-clock hard kill), so this
+ * default only matters for direct/test callers. Checked after every
+ * individual row's embed+persist, not just after a full fetched page, so a
+ * slow /embed call mid-page still stops promptly rather than overrunning.
  */
-export const ORDINANCE_EMBED_SOFT_DEADLINE_MS = 1_500;
+export const ORDINANCE_EMBED_SOFT_DEADLINE_MS = 60_000;
 
 export interface OrdinanceProvisionRow extends EmbeddableRow {
   content: string;
@@ -120,10 +126,14 @@ export interface OrdinanceEmbedResult {
  * mid-backlog. Safe to call again on the next invocation: the
  * is_current=true AND embedding IS NULL filter plus the keyset cursor mean an
  * already-embedded row is never refetched or reprocessed.
+ *
+ * embedUrl is the docling-wrapper HF Space's base URL (HF_SPACES_DOCLING_URL)
+ * -- the same Space already used for Docling PDF conversion also serves
+ * POST /embed.
  */
 export async function embedOrdinanceProvisionsBatched(
   db: OrdinanceEmbedDb,
-  session: AiSession,
+  embedUrl: string,
   documentId: string,
   batchSize: number = ORDINANCE_EMBED_FETCH_PAGE_SIZE,
   softDeadlineMs: number = ORDINANCE_EMBED_SOFT_DEADLINE_MS,
@@ -151,7 +161,7 @@ export async function embedOrdinanceProvisionsBatched(
     if (!rows || rows.length === 0) break;
 
     for (const row of rows) {
-      const [embedding] = await generateEmbeddings(session, [row.content]);
+      const [embedding] = await generateEmbeddingsHttp(embedUrl, [row.content]);
       await persistEmbeddings(
         db,
         "ordinance_provisions",
