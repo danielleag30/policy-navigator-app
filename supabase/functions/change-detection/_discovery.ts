@@ -201,54 +201,64 @@ function looksLikeDocumentUrl(url: string): boolean {
  * page itself; depth 2 = one hop past it, etc.). Returns every link seen on any
  * visited page — allow_pattern filtering happens separately in resolveCandidates
  * so match_priority can be resolved across sources that share a crawl root.
+ *
+ * Pages within the same depth level are fetched concurrently (fetchPage is
+ * expected to serialize actual request *starts* via a shared rate limiter, so
+ * this doesn't violate the outbound rate limit — it just lets each request's
+ * network round-trip overlap with the others' instead of stacking end to end,
+ * which matters once a source's fan-out reaches dozens of pages).
  */
 export async function crawlDiscoverySource(
   source: DiscoverySource,
   fetchPage: PageFetcher,
   maxPages: number = DEFAULT_MAX_PAGES,
 ): Promise<{ discoveredLinks: Set<string>; errors: CrawlError[] }> {
-  const visited = new Set<string>();
+  const visited = new Set<string>(source.discovery_urls);
   const discoveredLinks = new Set<string>();
   const errors: CrawlError[] = [];
-  const queue: { url: string; depth: number }[] = source.discovery_urls.map((
+  let level: { url: string; depth: number }[] = source.discovery_urls.map((
     url,
   ) => ({
     url,
     depth: 1,
   }));
 
-  while (queue.length > 0 && visited.size < maxPages) {
-    const next = queue.shift()!;
-    if (visited.has(next.url)) continue;
-    visited.add(next.url);
+  while (level.length > 0 && visited.size <= maxPages) {
+    const nextLevel: { url: string; depth: number }[] = [];
 
-    let page: PageFetchResult;
-    try {
-      page = await fetchPage(next.url);
-    } catch (e) {
-      errors.push({ url: next.url, message: (e as Error).message });
-      continue;
-    }
-
-    if (!page.ok) {
-      errors.push({ url: next.url, message: `HTTP ${page.status}` });
-      continue;
-    }
-
-    for (const link of extractLinks(page.html, next.url)) {
-      discoveredLinks.add(link);
-
-      const isTerminalCandidate = matchesAllowPattern(link, source) ||
-        looksLikeDocumentUrl(link);
-      if (
-        next.depth < source.discovery_depth &&
-        !visited.has(link) &&
-        !isTerminalCandidate &&
-        sameHostname(link, next.url)
-      ) {
-        queue.push({ url: link, depth: next.depth + 1 });
+    await Promise.all(level.map(async ({ url, depth }) => {
+      let page: PageFetchResult;
+      try {
+        page = await fetchPage(url);
+      } catch (e) {
+        errors.push({ url, message: (e as Error).message });
+        return;
       }
-    }
+
+      if (!page.ok) {
+        errors.push({ url, message: `HTTP ${page.status}` });
+        return;
+      }
+
+      for (const link of extractLinks(page.html, url)) {
+        discoveredLinks.add(link);
+
+        const isTerminalCandidate = matchesAllowPattern(link, source) ||
+          looksLikeDocumentUrl(link);
+        if (
+          depth < source.discovery_depth &&
+          !visited.has(link) &&
+          !isTerminalCandidate &&
+          sameHostname(link, url) &&
+          visited.size < maxPages
+        ) {
+          visited.add(link);
+          nextLevel.push({ url: link, depth: depth + 1 });
+        }
+      }
+    }));
+
+    level = nextLevel;
   }
 
   return { discoveredLinks, errors };
@@ -307,7 +317,7 @@ export async function discoverAllCandidates(
   const perSourceLinks = new Map<string, Set<string>>();
   const errors: DiscoveryError[] = [];
 
-  for (const source of sources) {
+  await Promise.all(sources.map(async (source) => {
     const { discoveredLinks, errors: sourceErrors } =
       await crawlDiscoverySource(
         source,
@@ -321,7 +331,7 @@ export async function discoverAllCandidates(
         docType: source.doc_type,
       })),
     );
-  }
+  }));
 
   return { candidates: resolveCandidates(perSourceLinks, sources), errors };
 }

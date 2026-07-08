@@ -108,20 +108,27 @@ function isFairfaxCountyUrl(url: string): boolean {
  * Shared 200ms-between-requests limiter for every fairfaxcounty.gov call this
  * function makes — HEAD-based change checks and discovery-page GETs alike —
  * so both request kinds count against the same budget instead of stacking.
+ *
+ * Callers may invoke waitIfNeeded concurrently (the discovery crawler fetches
+ * a whole BFS level at once so page round-trips overlap). A promise chain
+ * serializes request *start* times ≥200ms apart regardless of caller
+ * concurrency, without forcing each request's full completion to block the
+ * next one's start the way a naive "check elapsed time" limiter would under
+ * concurrent callers.
  */
 class FairfaxRateLimiter {
-  #lastRequestStartedAt = 0;
+  #chain: Promise<void> = Promise.resolve();
+  #anyRequestStarted = false;
 
-  async waitIfNeeded(url: string): Promise<void> {
-    if (!isFairfaxCountyUrl(url)) return;
+  waitIfNeeded(url: string): Promise<void> {
+    if (!isFairfaxCountyUrl(url)) return Promise.resolve();
 
-    const elapsedMs = Date.now() - this.#lastRequestStartedAt;
-    if (
-      this.#lastRequestStartedAt > 0 && elapsedMs < FAIRFAX_REQUEST_DELAY_MS
-    ) {
-      await sleep(FAIRFAX_REQUEST_DELAY_MS - elapsedMs);
-    }
-    this.#lastRequestStartedAt = Date.now();
+    const shouldDelay = this.#anyRequestStarted;
+    this.#anyRequestStarted = true;
+    this.#chain = this.#chain.then(() =>
+      shouldDelay ? sleep(FAIRFAX_REQUEST_DELAY_MS) : undefined
+    );
+    return this.#chain;
   }
 }
 
