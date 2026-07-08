@@ -17,7 +17,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 ENV DOCLING_ARTIFACTS_PATH=/home/user/.docling/models
 ENV TOKENIZERS_PARALLELISM=false
 
-RUN python3 -c "from docling.document_converter import DocumentConverter; from docling.pipeline.standard_pdf_pipeline import PdfPipelineOptions; opts = PdfPipelineOptions(do_ocr=False, do_table_structure=False); DocumentConverter(pdf_pipeline_options=opts); print('Models pre-downloaded OK')"
+# Mirrors app.py's actual converter construction (format_options/PdfFormatOption,
+# pipeline_options imported from docling.datamodel.pipeline_options) -- this
+# probe had drifted onto an older, no-longer-importable API
+# (docling.pipeline.standard_pdf_pipeline + pdf_pipeline_options=) that a
+# fresh, uncached build (pulling current docling, not whatever version was
+# cached from the last successful build) fails on.
+RUN python3 -c "from docling.document_converter import DocumentConverter, PdfFormatOption; from docling.datamodel.base_models import InputFormat; from docling.datamodel.pipeline_options import PdfPipelineOptions; opts = PdfPipelineOptions(do_ocr=False, do_table_structure=False); DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}); print('Models pre-downloaded OK')"
 RUN python3 -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('thenlper/gte-small'); print('Embedding model pre-downloaded OK')"
 
 COPY app.py .
