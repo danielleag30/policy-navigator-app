@@ -49,7 +49,9 @@
         "https://www.fairfaxcounty.gov/budget/budget-committee-meetings"
       ],
       "discovery_depth": 2,
-      "discovery_note": "Budget committee meeting materials are linked from per-meeting sub-pages (e.g. board-supervisors-budget-committee-meeting-march-10-2026), not directly from the listing page.",
+      "discovery_note": "Budget committee meeting materials are linked from per-meeting sub-pages (e.g. board-supervisors-budget-committee-meeting-march-10-2026), not directly from the listing page. The listing page covers 15+ years of history (89 meeting sub-pages back to 2008 as of 2026-07-08) and repeats the county site's full global nav on every page load; discovery_link_prefix keeps the depth-2 crawl inside /budget/ instead of following that nav out to unrelated county pages (confirmed live 2026-07-08: 265 of 381 links on the listing page are outside /budget/), which was tripping the edge function's WORKER_RESOURCE_LIMIT. That alone wasn't enough — scanning all 89 archived meetings' documents every run (a HEAD+GET per document, rate-limited) still pushed a single invocation past the platform's 150s idle timeout, so discovery_follow_min_year additionally limits which meeting sub-pages get crawled to the last 3 years. Trade-off: meetings before 2024 are not (re-)discovered by this recurring job — a one-time manual backfill (temporarily raising discovery_depth's reach via a lower min year, or a one-off run with the field removed) would be needed to ingest the pre-2024 archive; as of 2026-07-08 zero budget_committee_meeting documents have ever been ingested, so that backfill is still outstanding.",
+      "discovery_link_prefix": "https://www.fairfaxcounty.gov/budget/",
+      "discovery_follow_min_year": 2024,
       "allow_patterns": [
         "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/budget%20committee%20meeting/",
         "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/Documents/budget%20committee%20meeting/"
