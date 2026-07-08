@@ -219,8 +219,7 @@ function installFetch(
 ): () => void {
   const original = globalThis.fetch;
   // deno-lint-ignore no-explicit-any
-  globalThis.fetch =
-    ((url: any, init: any) => handler(String(url), init)) as any;
+  globalThis.fetch = ((url: any, init: any) => handler(String(url), init)) as any;
   return () => {
     globalThis.fetch = original;
   };
@@ -287,9 +286,7 @@ Deno.test("generateEmbeddingsHttp truncates outlier text before sending", async 
 });
 
 Deno.test("generateEmbeddingsHttp returns nulls (does not throw) on a non-2xx response", async () => {
-  const restore = installFetch(() =>
-    jsonResponse({ detail: "server error" }, 500)
-  );
+  const restore = installFetch(() => jsonResponse({ detail: "server error" }, 500));
 
   let result: Array<number[] | null>;
   try {

@@ -159,8 +159,7 @@ function installFetch(
 ): () => void {
   const original = globalThis.fetch;
   // deno-lint-ignore no-explicit-any
-  globalThis.fetch =
-    ((url: any, init: any) => handler(String(url), init)) as any;
+  globalThis.fetch = ((url: any, init: any) => handler(String(url), init)) as any;
   return () => {
     globalThis.fetch = original;
   };
@@ -188,8 +187,7 @@ function countingFetch(): { calls: () => number; restore: () => void } {
   return { calls: () => calls, restore };
 }
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 Deno.test("initial fetch uses a syntactically valid uuid cursor, not an empty string", async () => {
   // Regression test: id is a `uuid` column in Postgres, so an empty-string
@@ -208,9 +206,7 @@ Deno.test("initial fetch uses a syntactically valid uuid cursor, not an empty st
   assert(fake.fetchCalls.length > 0, "expected at least one fetch call");
   assert(
     UUID_RE.test(fake.fetchCalls[0].cursor),
-    `initial cursor must be a valid uuid literal, got ${
-      JSON.stringify(fake.fetchCalls[0].cursor)
-    }`,
+    `initial cursor must be a valid uuid literal, got ${JSON.stringify(fake.fetchCalls[0].cursor)}`,
   );
 });
 
@@ -455,9 +451,7 @@ Deno.test("advances the cursor past a row even if its /embed call fails, avoidin
 Deno.test("treats a non-2xx /embed response the same as a failed call (null embedding, not a throw)", async () => {
   const rows: FakeRow[] = [makeRow(1)];
   const fake = new FakeOrdinanceDb(rows);
-  const restore = installFetch(async () =>
-    jsonResponse({ detail: "boom" }, 500)
-  );
+  const restore = installFetch(async () => jsonResponse({ detail: "boom" }, 500));
 
   let threw = false;
   try {

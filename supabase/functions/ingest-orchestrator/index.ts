@@ -27,12 +27,7 @@ import { generate as uuidv7 } from "@std/uuid/v7";
 import db from "../_shared/db-client.ts";
 import { error, success } from "../_shared/response.ts";
 import { contentHash } from "../_shared/hash.ts";
-import {
-  type Chunk,
-  chunkBlocks,
-  type FlatBlock,
-  validateTokenizer,
-} from "../_shared/chunker.ts";
+import { type Chunk, chunkBlocks, type FlatBlock, validateTokenizer } from "../_shared/chunker.ts";
 import { extractAndPersist } from "../_shared/extractor.ts";
 import {
   type AiSession,
@@ -149,8 +144,7 @@ async function deferIngestion(
 async function requeueForResume(
   pendingIngestionId: string,
   currentAttempts: number,
-  logMessage: string =
-    "[orchestrator] Municode soft deadline hit — requeued for resume",
+  logMessage: string = "[orchestrator] Municode soft deadline hit — requeued for resume",
 ): Promise<Response> {
   const { error: requeueErr } = await db
     .from("pending_ingestions")
@@ -407,9 +401,7 @@ async function embedDocumentChunks(
       .eq("id", rows[i].id);
     if (chunkErr) {
       throw new Error(
-        `Failed to write embedding for chunk ${
-          rows[i].id
-        }: ${chunkErr.message}`,
+        `Failed to write embedding for chunk ${rows[i].id}: ${chunkErr.message}`,
       );
     }
   }
@@ -425,9 +417,7 @@ async function embedDocumentChunks(
   }
   if ((nonNullCount ?? 0) !== rows.length) {
     throw new Error(
-      `Embedding count mismatch: expected ${rows.length}, got ${
-        nonNullCount ?? 0
-      } non-null in DB`,
+      `Embedding count mismatch: expected ${rows.length}, got ${nonNullCount ?? 0} non-null in DB`,
     );
   }
 }
@@ -686,8 +676,7 @@ Deno.serve(async (req: Request) => {
   }
 
   let pendingIngestionId: string;
-  let body: { pending_ingestion_id?: string; force_full_reingest?: boolean } =
-    {};
+  let body: { pending_ingestion_id?: string; force_full_reingest?: boolean } = {};
   try {
     const text = await req.text();
     if (text.trim()) {

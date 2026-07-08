@@ -98,9 +98,7 @@ export async function generateEmbeddings(
     results.push(...batchResults);
 
     if (i + EMBED_BATCH_SIZE < texts.length) {
-      await new Promise<void>((resolve) =>
-        setTimeout(resolve, EMBED_BATCH_PAUSE_MS)
-      );
+      await new Promise<void>((resolve) => setTimeout(resolve, EMBED_BATCH_PAUSE_MS));
     }
   }
 
@@ -220,9 +218,7 @@ export async function persistEmbeddings<T extends EmbeddableRow>(
     );
 
     if (i + EMBED_BATCH_SIZE < rows.length) {
-      await new Promise<void>((resolve) =>
-        setTimeout(resolve, EMBED_BATCH_PAUSE_MS)
-      );
+      await new Promise<void>((resolve) => setTimeout(resolve, EMBED_BATCH_PAUSE_MS));
     }
   }
 }
