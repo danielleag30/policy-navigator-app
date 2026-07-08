@@ -68,7 +68,11 @@ from sentence_transformers import SentenceTransformer
 
 # Suppress HuggingFace tokenizer parallelism warning on CPU
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-os.environ.setdefault("DOCLING_ARTIFACTS_PATH", "/home/user/.docling/models")
+# No DOCLING_ARTIFACTS_PATH override: `docling-tools models download` (see
+# Dockerfile) downloads into docling's own default cache dir
+# (~/.cache/docling/models), and leaving this unset lets DocumentConverter
+# resolve that same default at runtime -- pointing it at a different path
+# here previously left it looking at an empty directory.
 
 import docling  # noqa: E402
 from docling.document_converter import DocumentConverter, PdfFormatOption

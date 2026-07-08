@@ -14,16 +14,15 @@ COPY requirements.txt .
 # broke `torchvision::nms` at import time.
 RUN pip install --no-cache-dir -r requirements.txt
 
-ENV DOCLING_ARTIFACTS_PATH=/home/user/.docling/models
 ENV TOKENIZERS_PARALLELISM=false
 
 # Constructing a DocumentConverter (the old probe here) doesn't force a real
-# model download -- it only lazily prepares the pipeline, so DOCLING_ARTIFACTS_PATH
-# ended up pointing at an incomplete folder and every /process request failed at
-# runtime with "artifacts_path ... is not valid ... must point to a folder
-# containing all models required by the pipeline". docling-tools' own `models
-# download` subcommand is docling's documented mechanism for actually populating
-# a local artifacts folder ahead of time (respects DOCLING_ARTIFACTS_PATH).
+# model download -- it only lazily prepares the pipeline, leaving the
+# artifacts folder empty and every /process request failing at runtime.
+# docling-tools' own `models download` subcommand actually populates
+# docling's default cache dir (~/.cache/docling/models); leaving
+# DOCLING_ARTIFACTS_PATH unset (see app.py) lets DocumentConverter resolve
+# that same default at runtime instead of looking at a different, empty path.
 RUN docling-tools models download
 # Cheap sanity check that the import chain still works post-download (mirrors
 # app.py's actual converter construction).
