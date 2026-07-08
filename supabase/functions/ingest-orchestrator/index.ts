@@ -27,7 +27,12 @@ import { generate as uuidv7 } from "@std/uuid/v7";
 import db from "../_shared/db-client.ts";
 import { error, success } from "../_shared/response.ts";
 import { contentHash } from "../_shared/hash.ts";
-import { type Chunk, chunkBlocks, type FlatBlock, validateTokenizer } from "../_shared/chunker.ts";
+import {
+  type Chunk,
+  chunkBlocks,
+  type FlatBlock,
+  validateTokenizer,
+} from "../_shared/chunker.ts";
 import { extractAndPersist } from "../_shared/extractor.ts";
 import {
   type AiSession,
@@ -42,6 +47,12 @@ import {
 } from "./ordinance-embedder.ts";
 import { requestSecret } from "../_shared/admin-auth.ts";
 import { reconciliationInvokeUrl } from "./_reconciliation-url.ts";
+import {
+  type ClaimedPendingIngestion,
+  type ClaimNextResult,
+  type PendingIngestionClaim,
+  runPendingIngestionLoop,
+} from "./_multi-row-loop.ts";
 
 // Supabase.ai.Session is injected by the Edge Function runtime.
 // Declare here so TypeScript resolves it; actual availability is checked at runtime.
@@ -70,11 +81,40 @@ const AI_SESSION_DEFER_MINUTES = 15;
 
 /**
  * Hard-abort budget for the raw source-PDF fetch (content-hash step), in ms.
- * Sized so SOURCE_FETCH_TIMEOUT_MS + the Docling call's 100s budget lands
- * exactly at the 120s SOFT_DEADLINE_MS, leaving the remaining ~30s of the
- * ~150s wall-clock ceiling for chunking/extraction/embedding.
+ * Kept stable because tests and retry classification rely on the exact
+ * timeout message; poll mode bounds the following Docling call instead.
  */
 const SOURCE_FETCH_TIMEOUT_MS = 20_000;
+
+/**
+ * Default Docling timeout for explicit/admin single-row processing. Poll mode
+ * clamps this to the per-row PDF budget below.
+ */
+const DOCLING_TIMEOUT_MS = 100_000;
+
+/**
+ * Poll mode processes rows sequentially and stops claiming fresh work well
+ * before the platform's CPU resource ceiling. The 80s claim window allows a
+ * small number of bounded PDF rows per invocation with margin under the
+ * observed ~108s CPU failure point, while fast duplicate/API rows can still
+ * drain opportunistically.
+ */
+const POLL_CLAIM_WINDOW_MS = 80_000;
+
+/**
+ * PDFs are the expensive path. Bound each PDF row in cron/poll mode so one slow
+ * Docling/source fetch cannot turn a multi-row invocation into a resource-limit
+ * crash. Explicit pending_ingestion_id calls still receive the full soft
+ * deadline for targeted one-off work.
+ */
+const POLL_PDF_ROW_BUDGET_MS = 35_000;
+
+/**
+ * Time reserved after a Docling response for chunking, extraction, embeddings,
+ * and status updates. This is not a hard guarantee, but it keeps Docling from
+ * consuming all of a row's per-row budget.
+ */
+const PDF_POST_DOCLING_BUFFER_MS = 5_000;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -144,7 +184,8 @@ async function deferIngestion(
 async function requeueForResume(
   pendingIngestionId: string,
   currentAttempts: number,
-  logMessage: string = "[orchestrator] Municode soft deadline hit — requeued for resume",
+  logMessage: string =
+    "[orchestrator] Municode soft deadline hit — requeued for resume",
 ): Promise<Response> {
   const { error: requeueErr } = await db
     .from("pending_ingestions")
@@ -182,6 +223,19 @@ async function pdfBranch(
 ): Promise<PdfBranchResult> {
   const doclingUrl = Deno.env.get("HF_SPACES_DOCLING_URL");
   if (!doclingUrl) throw new Error("HF_SPACES_DOCLING_URL not set");
+
+  const remainingMs = () =>
+    deadlineMs === undefined
+      ? Number.POSITIVE_INFINITY
+      : deadlineMs - Date.now();
+  const boundedTimeoutMs = (
+    requestedMs: number,
+    reserveMs = 0,
+  ): number => {
+    const remaining = remainingMs();
+    if (!Number.isFinite(remaining)) return requestedMs;
+    return Math.max(1_000, Math.min(requestedMs, remaining - reserveMs));
+  };
 
   // 1. Fetch source PDF bytes for content_hash — hard-abort well before the
   // wall-clock kill so a slow/hanging source host can't burn the whole ~150s
@@ -292,12 +346,22 @@ async function pdfBranch(
   const documentId: string = docRow.id;
   console.log(`[pdf-branch] Document shell created: ${documentId}`);
 
-  // 4. Call Docling wrapper — hard-abort at 100s to stay under the 150s wall-clock limit.
+  // 4. Call Docling wrapper — hard-abort before the active row/function deadline.
   let blocks: FlatBlock[];
   let doclingVersion: string;
 
+  const doclingTimeoutMs = boundedTimeoutMs(
+    DOCLING_TIMEOUT_MS,
+    PDF_POST_DOCLING_BUFFER_MS,
+  );
+  if (deadlineMs !== undefined && remainingMs() <= PDF_POST_DOCLING_BUFFER_MS) {
+    throw new Error("PDF row soft deadline reached before Docling call");
+  }
   const doclingController = new AbortController();
-  const doclingTimer = setTimeout(() => doclingController.abort(), 100_000);
+  const doclingTimer = setTimeout(
+    () => doclingController.abort(),
+    doclingTimeoutMs,
+  );
   try {
     const docResp = await fetch(`${doclingUrl}/process`, {
       method: "POST",
@@ -319,7 +383,9 @@ async function pdfBranch(
     if (
       e instanceof DOMException && (e as DOMException).name === "AbortError"
     ) {
-      throw new Error("Docling call timed out after 100s");
+      throw new Error(
+        `Docling call timed out after ${Math.ceil(doclingTimeoutMs / 1000)}s`,
+      );
     }
     throw new Error(`Docling call failed: ${(e as Error).message}`);
   } finally {
@@ -401,7 +467,9 @@ async function embedDocumentChunks(
       .eq("id", rows[i].id);
     if (chunkErr) {
       throw new Error(
-        `Failed to write embedding for chunk ${rows[i].id}: ${chunkErr.message}`,
+        `Failed to write embedding for chunk ${
+          rows[i].id
+        }: ${chunkErr.message}`,
       );
     }
   }
@@ -417,7 +485,9 @@ async function embedDocumentChunks(
   }
   if ((nonNullCount ?? 0) !== rows.length) {
     throw new Error(
-      `Embedding count mismatch: expected ${rows.length}, got ${nonNullCount ?? 0} non-null in DB`,
+      `Embedding count mismatch: expected ${rows.length}, got ${
+        nonNullCount ?? 0
+      } non-null in DB`,
     );
   }
 }
@@ -667,72 +737,30 @@ async function triggerReconciliationIfNeeded(
 
 // ── Main handler ──────────────────────────────────────────────────────────────
 
-Deno.serve(async (req: Request) => {
-  const FUNCTION_START_MS = Date.now();
-  const SOFT_DEADLINE_MS = FUNCTION_START_MS + 120_000; // 120 s — well under ~150 s hard kill
+function duePendingFilter(nowIso: string): string {
+  return `next_attempt_at.is.null,next_attempt_at.lte.${nowIso}`;
+}
 
-  if (req.method !== "POST") {
-    return error("NOT_FOUND", "Method not allowed", 405);
-  }
-
-  let pendingIngestionId: string;
-  let body: { pending_ingestion_id?: string; force_full_reingest?: boolean } = {};
-  try {
-    const text = await req.text();
-    if (text.trim()) {
-      body = JSON.parse(text);
-    }
-  } catch {
-    return error("INGESTION_FAILED", "Invalid JSON body", 400);
-  }
-
-  // force_full_reingest bypasses the Municode branch's top-level content_hash
-  // skip for a one-off admin backfill/verification run — never set by the
-  // cron poll path, so normal periodic-recheck dedup is unaffected.
-  let forceFullReingest = false;
-  if (body?.force_full_reingest === true) {
-    const adminSecret = Deno.env.get("ADMIN_SECRET");
-    if (!adminSecret || requestSecret(req) !== adminSecret) {
-      return error(
-        "UNAUTHORIZED",
-        "force_full_reingest requires a valid admin secret",
-        401,
-      );
-    }
-    forceFullReingest = true;
-  }
-
-  if (body?.pending_ingestion_id) {
-    pendingIngestionId = body.pending_ingestion_id;
-  } else {
-    // Poll mode: cron invokes with empty body — find the next eligible row.
-    const now = new Date().toISOString();
-    const { data: nextRow, error: pollErr } = await db
-      .from("pending_ingestions")
-      .select("id")
-      .eq("status", "pending")
-      .or(`next_attempt_at.is.null,next_attempt_at.lte.${now}`)
-      .order("detected_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    if (pollErr) return error("INGESTION_FAILED", "Poll query failed", 500);
-    if (!nextRow) return success({ status: "idle", reason: "no_pending_rows" });
-    pendingIngestionId = nextRow.id;
-  }
-
-  // Fetch PendingIngestion row (status = 'pending' only)
-  const { data: row, error: fetchErr } = await db
+async function claimPendingIngestionById(
+  pendingIngestionId: string,
+  dueAtIso?: string,
+): Promise<ClaimNextResult> {
+  let fetchQuery = db
     .from("pending_ingestions")
     .select("id, url, doc_type, attempts, status")
     .eq("id", pendingIngestionId)
-    .eq("status", "pending")
-    .maybeSingle();
+    .eq("status", "pending");
 
+  if (dueAtIso) {
+    fetchQuery = fetchQuery.or(duePendingFilter(dueAtIso));
+  }
+
+  const { data: row, error: fetchErr } = await fetchQuery.maybeSingle();
   if (fetchErr) {
-    return error("INGESTION_FAILED", "DB lookup failed", 500);
+    throw new Error(`DB lookup failed: ${fetchErr.message}`);
   }
   if (!row) {
-    return success({ skipped: true, reason: "not_pending" });
+    return { kind: "claim_lost" };
   }
 
   const newAttempts = (row.attempts ?? 0) + 1;
@@ -746,16 +774,21 @@ Deno.serve(async (req: Request) => {
         last_error: "Max attempts exceeded",
         updated_at: new Date().toISOString(),
       })
-      .eq("id", pendingIngestionId);
+      .eq("id", pendingIngestionId)
+      .eq("status", "pending");
     if (skipErr) {
-      return error("INGESTION_FAILED", "Failed to persist skipped status", 500);
+      throw new Error(`Failed to persist skipped status: ${skipErr.message}`);
     }
-    return success({ status: "skipped", reason: "max_attempts_exceeded" });
+    return {
+      kind: "skipped",
+      id: pendingIngestionId,
+      reason: "max_attempts_exceeded",
+    };
   }
 
-  // Mark processing — fail loudly so later logic does not proceed on a write that never persisted.
-  // If this fails the row stays 'pending' and pg_cron will pick it up again with no attempt consumed.
-  const { error: processingErr } = await db
+  // Atomic claim: only the invocation that changes pending -> processing gets
+  // the row back and proceeds. A racing invocation sees no returned row.
+  let claimQuery = db
     .from("pending_ingestions")
     .update({
       status: "processing",
@@ -763,10 +796,62 @@ Deno.serve(async (req: Request) => {
       next_attempt_at: nextAttemptAt(newAttempts),
       updated_at: new Date().toISOString(),
     })
-    .eq("id", pendingIngestionId);
-  if (processingErr) {
-    return error("INGESTION_FAILED", "Failed to claim processing slot", 500);
+    .eq("id", pendingIngestionId)
+    .eq("status", "pending");
+
+  if (dueAtIso) {
+    claimQuery = claimQuery.or(duePendingFilter(dueAtIso));
   }
+
+  const { data: claimed, error: processingErr } = await claimQuery
+    .select("id, url, doc_type, attempts, status")
+    .maybeSingle();
+  if (processingErr) {
+    throw new Error(
+      `Failed to claim processing slot: ${processingErr.message}`,
+    );
+  }
+  if (!claimed) {
+    return { kind: "claim_lost" };
+  }
+
+  return {
+    kind: "claimed",
+    claim: {
+      row: claimed as ClaimedPendingIngestion,
+      newAttempts,
+    },
+  };
+}
+
+async function claimNextPendingIngestion(): Promise<ClaimNextResult> {
+  const now = new Date().toISOString();
+  const { data: nextRow, error: pollErr } = await db
+    .from("pending_ingestions")
+    .select("id")
+    .eq("status", "pending")
+    .or(duePendingFilter(now))
+    .order("detected_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (pollErr) {
+    throw new Error(`Poll query failed: ${pollErr.message}`);
+  }
+  if (!nextRow) {
+    return { kind: "idle" };
+  }
+
+  return await claimPendingIngestionById(nextRow.id, now);
+}
+
+async function processClaimedIngestion(
+  row: ClaimedPendingIngestion,
+  newAttempts: number,
+  softDeadlineMs: number,
+  forceFullReingest: boolean,
+): Promise<Response> {
+  const pendingIngestionId = row.id;
 
   try {
     const isPdf = (PDF_DOC_TYPES as readonly string[]).includes(row.doc_type);
@@ -803,7 +888,7 @@ Deno.serve(async (req: Request) => {
         pendingIngestionId,
         row.url,
         row.doc_type,
-        SOFT_DEADLINE_MS,
+        softDeadlineMs,
       );
 
       if (skipped) {
@@ -867,7 +952,7 @@ Deno.serve(async (req: Request) => {
     if (isMunicode) {
       const { documentId, nodeIds, skipped, complete } = await handleMunicode(
         pendingIngestionId,
-        SOFT_DEADLINE_MS,
+        softDeadlineMs,
         forceFullReingest,
       );
 
@@ -893,7 +978,7 @@ Deno.serve(async (req: Request) => {
         embedUrl,
         documentId,
         ORDINANCE_EMBED_FETCH_PAGE_SIZE,
-        Math.max(0, SOFT_DEADLINE_MS - Date.now()),
+        Math.max(0, softDeadlineMs - Date.now()),
       );
       if (!ordinanceEmbedResult.complete) {
         return await requeueForResume(
@@ -939,10 +1024,10 @@ Deno.serve(async (req: Request) => {
     const msg = (e as Error).message ?? "unknown error";
     console.error(`[orchestrator] error on attempt ${newAttempts}:`, msg);
 
-    const isDoclingTimeout = msg === "Docling call timed out after 100s";
+    const isDoclingTimeout = msg.startsWith("Docling call timed out after ");
     const isDoclingHttp500 = msg.includes("Docling wrapper returned HTTP 500");
-    const isSourceFetchTimeout = msg ===
-      `Source PDF fetch timed out after ${SOURCE_FETCH_TIMEOUT_MS / 1000}s`;
+    // deno-fmt-ignore
+    const isSourceFetchTimeout = msg === `Source PDF fetch timed out after ${SOURCE_FETCH_TIMEOUT_MS / 1000}s`;
 
     // writePendingAlert now throws on failure.  Capture it so we can still
     // complete the status update below before propagating.
@@ -1011,4 +1096,134 @@ Deno.serve(async (req: Request) => {
       500,
     );
   }
+}
+
+async function summarizeProcessResponse(
+  id: string,
+  response: Response,
+): Promise<
+  { id: string; ok: boolean; status: number; data?: unknown; error?: unknown }
+> {
+  let body: { ok?: boolean; data?: unknown; error?: unknown } = {};
+  try {
+    body = await response.json();
+  } catch {
+    body = {};
+  }
+
+  return {
+    id,
+    ok: response.ok && body.ok !== false,
+    status: response.status,
+    data: body.data,
+    error: body.error,
+  };
+}
+
+Deno.serve(async (req: Request) => {
+  const FUNCTION_START_MS = Date.now();
+  const SOFT_DEADLINE_MS = FUNCTION_START_MS + 120_000; // 120 s — well under ~150 s hard kill
+  const CLAIM_DEADLINE_MS = FUNCTION_START_MS + POLL_CLAIM_WINDOW_MS;
+
+  if (req.method !== "POST") {
+    return error("NOT_FOUND", "Method not allowed", 405);
+  }
+
+  let body: { pending_ingestion_id?: string; force_full_reingest?: boolean } =
+    {};
+  try {
+    const text = await req.text();
+    if (text.trim()) {
+      body = JSON.parse(text);
+    }
+  } catch {
+    return error("INGESTION_FAILED", "Invalid JSON body", 400);
+  }
+
+  // force_full_reingest bypasses the Municode branch's top-level content_hash
+  // skip for a one-off admin backfill/verification run — never set by the
+  // cron poll path, so normal periodic-recheck dedup is unaffected.
+  let forceFullReingest = false;
+  if (body?.force_full_reingest === true) {
+    const adminSecret = Deno.env.get("ADMIN_SECRET");
+    if (!adminSecret || requestSecret(req) !== adminSecret) {
+      return error(
+        "UNAUTHORIZED",
+        "force_full_reingest requires a valid admin secret",
+        401,
+      );
+    }
+    forceFullReingest = true;
+  }
+
+  if (body?.pending_ingestion_id) {
+    let claim: ClaimNextResult;
+    try {
+      claim = await claimPendingIngestionById(body.pending_ingestion_id);
+    } catch (e) {
+      console.error(
+        "[orchestrator] explicit claim failed:",
+        (e as Error).message,
+      );
+      return error("INGESTION_FAILED", "Failed to claim processing slot", 500);
+    }
+    if (claim.kind === "claim_lost" || claim.kind === "idle") {
+      return success({ skipped: true, reason: "not_pending" });
+    }
+    if (claim.kind === "skipped") {
+      return success({ status: "skipped", reason: claim.reason });
+    }
+
+    return await processClaimedIngestion(
+      claim.claim.row,
+      claim.claim.newAttempts,
+      SOFT_DEADLINE_MS,
+      forceFullReingest,
+    );
+  }
+
+  let loop;
+  try {
+    loop = await runPendingIngestionLoop({
+      deadlineMs: CLAIM_DEADLINE_MS,
+      claimNext: claimNextPendingIngestion,
+      processClaim: async (claim: PendingIngestionClaim) => {
+        const rowSoftDeadlineMs = (PDF_DOC_TYPES as readonly string[]).includes(
+            claim.row.doc_type,
+          )
+          ? Math.min(
+            SOFT_DEADLINE_MS,
+            Date.now() + POLL_PDF_ROW_BUDGET_MS,
+          )
+          : SOFT_DEADLINE_MS;
+        const response = await processClaimedIngestion(
+          claim.row,
+          claim.newAttempts,
+          rowSoftDeadlineMs,
+          forceFullReingest,
+        );
+        return await summarizeProcessResponse(claim.row.id, response);
+      },
+      onRowError: (id, rowErr) => {
+        console.error(
+          `[orchestrator] unhandled row error after claim ${id}:`,
+          rowErr.message,
+        );
+      },
+    });
+  } catch (e) {
+    console.error("[orchestrator] poll loop failed:", (e as Error).message);
+    return error("INGESTION_FAILED", "Poll query failed", 500);
+  }
+
+  return success({
+    status: loop.status,
+    claimed: loop.claimed,
+    processed: loop.processed,
+    failed: loop.failed,
+    skipped: loop.skipped,
+    claim_lost: loop.claimLost,
+    deadline_ms: CLAIM_DEADLINE_MS,
+    rows: loop.rows,
+  });
 });
