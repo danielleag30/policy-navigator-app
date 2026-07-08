@@ -43,9 +43,7 @@ function collectDiscoveryUrls(config: SeedConfig): string[] {
       return [];
     }
 
-    return source.discovery_urls.filter((url): url is string =>
-      typeof url === "string"
-    );
+    return source.discovery_urls.filter((url): url is string => typeof url === "string");
   });
 }
 

@@ -363,11 +363,10 @@ export async function discoverAllCandidates(
   const errors: DiscoveryError[] = [];
 
   await Promise.all(sources.map(async (source) => {
-    const { discoveredLinks, errors: sourceErrors } =
-      await crawlDiscoverySource(
-        source,
-        fetchPage,
-      );
+    const { discoveredLinks, errors: sourceErrors } = await crawlDiscoverySource(
+      source,
+      fetchPage,
+    );
     perSourceLinks.set(source.id, discoveredLinks);
     errors.push(
       ...sourceErrors.map((e) => ({

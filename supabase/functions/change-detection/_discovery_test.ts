@@ -52,8 +52,7 @@ Deno.test("extractLinks resolves relative hrefs against the page URL", () => {
 });
 
 Deno.test("extractLinks passes through absolute hrefs unchanged", () => {
-  const html =
-    `<a href='https://www.fairfaxcounty.gov/budget/adopted/Overview.pdf'>Overview</a>`;
+  const html = `<a href='https://www.fairfaxcounty.gov/budget/adopted/Overview.pdf'>Overview</a>`;
   const links = extractLinks(
     html,
     "https://www.fairfaxcounty.gov/budget/adopted",
@@ -122,10 +121,8 @@ function fakeFetcher(
   };
 }
 
-const ROOT =
-  "https://www.fairfaxcounty.gov/boardofsupervisors/board-meeting-information";
-const MEETING_PAGE =
-  "https://www.fairfaxcounty.gov/boardofsupervisors/meetings/march-10-2026";
+const ROOT = "https://www.fairfaxcounty.gov/boardofsupervisors/board-meeting-information";
+const MEETING_PAGE = "https://www.fairfaxcounty.gov/boardofsupervisors/meetings/march-10-2026";
 const COMMITTEE_PDF =
   "https://www.fairfaxcounty.gov/boardofsupervisors/sites/boardofsupervisors/files/Assets/Documents/PDF/Legislative-Committee-Agenda.pdf";
 
@@ -271,12 +268,8 @@ Deno.test("resolveCandidates gives the ambiguous URL to the lower match_priority
   const sources = [budgetAdvertisedSource(), budgetCommitteeSource()];
   const candidates = resolveCandidates(perSourceLinks, sources);
 
-  const committeeCandidate = candidates.find((c) =>
-    c.url === BUDGET_COMMITTEE_PDF
-  );
-  const advertisedCandidate = candidates.find((c) =>
-    c.url === BUDGET_ADVERTISED_PDF
-  );
+  const committeeCandidate = candidates.find((c) => c.url === BUDGET_COMMITTEE_PDF);
+  const advertisedCandidate = candidates.find((c) => c.url === BUDGET_ADVERTISED_PDF);
 
   assert(
     committeeCandidate !== undefined,
@@ -317,17 +310,14 @@ Deno.test("discoverAllCandidates crawls each source and resolves priority across
   const pages: Record<string, string> = {
     "https://www.fairfaxcounty.gov/budget/advertised":
       `<a href="${BUDGET_ADVERTISED_PDF}">Vol 1</a>`,
-    "https://www.fairfaxcounty.gov/budget/":
-      `<a href="${BUDGET_COMMITTEE_PDF}">CIP</a>`,
+    "https://www.fairfaxcounty.gov/budget/": `<a href="${BUDGET_COMMITTEE_PDF}">CIP</a>`,
   };
   let fetchCount = 0;
   const fetchPage = (url: string): Promise<PageFetchResult> => {
     fetchCount++;
     const html = pages[url];
     return Promise.resolve(
-      html !== undefined
-        ? { ok: true, status: 200, html }
-        : { ok: false, status: 404, html: "" },
+      html !== undefined ? { ok: true, status: 200, html } : { ok: false, status: 404, html: "" },
     );
   };
 
@@ -343,9 +333,7 @@ Deno.test("discoverAllCandidates crawls each source and resolves priority across
     sortedUrls([BUDGET_ADVERTISED_PDF, BUDGET_COMMITTEE_PDF]),
   );
 
-  const committeeCandidate = candidates.find((c) =>
-    c.url === BUDGET_COMMITTEE_PDF
-  );
+  const committeeCandidate = candidates.find((c) => c.url === BUDGET_COMMITTEE_PDF);
   assertEquals(committeeCandidate?.docType, "bos_minutes");
 });
 

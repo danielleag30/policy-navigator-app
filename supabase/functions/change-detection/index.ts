@@ -133,9 +133,7 @@ class FairfaxRateLimiter {
 
     const shouldDelay = this.#anyRequestStarted;
     this.#anyRequestStarted = true;
-    this.#chain = this.#chain.then(() =>
-      shouldDelay ? sleep(FAIRFAX_REQUEST_DELAY_MS) : undefined
-    );
+    this.#chain = this.#chain.then(() => shouldDelay ? sleep(FAIRFAX_REQUEST_DELAY_MS) : undefined);
     return this.#chain;
   }
 }
@@ -369,18 +367,14 @@ function extractMunicodeJobId(payload: unknown): string {
 }
 
 function municodeSource(config: SeedConfig): ApiSource {
-  const source = apiSourcesOf(config).find((s) =>
-    s.doc_type === "municode_api"
-  );
+  const source = apiSourcesOf(config).find((s) => s.doc_type === "municode_api");
   if (!source) throw new Error("seed-sources.json missing municode_api source");
   return source;
 }
 
 function municodeLatestJobUrl(config: SeedConfig): string {
   const source = municodeSource(config);
-  const latestPattern = source.url_patterns.find((p) =>
-    p.includes("/Jobs/latest/")
-  );
+  const latestPattern = source.url_patterns.find((p) => p.includes("/Jobs/latest/"));
   if (!latestPattern || isPlaceholderPattern(latestPattern)) {
     throw new Error("seed-sources.json missing Municode /Jobs/latest seed URL");
   }
@@ -461,9 +455,7 @@ async function checkMunicodeSupplement(
   }
 
   const pendingId = await createPendingIngestion(url, "municode_api");
-  const triggered = pendingId
-    ? await triggerReconciliation(jobId, pendingId)
-    : false;
+  const triggered = pendingId ? await triggerReconciliation(jobId, pendingId) : false;
 
   return {
     checked: true,
@@ -529,16 +521,12 @@ function summarizeResults(
     pending_ingestions_created:
       results.filter((r) => r.action === "pending_ingestion_created").length +
       (municode.pending_ingestion_id ? 1 : 0),
-    active_ingestions_skipped:
-      results.filter((r) => r.action === "active_ingestion_exists").length,
-    last_checked_updates:
-      results.filter((r) => r.action === "last_checked_updated").length,
+    active_ingestions_skipped: results.filter((r) => r.action === "active_ingestion_exists").length,
+    last_checked_updates: results.filter((r) => r.action === "last_checked_updated").length,
     stale_alerts_created: staleAlertsCreated,
     discovery,
     municode,
-    errors: results.filter((r) => r.action === "error").map((r) =>
-      `${r.url}: ${r.message}`
-    ),
+    errors: results.filter((r) => r.action === "error").map((r) => `${r.url}: ${r.message}`),
     results,
   };
 }
