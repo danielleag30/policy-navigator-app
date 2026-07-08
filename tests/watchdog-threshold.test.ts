@@ -27,6 +27,16 @@ Deno.test("stuck-ingestion watchdog resets processing rows only after 10 minutes
     src.includes("updated_at < now() - stuck_threshold"),
     "watchdog query must use the stuck_threshold constant",
   );
+  assert(
+    src.includes("WITH reset AS (") &&
+      src.includes("UPDATE pending_ingestions") &&
+      src.includes("RETURNING id, updated_at AS stuck_since"),
+    "watchdog reset must use a single atomic UPDATE ... RETURNING CTE",
+  );
+  assert(
+    !src.includes("FOR rec IN") && !src.includes("LOOP") && !src.includes("WHERE id = rec.id"),
+    "watchdog reset must not use a SELECT-then-loop UPDATE pattern",
+  );
 });
 
 Deno.test("watchdog reset alert text matches the 10-minute threshold", async () => {

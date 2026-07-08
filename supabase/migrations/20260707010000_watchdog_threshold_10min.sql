@@ -10,30 +10,25 @@ SECURITY DEFINER
 AS $$
 DECLARE
   stuck_threshold CONSTANT interval := interval '10 minutes';
-  rec             record;
 BEGIN
-  FOR rec IN
-    SELECT id, updated_at
-    FROM pending_ingestions
-    WHERE status = 'processing'
-      AND updated_at < now() - stuck_threshold
-  LOOP
+  WITH reset AS (
     UPDATE pending_ingestions
     SET status     = 'pending',
         last_error = 'auto-reset: stuck in processing > 10 min',
         updated_at = now()
-    WHERE id = rec.id;
-
-    INSERT INTO pending_alerts (alert_type, details, triggered_at)
-    VALUES (
-      'ingestion_failure',
-      jsonb_build_object(
-        'reason',               'stuck_processing',
-        'pending_ingestion_id', rec.id,
-        'stuck_since',          rec.updated_at
-      ),
-      now()
-    );
-  END LOOP;
+    WHERE status = 'processing'
+      AND updated_at < now() - stuck_threshold
+    RETURNING id, updated_at AS stuck_since
+  )
+  INSERT INTO pending_alerts (alert_type, details, triggered_at)
+  SELECT
+    'ingestion_failure',
+    jsonb_build_object(
+      'reason',               'stuck_processing',
+      'pending_ingestion_id', id,
+      'stuck_since',          stuck_since
+    ),
+    now()
+  FROM reset;
 END;
 $$;
