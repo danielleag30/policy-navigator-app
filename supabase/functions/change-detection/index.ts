@@ -2,8 +2,18 @@
  * change-detection — scheduled source freshness scanner.
  *
  * Invoked by pg_cron every 6 hours (cron registration is task 2-16).
- * Reads supabase/config/seed-sources.json and enqueues PendingIngestion rows
- * when watched source content changes.
+ * Reads supabase/config/seed-sources.json. Discovery sources (bos_summary,
+ * bos_minutes, budget_pdf) are crawled via _discovery.ts — starting from each
+ * source's discovery_urls and following same-hostname links up to
+ * discovery_depth hops — to find candidate document URLs, which are then
+ * scanned exactly like any other seed URL. The municode_api source is not
+ * crawled; it keeps its own base_url/url_patterns lookup.
+ *
+ * A single invocation crawling every discovery source can run long enough on
+ * a slow real site to approach this platform's edge-function execution
+ * budget. POST ?source=<id> restricts discovery crawling to one source id
+ * (see supabase/config/seed-sources.json) for a cheaper, targeted run;
+ * municode_api and the staleness sweep still run every invocation regardless.
  */
 
 // deno-lint-ignore no-unversioned-import
@@ -12,32 +22,22 @@ import { generate as uuidv7 } from "@std/uuid/v7";
 import db from "../_shared/db-client.ts";
 import { contentHash } from "../_shared/hash.ts";
 import { error, success } from "../_shared/response.ts";
+import { elapsed, logError, logInfo, logWarn } from "../_shared/logger.ts";
 import seedConfig from "../../config/seed-sources.json" with { type: "json" };
+import {
+  type ApiSource,
+  apiSourcesOf,
+  discoverAllCandidates,
+  type DiscoveredUrl,
+  discoverySourcesOf,
+  type DocType,
+  mapWithConcurrency,
+  type PageFetchResult,
+  type SeedConfig,
+  validateSeedConfig,
+} from "./_discovery.ts";
 
-type DocType =
-  | "budget_pdf"
-  | "bos_minutes"
-  | "bos_summary"
-  | "ordinance"
-  | "municode_api";
-
-interface SeedSource {
-  doc_type: DocType;
-  label?: string;
-  base_url: string;
-  url_patterns: string[];
-}
-
-interface SeedConfig {
-  version: string;
-  sources: SeedSource[];
-}
-
-interface SeedUrl {
-  url: string;
-  docType: DocType;
-  label: string;
-}
+const FN_NAME = "change-detection";
 
 interface CurrentDocument {
   id: string;
@@ -54,7 +54,6 @@ interface UrlScanResult {
     | "pending_ingestion_created"
     | "active_ingestion_exists"
     | "last_checked_updated"
-    | "skipped_invalid_seed"
     | "error";
   pending_ingestion_id?: string;
   document_id?: string;
@@ -66,8 +65,12 @@ interface ChangeDetectionSummary {
   pending_ingestions_created: number;
   active_ingestions_skipped: number;
   last_checked_updates: number;
-  skipped_invalid_seeds: number;
   stale_alerts_created: number;
+  discovery: {
+    sources_crawled: number;
+    candidate_urls_found: number;
+    crawl_errors: number;
+  };
   municode: {
     checked: boolean;
     job_id: string | null;
@@ -79,10 +82,11 @@ interface ChangeDetectionSummary {
   results: UrlScanResult[];
 }
 
-const FAIRFAX_HEAD_DELAY_MS = 200;
+const FAIRFAX_REQUEST_DELAY_MS = 200;
 const STALE_DOCUMENT_DAYS = 14;
 const DEFAULT_USER_AGENT = "PolicyNavigator/1.0 change-detection";
 const PLACEHOLDER_PREFIX = "REPLACE_WITH_";
+const CANDIDATE_SCAN_CONCURRENCY = 8;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -90,29 +94,6 @@ function sleep(ms: number): Promise<void> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function validateSeedConfig(value: unknown): SeedConfig {
-  if (!isRecord(value) || !Array.isArray(value.sources)) {
-    throw new Error("seed-sources.json must contain a sources array");
-  }
-
-  for (const [idx, source] of value.sources.entries()) {
-    if (!isRecord(source)) {
-      throw new Error(`seed source at index ${idx} must be an object`);
-    }
-    if (
-      typeof source.doc_type !== "string" ||
-      typeof source.base_url !== "string" ||
-      !Array.isArray(source.url_patterns)
-    ) {
-      throw new Error(
-        `seed source at index ${idx} is missing doc_type/base_url/url_patterns`,
-      );
-    }
-  }
-
-  return value as unknown as SeedConfig;
 }
 
 function isPlaceholderPattern(pattern: string): boolean {
@@ -125,61 +106,35 @@ function toAbsoluteUrl(baseUrl: string, pattern: string): string {
     .toString();
 }
 
-function expandSeedUrls(
-  config: SeedConfig,
-): { urls: SeedUrl[]; skipped: UrlScanResult[] } {
-  const urls: SeedUrl[] = [];
-  const skipped: UrlScanResult[] = [];
-
-  for (const source of config.sources) {
-    for (const pattern of source.url_patterns) {
-      if (typeof pattern !== "string" || isPlaceholderPattern(pattern)) {
-        skipped.push({
-          url: String(pattern),
-          doc_type: source.doc_type,
-          action: "skipped_invalid_seed",
-          message: "placeholder or non-string seed URL pattern",
-        });
-        continue;
-      }
-
-      try {
-        urls.push({
-          url: toAbsoluteUrl(source.base_url, pattern),
-          docType: source.doc_type,
-          label: source.label ?? source.doc_type,
-        });
-      } catch (e) {
-        skipped.push({
-          url: pattern,
-          doc_type: source.doc_type,
-          action: "skipped_invalid_seed",
-          message: (e as Error).message,
-        });
-      }
-    }
-  }
-
-  return { urls, skipped };
-}
-
 function isFairfaxCountyUrl(url: string): boolean {
   const hostname = new URL(url).hostname.toLowerCase();
   return hostname === "fairfaxcounty.gov" ||
     hostname.endsWith(".fairfaxcounty.gov");
 }
 
-class FairfaxHeadLimiter {
-  #lastHeadStartedAt = 0;
+/**
+ * Shared 200ms-between-requests limiter for every fairfaxcounty.gov call this
+ * function makes — HEAD-based change checks and discovery-page GETs alike —
+ * so both request kinds count against the same budget instead of stacking.
+ *
+ * Callers may invoke waitIfNeeded concurrently (the discovery crawler fetches
+ * a whole BFS level at once so page round-trips overlap). A promise chain
+ * serializes request *start* times ≥200ms apart regardless of caller
+ * concurrency, without forcing each request's full completion to block the
+ * next one's start the way a naive "check elapsed time" limiter would under
+ * concurrent callers.
+ */
+class FairfaxRateLimiter {
+  #chain: Promise<void> = Promise.resolve();
+  #anyRequestStarted = false;
 
-  async waitIfNeeded(url: string): Promise<void> {
-    if (!isFairfaxCountyUrl(url)) return;
+  waitIfNeeded(url: string): Promise<void> {
+    if (!isFairfaxCountyUrl(url)) return Promise.resolve();
 
-    const elapsed = Date.now() - this.#lastHeadStartedAt;
-    if (this.#lastHeadStartedAt > 0 && elapsed < FAIRFAX_HEAD_DELAY_MS) {
-      await sleep(FAIRFAX_HEAD_DELAY_MS - elapsed);
-    }
-    this.#lastHeadStartedAt = Date.now();
+    const shouldDelay = this.#anyRequestStarted;
+    this.#anyRequestStarted = true;
+    this.#chain = this.#chain.then(() => shouldDelay ? sleep(FAIRFAX_REQUEST_DELAY_MS) : undefined);
+    return this.#chain;
   }
 }
 
@@ -187,6 +142,43 @@ function userAgent(): string {
   return Deno.env.get("CHANGE_DETECTION_USER_AGENT") ??
     Deno.env.get("MUNICODE_USER_AGENT") ??
     DEFAULT_USER_AGENT;
+}
+
+/**
+ * Builds a discovery PageFetcher backed by the shared rate limiter, memoized
+ * per URL so sources that share a discovery_urls root (e.g. bos_summary and
+ * bos_minutes both start at board-meeting-information) fetch it once per run.
+ */
+function buildPageFetcher(
+  limiter: FairfaxRateLimiter,
+): (url: string) => Promise<PageFetchResult> {
+  const cache = new Map<string, Promise<PageFetchResult>>();
+
+  return (url: string) => {
+    let cached = cache.get(url);
+    if (!cached) {
+      cached = fetchDiscoveryPage(url, limiter);
+      cache.set(url, cached);
+    }
+    return cached;
+  };
+}
+
+async function fetchDiscoveryPage(
+  url: string,
+  limiter: FairfaxRateLimiter,
+): Promise<PageFetchResult> {
+  await limiter.waitIfNeeded(url);
+  const resp = await fetch(url, {
+    method: "GET",
+    redirect: "follow",
+    headers: { "User-Agent": userAgent() },
+  });
+  return {
+    ok: resp.ok,
+    status: resp.status,
+    html: resp.ok ? await resp.text() : "",
+  };
 }
 
 async function getCurrentDocument(
@@ -279,7 +271,7 @@ function headMatchesStoredHash(headers: Headers, storedHash: string): boolean {
 
 async function fetchHead(
   url: string,
-  limiter: FairfaxHeadLimiter,
+  limiter: FairfaxRateLimiter,
 ): Promise<Response> {
   await limiter.waitIfNeeded(url);
   return fetch(url, {
@@ -289,7 +281,11 @@ async function fetchHead(
   });
 }
 
-async function fetchHash(url: string): Promise<string> {
+async function fetchHash(
+  url: string,
+  limiter: FairfaxRateLimiter,
+): Promise<string> {
+  await limiter.waitIfNeeded(url);
   const resp = await fetch(url, {
     method: "GET",
     redirect: "follow",
@@ -302,8 +298,8 @@ async function fetchHash(url: string): Promise<string> {
 }
 
 async function scanSeedUrl(
-  seedUrl: SeedUrl,
-  limiter: FairfaxHeadLimiter,
+  seedUrl: DiscoveredUrl,
+  limiter: FairfaxRateLimiter,
 ): Promise<UrlScanResult> {
   const current = await getCurrentDocument(seedUrl.url);
   const headResp = await fetchHead(seedUrl.url, limiter);
@@ -326,7 +322,7 @@ async function scanSeedUrl(
     };
   }
 
-  const hash = await fetchHash(seedUrl.url);
+  const hash = await fetchHash(seedUrl.url, limiter);
   if (current && hash === current.content_hash) {
     await updateLastChecked(current.id);
     return {
@@ -370,13 +366,15 @@ function extractMunicodeJobId(payload: unknown): string {
   throw new Error("Municode latest job response missing jobId/Id");
 }
 
-function municodeLatestJobUrl(config: SeedConfig): string {
-  const source = config.sources.find((s) => s.doc_type === "municode_api");
+function municodeSource(config: SeedConfig): ApiSource {
+  const source = apiSourcesOf(config).find((s) => s.doc_type === "municode_api");
   if (!source) throw new Error("seed-sources.json missing municode_api source");
+  return source;
+}
 
-  const latestPattern = source.url_patterns.find((p) =>
-    p.includes("/Jobs/latest/")
-  );
+function municodeLatestJobUrl(config: SeedConfig): string {
+  const source = municodeSource(config);
+  const latestPattern = source.url_patterns.find((p) => p.includes("/Jobs/latest/"));
   if (!latestPattern || isPlaceholderPattern(latestPattern)) {
     throw new Error("seed-sources.json missing Municode /Jobs/latest seed URL");
   }
@@ -423,10 +421,9 @@ async function triggerReconciliation(
     });
     return resp.ok;
   } catch (e) {
-    console.warn(
-      "[change-detection] reconciliation trigger failed:",
-      (e as Error).message,
-    );
+    logWarn(FN_NAME, "reconciliation trigger failed", {
+      message: (e as Error).message,
+    });
     return false;
   }
 }
@@ -458,9 +455,7 @@ async function checkMunicodeSupplement(
   }
 
   const pendingId = await createPendingIngestion(url, "municode_api");
-  const triggered = pendingId
-    ? await triggerReconciliation(jobId, pendingId)
-    : false;
+  const triggered = pendingId ? await triggerReconciliation(jobId, pendingId) : false;
 
   return {
     checked: true,
@@ -518,25 +513,20 @@ async function writeStalenessAlerts(): Promise<number> {
 function summarizeResults(
   results: UrlScanResult[],
   staleAlertsCreated: number,
+  discovery: ChangeDetectionSummary["discovery"],
   municode: ChangeDetectionSummary["municode"],
 ): ChangeDetectionSummary {
   return {
-    scanned_urls:
-      results.filter((r) => r.action !== "skipped_invalid_seed").length,
+    scanned_urls: results.length,
     pending_ingestions_created:
-      results.filter((r) => r.action === "pending_ingestion_created")
-        .length + (municode.pending_ingestion_id ? 1 : 0),
-    active_ingestions_skipped:
-      results.filter((r) => r.action === "active_ingestion_exists").length,
-    last_checked_updates:
-      results.filter((r) => r.action === "last_checked_updated").length,
-    skipped_invalid_seeds:
-      results.filter((r) => r.action === "skipped_invalid_seed").length,
+      results.filter((r) => r.action === "pending_ingestion_created").length +
+      (municode.pending_ingestion_id ? 1 : 0),
+    active_ingestions_skipped: results.filter((r) => r.action === "active_ingestion_exists").length,
+    last_checked_updates: results.filter((r) => r.action === "last_checked_updated").length,
     stale_alerts_created: staleAlertsCreated,
+    discovery,
     municode,
-    errors: results.filter((r) => r.action === "error").map((r) =>
-      `${r.url}: ${r.message}`
-    ),
+    errors: results.filter((r) => r.action === "error").map((r) => `${r.url}: ${r.message}`),
     results,
   };
 }
@@ -546,32 +536,92 @@ Deno.serve(async (req: Request) => {
     return error("NOT_FOUND", "Method not allowed", 405);
   }
 
+  const runStart = Date.now();
+
   try {
     const config = validateSeedConfig(seedConfig);
-    const { urls, skipped } = expandSeedUrls(config);
-    const limiter = new FairfaxHeadLimiter();
-    const results: UrlScanResult[] = [...skipped];
+    const requestedSourceId = new URL(req.url).searchParams.get("source");
+    const allDiscoverySources = discoverySourcesOf(config);
+    const discoverySources = requestedSourceId
+      ? allDiscoverySources.filter((s) => s.id === requestedSourceId)
+      : allDiscoverySources;
 
-    for (const seedUrl of urls.filter((u) => u.docType !== "municode_api")) {
-      try {
-        results.push(await scanSeedUrl(seedUrl, limiter));
-      } catch (e) {
-        const message = (e as Error).message;
-        console.error("[change-detection] URL scan failed:", message);
-        results.push({
-          url: seedUrl.url,
-          doc_type: seedUrl.docType,
-          action: "error",
-          message,
-        });
-        await writePendingAlert({
-          reason: "change_detection_source_error",
-          url: seedUrl.url,
-          doc_type: seedUrl.docType,
-          message,
-        });
-      }
+    if (requestedSourceId && discoverySources.length === 0) {
+      return error(
+        "NOT_FOUND",
+        `Unknown discovery source id: ${requestedSourceId}`,
+        404,
+      );
     }
+
+    const limiter = new FairfaxRateLimiter();
+    const fetchPage = buildPageFetcher(limiter);
+
+    const { candidates, errors: crawlErrors } = await discoverAllCandidates(
+      discoverySources,
+      fetchPage,
+    );
+    logInfo(FN_NAME, "discovery crawl complete", {
+      sources_crawled: discoverySources.length,
+      candidate_urls_found: candidates.length,
+      crawl_errors: crawlErrors.length,
+      elapsed_ms: elapsed(runStart),
+    });
+
+    const results: UrlScanResult[] = [];
+
+    for (const crawlErr of crawlErrors) {
+      results.push({
+        url: crawlErr.url,
+        doc_type: crawlErr.docType,
+        action: "error",
+        message: crawlErr.message,
+      });
+      await writePendingAlert({
+        reason: "change_detection_discovery_error",
+        url: crawlErr.url,
+        source_id: crawlErr.sourceId,
+        doc_type: crawlErr.docType,
+        message: crawlErr.message,
+      });
+    }
+
+    // Bounded concurrency — a real source page can yield 100+ PDF candidates,
+    // and scanning them one at a time (each with its own HEAD/GET round trip)
+    // was the dominant cost in a live run, not the discovery crawl itself.
+    // Firing them all at once via an unbounded Promise.all instead tripped
+    // this platform's edge-function resource limit, so this uses the same
+    // bounded worker-pool the crawler uses. The shared limiter still staggers
+    // actual fairfaxcounty.gov request starts ≥200ms apart regardless.
+    results.push(
+      ...await mapWithConcurrency(
+        candidates,
+        CANDIDATE_SCAN_CONCURRENCY,
+        async (candidate) => {
+          try {
+            return await scanSeedUrl(candidate, limiter);
+          } catch (e) {
+            const message = (e as Error).message;
+            logError(FN_NAME, "URL scan failed", {
+              url: candidate.url,
+              message,
+            });
+            await writePendingAlert({
+              reason: "change_detection_source_error",
+              url: candidate.url,
+              doc_type: candidate.docType,
+              message,
+            });
+            return {
+              url: candidate.url,
+              doc_type: candidate.docType,
+              action: "error" as const,
+              message,
+            };
+          }
+        },
+      ),
+    );
 
     let municode: ChangeDetectionSummary["municode"] = {
       checked: false,
@@ -585,7 +635,7 @@ Deno.serve(async (req: Request) => {
       municode = await checkMunicodeSupplement(config);
     } catch (e) {
       const message = (e as Error).message;
-      console.error("[change-detection] Municode check failed:", message);
+      logError(FN_NAME, "Municode check failed", { message });
       results.push({
         url: "municode_api",
         doc_type: "municode_api",
@@ -600,9 +650,17 @@ Deno.serve(async (req: Request) => {
     }
 
     const staleAlertsCreated = await writeStalenessAlerts();
-    return success(summarizeResults(results, staleAlertsCreated, municode));
+    const discovery = {
+      sources_crawled: discoverySources.length,
+      candidate_urls_found: candidates.length,
+      crawl_errors: crawlErrors.length,
+    };
+
+    return success(
+      summarizeResults(results, staleAlertsCreated, discovery, municode),
+    );
   } catch (e) {
-    console.error("[change-detection] fatal error:", (e as Error).message);
+    logError(FN_NAME, "fatal error", { message: (e as Error).message });
     return error("INGESTION_FAILED", "Change detection failed", 500);
   }
 });
