@@ -1,3 +1,4 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
 docling>=2.5.0,<3.0.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0

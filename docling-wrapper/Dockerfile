@@ -7,11 +7,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /home/user
 
 COPY requirements.txt .
-# CPU-only torch first: sentence-transformers' unpinned torch dependency
-# would otherwise pull the default (CUDA) wheel, which is ~2GB heavier and
-# useless on the free CPU-only Spaces tier.
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
-    && pip install --no-cache-dir -r requirements.txt
+# requirements.txt sets --extra-index-url to the PyTorch CPU wheel index so
+# torch and torchvision resolve together, from the same index, in this one
+# pip pass -- splitting torch into its own install step caused an ABI
+# mismatch (torch from the CPU index, torchvision from default PyPI) that
+# broke `torchvision::nms` at import time.
+RUN pip install --no-cache-dir -r requirements.txt
 
 ENV DOCLING_ARTIFACTS_PATH=/home/user/.docling/models
 ENV TOKENIZERS_PARALLELISM=false
