@@ -28,6 +28,27 @@ export interface DiscoverySource {
   discovery_depth: number;
   discovery_note?: string;
   allow_patterns: string[];
+  /**
+   * Restricts which same-hostname links get followed to the next crawl depth
+   * to those starting with this prefix (e.g. an origin+section like
+   * "https://www.fairfaxcounty.gov/budget/"). Does not affect which links are
+   * recorded as discovered candidates — only which pages the crawler recurses
+   * into. Omit to follow every same-hostname link, as before.
+   */
+  discovery_link_prefix?: string;
+  /**
+   * Restricts recursion to links whose URL ends in a 4-digit year
+   * (e.g. "...-march-10-2026") of at least this value. Links with no trailing
+   * year are unaffected (always followed, subject to the other checks) since
+   * they're typically a handful of evergreen section pages, not per-item
+   * archive pages. Intended for sources whose per-item pages are individually
+   * dated and go back many years further than the product needs to track for
+   * change detection — trades off never discovering older archived items for
+   * keeping each run's page-fetch and candidate-scan volume inside the edge
+   * function's execution budget. Omit to follow every dated link regardless
+   * of year, as before.
+   */
+  discovery_follow_min_year?: number;
   /** Lower number wins when a URL matches more than one source's allow_patterns. */
   match_priority?: number;
   casing_note?: string;
@@ -119,6 +140,22 @@ export function validateSeedConfig(value: unknown): SeedConfig {
           `discovery seed source at index ${idx} must have id/discovery_depth/allow_patterns`,
         );
       }
+      if (
+        raw.discovery_link_prefix !== undefined &&
+        typeof raw.discovery_link_prefix !== "string"
+      ) {
+        throw new Error(
+          `discovery seed source at index ${idx} has a non-string discovery_link_prefix`,
+        );
+      }
+      if (
+        raw.discovery_follow_min_year !== undefined &&
+        typeof raw.discovery_follow_min_year !== "number"
+      ) {
+        throw new Error(
+          `discovery seed source at index ${idx} has a non-number discovery_follow_min_year`,
+        );
+      }
     } else if (!hasApiShape) {
       throw new Error(
         `seed source at index ${idx} must have either discovery_urls+discovery_depth+allow_patterns ` +
@@ -197,6 +234,22 @@ function looksLikeDocumentUrl(url: string): boolean {
   }
 }
 
+/** Extracts a trailing "-YYYY" year from a URL's path, e.g. ".../meeting-march-10-2026" → 2026. */
+function trailingYearOf(url: string): number | null {
+  try {
+    const match = new URL(url).pathname.match(/-(\d{4})$/);
+    return match ? Number(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function meetsFollowRecency(url: string, source: DiscoverySource): boolean {
+  if (source.discovery_follow_min_year === undefined) return true;
+  const year = trailingYearOf(url);
+  return year === null || year >= source.discovery_follow_min_year;
+}
+
 // ── Crawl ─────────────────────────────────────────────────────────────────────
 
 const DEFAULT_CRAWL_CONCURRENCY = 8;
@@ -216,6 +269,27 @@ const DEFAULT_CRAWL_CONCURRENCY = 8;
  * hundreds of pages (a real county listing page going back 15+ years produced
  * 300+ unique same-host links to follow — firing them all via one unbounded
  * Promise.all tripped this platform's edge-function resource limit).
+ *
+ * discovery_link_prefix (optional) further restricts which of those
+ * same-hostname links get queued for the next depth to ones under a given
+ * origin+section, e.g. keeping a source's crawl inside "/budget/" instead of
+ * following every shared site-nav link the county's page template repeats on
+ * every page (confirmed live: 265 of 381 links found on the
+ * budget-committee-meetings listing page are global nav unrelated to any
+ * budget content). Cutting those out reduces both the page-fetch count and
+ * the queue noise that competes with real meeting pages for maxPages room.
+ *
+ * discovery_follow_min_year (optional) additionally skips recursing into
+ * per-item pages older than a given year, for sources whose listing page
+ * covers many more years of dated archive pages than change detection needs
+ * to re-verify every run. Cutting those out shrinks not just this crawl but
+ * the downstream candidate-scan phase (a HEAD+GET per discovered document,
+ * serialized through the shared Fairfax rate limiter) enough to fit the
+ * whole invocation inside the edge function's wall-clock budget — confirmed
+ * live against budget_committee_meetings: without it, the candidate scan
+ * alone for all 89 archived meetings back to 2008 pushed a single invocation
+ * past the platform's 150s idle timeout even after discovery_link_prefix
+ * removed the earlier WORKER_RESOURCE_LIMIT failure.
  */
 export async function crawlDiscoverySource(
   source: DiscoverySource,
@@ -257,11 +331,15 @@ export async function crawlDiscoverySource(
 
         const isTerminalCandidate = matchesAllowPattern(link, source) ||
           looksLikeDocumentUrl(link);
+        const inCrawlScope = source.discovery_link_prefix === undefined ||
+          link.startsWith(source.discovery_link_prefix);
         if (
           depth < source.discovery_depth &&
           !visited.has(link) &&
           !isTerminalCandidate &&
           sameHostname(link, url) &&
+          inCrawlScope &&
+          meetsFollowRecency(link, source) &&
           visited.size < maxPages
         ) {
           visited.add(link);

@@ -205,6 +205,168 @@ Deno.test("crawlDiscoverySource records an error for a failed page fetch", async
   assertEquals(errors[0].message, "HTTP 404");
 });
 
+// ── discovery_link_prefix scoping ─────────────────────────────────────────────
+
+const BUDGET_ROOT = "https://www.fairfaxcounty.gov/budget/budget-committee-meetings";
+const BUDGET_MEETING_PAGE =
+  "https://www.fairfaxcounty.gov/budget/board-supervisors-budget-committee-meeting-march-10-2026";
+const BUDGET_MEETING_PDF =
+  "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/budget%20committee%20meeting/2026/mar-10/CIP.pdf";
+const GLOBAL_NAV_LINK = "https://www.fairfaxcounty.gov/elections/";
+const GLOBAL_NAV_ONLY_REACHABLE_LINK = "https://www.fairfaxcounty.gov/elections/absentee";
+
+function budgetCommitteeMeetingSource(): DiscoverySource {
+  return {
+    id: "budget_committee_meeting",
+    doc_type: "bos_minutes",
+    discovery_urls: [BUDGET_ROOT],
+    discovery_depth: 2,
+    allow_patterns: [
+      "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/budget%20committee%20meeting/",
+    ],
+    discovery_link_prefix: "https://www.fairfaxcounty.gov/budget/",
+  };
+}
+
+const budgetListingPages = {
+  [BUDGET_ROOT]:
+    `<a href="${BUDGET_MEETING_PAGE}">March 10 meeting</a><a href="${GLOBAL_NAV_LINK}">Elections</a>`,
+  [BUDGET_MEETING_PAGE]: `<a href="${BUDGET_MEETING_PDF}">CIP</a>`,
+  [GLOBAL_NAV_LINK]: `<a href="${GLOBAL_NAV_ONLY_REACHABLE_LINK}">Absentee</a>`,
+};
+
+Deno.test("crawlDiscoverySource does not queue a same-hostname link outside discovery_link_prefix", async () => {
+  const source = budgetCommitteeMeetingSource();
+  const { discoveredLinks } = await crawlDiscoverySource(
+    source,
+    fakeFetcher(budgetListingPages),
+  );
+
+  assert(
+    discoveredLinks.has(GLOBAL_NAV_LINK),
+    "the out-of-scope nav link is still recorded as discovered",
+  );
+  assert(
+    !discoveredLinks.has(GLOBAL_NAV_ONLY_REACHABLE_LINK),
+    "the crawler must not have fetched the out-of-scope nav page, so links only reachable through it are never seen",
+  );
+});
+
+Deno.test("crawlDiscoverySource still follows links inside discovery_link_prefix", async () => {
+  const source = budgetCommitteeMeetingSource();
+  const { discoveredLinks, errors } = await crawlDiscoverySource(
+    source,
+    fakeFetcher(budgetListingPages),
+  );
+
+  assertEquals(errors, []);
+  assert(
+    discoveredLinks.has(BUDGET_MEETING_PDF),
+    "expected the depth-2 PDF under the in-scope meeting page to be discovered",
+  );
+});
+
+Deno.test("crawlDiscoverySource without discovery_link_prefix follows every same-hostname link (unchanged default)", async () => {
+  const source: DiscoverySource = {
+    ...budgetCommitteeMeetingSource(),
+    discovery_link_prefix: undefined,
+  };
+  const { discoveredLinks } = await crawlDiscoverySource(
+    source,
+    fakeFetcher(budgetListingPages),
+  );
+
+  assert(
+    discoveredLinks.has(GLOBAL_NAV_ONLY_REACHABLE_LINK),
+    "with no prefix set, the crawler should still follow out-of-section links as before",
+  );
+});
+
+// ── discovery_follow_min_year scoping ─────────────────────────────────────────
+
+const OLD_MEETING_PAGE =
+  "https://www.fairfaxcounty.gov/budget/board-supervisors-budget-committee-meeting-march-8-2008";
+const OLD_MEETING_PDF =
+  "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/budget%20committee%20meeting/2008/mar-8/Agenda.pdf";
+const UNDATED_SECTION_LINK = "https://www.fairfaxcounty.gov/budget/budget-archives";
+const UNDATED_SECTION_ONLY_REACHABLE_LINK =
+  "https://www.fairfaxcounty.gov/budget/budget-archives/older-index";
+
+const budgetListingPagesWithOldMeeting = {
+  ...budgetListingPages,
+  [BUDGET_ROOT]: `<a href="${BUDGET_MEETING_PAGE}">March 10 2026 meeting</a>` +
+    `<a href="${OLD_MEETING_PAGE}">March 8 2008 meeting</a>` +
+    `<a href="${UNDATED_SECTION_LINK}">Budget archives</a>` +
+    `<a href="${GLOBAL_NAV_LINK}">Elections</a>`,
+  [OLD_MEETING_PAGE]: `<a href="${OLD_MEETING_PDF}">Agenda</a>`,
+  [UNDATED_SECTION_LINK]: `<a href="${UNDATED_SECTION_ONLY_REACHABLE_LINK}">Older</a>`,
+};
+
+Deno.test("crawlDiscoverySource does not follow a dated meeting page older than discovery_follow_min_year", async () => {
+  const source: DiscoverySource = {
+    ...budgetCommitteeMeetingSource(),
+    discovery_follow_min_year: 2024,
+  };
+  const { discoveredLinks } = await crawlDiscoverySource(
+    source,
+    fakeFetcher(budgetListingPagesWithOldMeeting),
+  );
+
+  assert(
+    discoveredLinks.has(OLD_MEETING_PAGE),
+    "the old meeting page's own link is still recorded as discovered",
+  );
+  assert(
+    !discoveredLinks.has(OLD_MEETING_PDF),
+    "the crawler must not have followed the too-old meeting page, so its PDF is never seen",
+  );
+});
+
+Deno.test("crawlDiscoverySource still follows a dated meeting page at or after discovery_follow_min_year", async () => {
+  const source: DiscoverySource = {
+    ...budgetCommitteeMeetingSource(),
+    discovery_follow_min_year: 2024,
+  };
+  const { discoveredLinks } = await crawlDiscoverySource(
+    source,
+    fakeFetcher(budgetListingPagesWithOldMeeting),
+  );
+
+  assert(
+    discoveredLinks.has(BUDGET_MEETING_PDF),
+    "expected the 2026 meeting's PDF to still be discovered",
+  );
+});
+
+Deno.test("crawlDiscoverySource still follows undated section links regardless of discovery_follow_min_year", async () => {
+  const source: DiscoverySource = {
+    ...budgetCommitteeMeetingSource(),
+    discovery_follow_min_year: 2024,
+  };
+  const { discoveredLinks } = await crawlDiscoverySource(
+    source,
+    fakeFetcher(budgetListingPagesWithOldMeeting),
+  );
+
+  assert(
+    discoveredLinks.has(UNDATED_SECTION_ONLY_REACHABLE_LINK),
+    "a link with no trailing year is unaffected by discovery_follow_min_year",
+  );
+});
+
+Deno.test("crawlDiscoverySource without discovery_follow_min_year follows dated pages of any year (unchanged default)", async () => {
+  const source = budgetCommitteeMeetingSource();
+  const { discoveredLinks } = await crawlDiscoverySource(
+    source,
+    fakeFetcher(budgetListingPagesWithOldMeeting),
+  );
+
+  assert(
+    discoveredLinks.has(OLD_MEETING_PDF),
+    "with no min year set, the crawler should still follow old dated pages as before",
+  );
+});
+
 // ── allow_pattern filtering + match_priority resolution ──────────────────────
 
 const BUDGET_ADVERTISED_PDF =
