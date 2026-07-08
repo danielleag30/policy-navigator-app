@@ -1,34 +1,100 @@
 {
   "version": "1",
+  "scraper_notes": [
+    "Preserve exact URL casing from source HTML — Fairfax uses both Assets/documents/ and Assets/Documents/ depending on section and fiscal year.",
+    "Board PDFs live under two distinct roots — both must be watched.",
+    "Budget casing differs by phase: advertised = lowercase documents, adopted = uppercase Documents.",
+    "Committee PDFs under boardofsupervisors are nested within individual meeting-date pages. Discovery requires a multi-hop crawl.",
+    "Budget committee meeting PDFs live under the budget subdomain at Assets/documents/budget%20committee%20meeting/. Match this pattern BEFORE the broader Assets/documents/ pattern to avoid misclassification as budget_pdf."
+  ],
   "sources": [
     {
-      "doc_type": "bos_minutes",
-      "label": "Fairfax County Board of Supervisors Minutes",
-      "base_url": "https://www.fairfaxcounty.gov",
-      "url_patterns": [
-        "REPLACE_WITH_BOS_MINUTES_URL_PATTERN"
-      ],
-      "notes": "Pattern should match minutes pages, e.g. /board/minutes or similar path"
-    },
-    {
+      "id": "bos_summary",
       "doc_type": "bos_summary",
-      "label": "Fairfax County Board of Supervisors Summaries",
-      "base_url": "https://www.fairfaxcounty.gov",
-      "url_patterns": [
-        "REPLACE_WITH_BOS_SUMMARY_URL_PATTERN"
+      "label": "Full Board Meeting Summaries and Board Packages",
+      "discovery_urls": [
+        "https://www.fairfaxcounty.gov/boardofsupervisors/board-meeting-information"
       ],
-      "notes": "Pattern should match summary/agenda pages"
+      "discovery_depth": 2,
+      "allow_patterns": [
+        "https://www.fairfaxcounty.gov/boardofsupervisors/sites/boardofsupervisors/files/Assets/meeting-materials/"
+      ],
+      "examples": [
+        "https://www.fairfaxcounty.gov/boardofsupervisors/sites/boardofsupervisors/files/Assets/meeting-materials/2026/June23-Board-Package.pdf",
+        "https://www.fairfaxcounty.gov/boardofsupervisors/sites/boardofsupervisors/files/Assets/meeting-materials/2026/06-09-26%20Final%20Summary%20%28Accessible%29.pdf"
+      ]
     },
     {
+      "id": "bos_minutes",
+      "doc_type": "bos_minutes",
+      "label": "Board Committee Minutes, Agendas, and Materials (boardofsupervisors domain)",
+      "discovery_urls": [
+        "https://www.fairfaxcounty.gov/boardofsupervisors/board-meeting-information"
+      ],
+      "discovery_depth": 2,
+      "discovery_note": "Committee PDFs are nested within individual meeting-date pages. The crawler must follow meeting schedule links into individual pages before extracting PDF links.",
+      "allow_patterns": [
+        "https://www.fairfaxcounty.gov/boardofsupervisors/sites/boardofsupervisors/files/Assets/Documents/PDF/"
+      ],
+      "examples": [
+        "https://www.fairfaxcounty.gov/boardofsupervisors/sites/boardofsupervisors/files/Assets/Documents/PDF/Meeting-Minutes-March-10-2026.pdf",
+        "https://www.fairfaxcounty.gov/boardofsupervisors/sites/boardofsupervisors/files/Assets/Documents/PDF/Legislative%20Committee/Legislative-Committee-Agenda-1.23.2026.pdf"
+      ]
+    },
+    {
+      "id": "budget_committee_meeting",
+      "doc_type": "bos_minutes",
+      "label": "Budget Committee Meeting Records (budget domain)",
+      "discovery_urls": [
+        "https://www.fairfaxcounty.gov/budget/"
+      ],
+      "discovery_depth": 2,
+      "discovery_note": "Budget committee meeting materials are linked from the budget homepage.",
+      "allow_patterns": [
+        "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/budget%20committee%20meeting/"
+      ],
+      "match_priority": 1,
+      "examples": [
+        "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/budget%20committee%20meeting/2026/mar-10/2026_March_10_BudgetComm_CIP.pdf"
+      ]
+    },
+    {
+      "id": "budget_pdf_advertised",
       "doc_type": "budget_pdf",
-      "label": "Fairfax County Budget PDFs",
-      "base_url": "https://www.fairfaxcounty.gov",
-      "url_patterns": [
-        "REPLACE_WITH_BUDGET_PDF_URL_PATTERN"
+      "label": "FY Budget PDFs — Advertised",
+      "discovery_urls": [
+        "https://www.fairfaxcounty.gov/budget/advertised"
       ],
-      "notes": "Pattern should match budget PDF download paths"
+      "discovery_depth": 1,
+      "allow_patterns": [
+        "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/"
+      ],
+      "match_priority": 2,
+      "casing_note": "Advertised budget uses lowercase documents.",
+      "examples": [
+        "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/fy2027/advertised/overview/Advertised%20Budget%20Summary.pdf",
+        "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/fy2027/advertised/volume%201.pdf"
+      ]
     },
     {
+      "id": "budget_pdf_adopted",
+      "doc_type": "budget_pdf",
+      "label": "FY Budget PDFs — Adopted",
+      "discovery_urls": [
+        "https://www.fairfaxcounty.gov/budget/adopted"
+      ],
+      "discovery_depth": 1,
+      "allow_patterns": [
+        "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/Documents/"
+      ],
+      "match_priority": 2,
+      "casing_note": "Adopted budget uses uppercase Documents.",
+      "examples": [
+        "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/Documents/fy2026/adopted/Overview.pdf"
+      ]
+    },
+    {
+      "id": "municode_api",
       "doc_type": "municode_api",
       "label": "Municode API — Fairfax County Ordinances",
       "base_url": "https://api.municode.com",
