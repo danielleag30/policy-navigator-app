@@ -6,6 +6,14 @@ Accepts a document URL via POST /process and returns a flat JSON array of
 text blocks in reading order. The Edge Function (task 2-3) depends on this
 stable contract; it never touches the raw DoclingDocument structure.
 
+Also serves POST /embed: text-in, vector-out embedding generation via the
+gte-small sentence-transformers model. Added so ordinance_provisions
+embedding (task 2-6) can run as an async HTTP call instead of the in-process
+Supabase.ai.Session('gte-small') — Edge Function CPU-time budget only counts
+CPU-bound work, not time spent awaiting a fetch(), so moving embedding
+generation here removes the ~2s CPU ceiling that was throttling that path to
+1-3 rows per invocation against real ordinance content.
+
 CONTRACT (see CONTRACT.md):
   POST /process  {"url": "<publicly reachable PDF URL>"}
   -> {
@@ -21,6 +29,13 @@ CONTRACT (see CONTRACT.md):
        "block_count":     <int>
      }
 
+  POST /embed  {"texts": ["<str>", ...]}
+  -> {
+       "embeddings": [[<float> x 384], ...],
+       "model":      "thenlper/gte-small",
+       "dimensions": 384
+     }
+
   GET /health
   -> {"ok": true}
 
@@ -31,6 +46,10 @@ Design decisions:
   - Only TextItem subclasses emitted; TableItem/FigureItem silently skipped.
   - Models pre-downloaded at Docker build time (see Dockerfile).
   - TOKENIZERS_PARALLELISM=false suppresses HF warnings.
+  - Embedding model (thenlper/gte-small) mirrors the dimensionality (384d)
+    and pooling/normalization (mean pool + L2 normalize) of the
+    Supabase.ai.Session('gte-small') call it replaces for ordinance_provisions,
+    so existing stored vectors and new ones remain comparable.
 """
 
 import io
@@ -44,7 +63,8 @@ from typing import Optional
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sentence_transformers import SentenceTransformer
 
 # Suppress HuggingFace tokenizer parallelism warning on CPU
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -76,6 +96,17 @@ _CONVERTER = DocumentConverter(
     format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=_PDF_OPTIONS)}
 )
 
+# Single embedding model instance shared across requests (see Dockerfile for
+# the build-time pre-download that avoids paying this load cost per request).
+_EMBED_MODEL_NAME = "thenlper/gte-small"
+_EMBED_MODEL = SentenceTransformer(_EMBED_MODEL_NAME, device="cpu")
+_EMBED_DIMENSIONS = _EMBED_MODEL.get_sentence_embedding_dimension()
+
+# Caller (embedOrdinanceProvisionsBatched) sends one row at a time today, but
+# the endpoint accepts a batch to avoid a request-per-text protocol. Bounded
+# so a misbehaving caller can't hand this free CPU tier an unbounded batch.
+MAX_EMBED_TEXTS_PER_REQUEST = 100
+
 app = FastAPI(
     title="Policy Navigator — Docling Wrapper",
     version=importlib.metadata.version("docling"),
@@ -84,6 +115,10 @@ app = FastAPI(
 
 class ProcessRequest(BaseModel):
     url: str
+
+
+class EmbedRequest(BaseModel):
+    texts: list[str] = Field(..., min_length=1, max_length=MAX_EMBED_TEXTS_PER_REQUEST)
 
 
 
@@ -122,6 +157,30 @@ def _validate_url(url: str) -> None:
 @app.get("/health")
 async def health():
     return {"ok": True}
+
+
+@app.post("/embed")
+async def embed_texts(req: EmbedRequest):
+    """Embed a batch of texts with gte-small; mean-pooled + L2-normalized."""
+    if any(not t.strip() for t in req.texts):
+        raise HTTPException(status_code=422, detail="texts must be non-empty strings")
+
+    try:
+        vectors = _EMBED_MODEL.encode(
+            req.texts,
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+        )
+    except Exception as exc:
+        log.error(f"Embedding error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500,
+            detail=f"Embedding error: {type(exc).__name__}: {exc}")
+
+    return JSONResponse({
+        "embeddings": vectors.tolist(),
+        "model": _EMBED_MODEL_NAME,
+        "dimensions": _EMBED_DIMENSIONS,
+    })
 
 
 @app.post("/process")

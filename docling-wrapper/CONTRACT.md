@@ -83,6 +83,49 @@ Convert a publicly-accessible PDF URL to an ordered array of text blocks.
 
 No stack traces are included in error responses.
 
+### POST /embed
+
+Embed a batch of texts with the gte-small sentence-transformers model.
+Added for ordinance_provisions embedding (task 2-6 follow-up): runs as an
+async HTTP call from the Edge Function instead of the in-process
+`Supabase.ai.Session('gte-small')`, since Edge Function CPU-time budget does
+not count time spent awaiting a fetch.
+
+#### Request
+
+```json
+{
+  "texts": ["Section 1. Purpose...", "Section 2. Definitions..."]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|--------------|
+| `texts` | string[] | ✅ | 1-100 non-empty strings per request. |
+
+#### Response 200
+
+```json
+{
+  "embeddings": [[0.01, -0.02, ...], [0.03, 0.01, ...]],
+  "model": "thenlper/gte-small",
+  "dimensions": 384
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `embeddings` | float[][] | One 384-dimensional vector per input text, in input order. Mean-pooled, L2-normalized. |
+| `model` | string | HF model id used. |
+| `dimensions` | integer | Length of each embedding vector (384). |
+
+#### Error responses
+
+| Status | Body | Condition |
+|--------|------|-----------|
+| 422 | `{"detail": [...]}` | `texts` missing, empty, >100 items, or contains an empty/whitespace-only string |
+| 500 | `{"detail": "string"}` | Model inference error |
+
 ## Versioning
 
 `docling_version` in the response reflects the installed Docling library version.

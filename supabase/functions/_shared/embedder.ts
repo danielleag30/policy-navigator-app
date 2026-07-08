@@ -98,11 +98,82 @@ export async function generateEmbeddings(
     results.push(...batchResults);
 
     if (i + EMBED_BATCH_SIZE < texts.length) {
-      await new Promise<void>((resolve) => setTimeout(resolve, EMBED_BATCH_PAUSE_MS));
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, EMBED_BATCH_PAUSE_MS)
+      );
     }
   }
 
   return results;
+}
+
+/** Hard-abort budget for a single /embed HTTP call, mirroring the Docling wrapper's fetch pattern. */
+export const EMBED_HTTP_TIMEOUT_MS = 20_000;
+
+/** Response shape returned by the docling-wrapper /embed endpoint. */
+interface EmbedHttpResponse {
+  embeddings: number[][];
+  model: string;
+  dimensions: number;
+}
+
+/**
+ * Generate embeddings via an external HTTP endpoint (the docling-wrapper HF
+ * Space's POST /embed) instead of the in-process Supabase.ai.Session.
+ *
+ * Mirrors pdfBranch's Docling call: AbortController-bounded fetch, thrown
+ * DOMException AbortError distinguished from other failures. Unlike
+ * generateEmbeddings (session-based), a failure here fails the whole batch
+ * rather than per-text -- the caller sends one text at a time today, so this
+ * keeps the null-on-failure contract identical without adding partial-batch
+ * bookkeeping this module doesn't otherwise need.
+ *
+ * Async I/O (awaiting fetch) does not count against the Edge Function's
+ * CPU-time budget, unlike the local session.run() call this replaces for
+ * ordinance_provisions -- see ordinance-embedder.ts for why that mattered.
+ */
+export async function generateEmbeddingsHttp(
+  embedUrl: string,
+  texts: string[],
+  timeoutMs: number = EMBED_HTTP_TIMEOUT_MS,
+): Promise<Array<number[] | null>> {
+  const truncated = texts.map((t) => truncateForEmbedding(t));
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(`${embedUrl}/embed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ texts: truncated }),
+      signal: controller.signal,
+    });
+    if (!resp.ok) {
+      console.error(`[embedder] /embed endpoint returned HTTP ${resp.status}`);
+      return texts.map(() => null);
+    }
+
+    const payload = await resp.json() as EmbedHttpResponse;
+    if (
+      !Array.isArray(payload.embeddings) ||
+      payload.embeddings.length !== texts.length
+    ) {
+      console.error(
+        `[embedder] /embed endpoint returned malformed payload (expected ${texts.length} vectors)`,
+      );
+      return texts.map(() => null);
+    }
+    return payload.embeddings;
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      console.error(`[embedder] /embed call timed out after ${timeoutMs}ms`);
+    } else {
+      console.error(`[embedder] /embed call failed: ${(e as Error).message}`);
+    }
+    return texts.map(() => null);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -149,7 +220,9 @@ export async function persistEmbeddings<T extends EmbeddableRow>(
     );
 
     if (i + EMBED_BATCH_SIZE < rows.length) {
-      await new Promise<void>((resolve) => setTimeout(resolve, EMBED_BATCH_PAUSE_MS));
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, EMBED_BATCH_PAUSE_MS)
+      );
     }
   }
 }
