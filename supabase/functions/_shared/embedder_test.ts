@@ -3,6 +3,7 @@ import {
   type EmbeddingWriteDb,
   generateEmbeddings,
   generateEmbeddingsHttp,
+  generateEmbeddingsHttpBatched,
   MAX_EMBEDDING_TOKENS,
   persistEmbeddings,
   truncateForEmbedding,
@@ -219,7 +220,8 @@ function installFetch(
 ): () => void {
   const original = globalThis.fetch;
   // deno-lint-ignore no-explicit-any
-  globalThis.fetch = ((url: any, init: any) => handler(String(url), init)) as any;
+  globalThis.fetch =
+    ((url: any, init: any) => handler(String(url), init)) as any;
   return () => {
     globalThis.fetch = original;
   };
@@ -286,7 +288,9 @@ Deno.test("generateEmbeddingsHttp truncates outlier text before sending", async 
 });
 
 Deno.test("generateEmbeddingsHttp returns nulls (does not throw) on a non-2xx response", async () => {
-  const restore = installFetch(() => jsonResponse({ detail: "server error" }, 500));
+  const restore = installFetch(() =>
+    jsonResponse({ detail: "server error" }, 500)
+  );
 
   let result: Array<number[] | null>;
   try {
@@ -350,6 +354,94 @@ Deno.test("generateEmbeddingsHttp returns nulls when the response vector count d
   }
 
   assertEquals(result, [null, null]);
+});
+
+Deno.test("generateEmbeddingsHttpBatched sends a single request when under the batch size", async () => {
+  let requestCount = 0;
+  const restore = installFetch((_url, init) => {
+    requestCount++;
+    const { texts } = JSON.parse(init.body as string) as { texts: string[] };
+    return jsonResponse({
+      embeddings: texts.map((_t, i) => [i]),
+      model: "thenlper/gte-small",
+      dimensions: 1,
+    });
+  });
+
+  let result: Array<number[] | null>;
+  try {
+    result = await generateEmbeddingsHttpBatched(
+      EMBED_URL,
+      ["a", "b", "c"],
+      50,
+    );
+  } finally {
+    restore();
+  }
+
+  assertEquals(requestCount, 1);
+  assertEquals(result, [[0], [1], [2]]);
+});
+
+Deno.test("generateEmbeddingsHttpBatched splits a text array larger than the batch size across multiple requests, preserving order", async () => {
+  const seenBatchSizes: number[] = [];
+  const restore = installFetch((_url, init) => {
+    const { texts } = JSON.parse(init.body as string) as { texts: string[] };
+    seenBatchSizes.push(texts.length);
+    return jsonResponse({
+      embeddings: texts.map((t) => [Number(t.replace("text-", ""))]),
+      model: "thenlper/gte-small",
+      dimensions: 1,
+    });
+  });
+
+  const texts = Array.from({ length: 125 }, (_, i) => `text-${i}`);
+
+  let result: Array<number[] | null>;
+  try {
+    result = await generateEmbeddingsHttpBatched(EMBED_URL, texts, 50);
+  } finally {
+    restore();
+  }
+
+  assertEquals(seenBatchSizes, [50, 50, 25]);
+  assertEquals(result.length, 125);
+  for (let i = 0; i < 125; i++) {
+    assertEquals(
+      result[i],
+      [i],
+      `embedding at index ${i} should stay in order`,
+    );
+  }
+});
+
+Deno.test("generateEmbeddingsHttpBatched: a failed batch yields nulls for that batch only, sibling batches unaffected", async () => {
+  let call = 0;
+  const restore = installFetch((_url, init) => {
+    call++;
+    const { texts } = JSON.parse(init.body as string) as { texts: string[] };
+    if (call === 2) {
+      return jsonResponse({ detail: "server error" }, 500);
+    }
+    return jsonResponse({
+      embeddings: texts.map(() => [1]),
+      model: "thenlper/gte-small",
+      dimensions: 1,
+    });
+  });
+
+  const texts = Array.from({ length: 30 }, (_, i) => `text-${i}`);
+
+  let result: Array<number[] | null>;
+  try {
+    result = await generateEmbeddingsHttpBatched(EMBED_URL, texts, 10);
+  } finally {
+    restore();
+  }
+
+  assertEquals(result.slice(0, 10), Array.from({ length: 10 }, () => [1]));
+  assertEquals(result.slice(10, 20), Array.from({ length: 10 }, () => null));
+  assertEquals(result.slice(20, 30), Array.from({ length: 10 }, () => [1]));
 });
 
 Deno.test("persistEmbeddings: sibling writes in the same batch as a failing row are not lost", async () => {
