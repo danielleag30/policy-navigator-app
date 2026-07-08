@@ -76,7 +76,11 @@ export interface DiscoveryError extends CrawlError {
   docType: DocType;
 }
 
-const DEFAULT_MAX_PAGES = 200;
+// A safety cap, not an expected ceiling — confirmed live 2026-07-07 that a
+// single large listing page (budget-committee-meetings, 15+ years of history)
+// alone yields 300+ unique same-host non-document links to follow at depth 2.
+// 200 silently truncated the queue before reaching most real meeting pages.
+const DEFAULT_MAX_PAGES = 500;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -195,6 +199,8 @@ function looksLikeDocumentUrl(url: string): boolean {
 
 // ── Crawl ─────────────────────────────────────────────────────────────────────
 
+const DEFAULT_CRAWL_CONCURRENCY = 8;
+
 /**
  * Crawls a single discovery source starting from its discovery_urls, following
  * same-hostname links up to discovery_depth hops (depth 1 = the discovery_urls
@@ -202,42 +208,48 @@ function looksLikeDocumentUrl(url: string): boolean {
  * visited page — allow_pattern filtering happens separately in resolveCandidates
  * so match_priority can be resolved across sources that share a crawl root.
  *
- * Pages within the same depth level are fetched concurrently (fetchPage is
- * expected to serialize actual request *starts* via a shared rate limiter, so
- * this doesn't violate the outbound rate limit — it just lets each request's
- * network round-trip overlap with the others' instead of stacking end to end,
- * which matters once a source's fan-out reaches dozens of pages).
+ * A bounded pool of workers drains a shared queue (fetchPage is expected to
+ * additionally serialize actual request *starts* via a shared rate limiter).
+ * This overlaps each request's network round-trip with the others' instead of
+ * stacking them end to end — but caps how many pages are ever in flight and
+ * held in memory at once, which matters once a source's fan-out reaches
+ * hundreds of pages (a real county listing page going back 15+ years produced
+ * 300+ unique same-host links to follow — firing them all via one unbounded
+ * Promise.all tripped this platform's edge-function resource limit).
  */
 export async function crawlDiscoverySource(
   source: DiscoverySource,
   fetchPage: PageFetcher,
   maxPages: number = DEFAULT_MAX_PAGES,
+  concurrency: number = DEFAULT_CRAWL_CONCURRENCY,
 ): Promise<{ discoveredLinks: Set<string>; errors: CrawlError[] }> {
   const visited = new Set<string>(source.discovery_urls);
   const discoveredLinks = new Set<string>();
   const errors: CrawlError[] = [];
-  let level: { url: string; depth: number }[] = source.discovery_urls.map((
+  const queue: { url: string; depth: number }[] = source.discovery_urls.map((
     url,
   ) => ({
     url,
     depth: 1,
   }));
 
-  while (level.length > 0 && visited.size <= maxPages) {
-    const nextLevel: { url: string; depth: number }[] = [];
+  async function worker(): Promise<void> {
+    for (;;) {
+      const next = queue.shift();
+      if (!next) return;
+      const { url, depth } = next;
 
-    await Promise.all(level.map(async ({ url, depth }) => {
       let page: PageFetchResult;
       try {
         page = await fetchPage(url);
       } catch (e) {
         errors.push({ url, message: (e as Error).message });
-        return;
+        continue;
       }
 
       if (!page.ok) {
         errors.push({ url, message: `HTTP ${page.status}` });
-        return;
+        continue;
       }
 
       for (const link of extractLinks(page.html, url)) {
@@ -253,13 +265,15 @@ export async function crawlDiscoverySource(
           visited.size < maxPages
         ) {
           visited.add(link);
-          nextLevel.push({ url: link, depth: depth + 1 });
+          queue.push({ url: link, depth: depth + 1 });
         }
       }
-    }));
-
-    level = nextLevel;
+    }
   }
+
+  await Promise.all(
+    Array.from({ length: concurrency }, () => worker()),
+  );
 
   return { discoveredLinks, errors };
 }
@@ -302,6 +316,37 @@ export function resolveCandidates(
     sourceId: source.id,
     label: source.label ?? source.doc_type,
   }));
+}
+
+/**
+ * Runs fn over items with at most `concurrency` calls in flight at once.
+ * Same bounded worker-pool shape as crawlDiscoverySource's page fetching —
+ * shared here so callers processing a large candidate list (e.g. the
+ * change-detection HEAD/GET scan of every discovered URL) get the same
+ * protection against unbounded fan-out spiking the edge function's resource
+ * usage. Results are returned in the same order as items.
+ */
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    for (;;) {
+      const i = nextIndex++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i]);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker()),
+  );
+
+  return results;
 }
 
 /**

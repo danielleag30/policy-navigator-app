@@ -9,6 +9,7 @@ import {
   discoverAllCandidates,
   type DiscoverySource,
   extractLinks,
+  mapWithConcurrency,
   type PageFetchResult,
   resolveCandidates,
 } from "./_discovery.ts";

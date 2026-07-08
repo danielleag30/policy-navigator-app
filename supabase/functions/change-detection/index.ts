@@ -8,6 +8,12 @@
  * discovery_depth hops — to find candidate document URLs, which are then
  * scanned exactly like any other seed URL. The municode_api source is not
  * crawled; it keeps its own base_url/url_patterns lookup.
+ *
+ * A single invocation crawling every discovery source can run long enough on
+ * a slow real site to approach this platform's edge-function execution
+ * budget. POST ?source=<id> restricts discovery crawling to one source id
+ * (see supabase/config/seed-sources.json) for a cheaper, targeted run;
+ * municode_api and the staleness sweep still run every invocation regardless.
  */
 
 // deno-lint-ignore no-unversioned-import
@@ -25,6 +31,7 @@ import {
   type DiscoveredUrl,
   discoverySourcesOf,
   type DocType,
+  mapWithConcurrency,
   type PageFetchResult,
   type SeedConfig,
   validateSeedConfig,
@@ -79,6 +86,7 @@ const FAIRFAX_REQUEST_DELAY_MS = 200;
 const STALE_DOCUMENT_DAYS = 14;
 const DEFAULT_USER_AGENT = "PolicyNavigator/1.0 change-detection";
 const PLACEHOLDER_PREFIX = "REPLACE_WITH_";
+const CANDIDATE_SCAN_CONCURRENCY = 8;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -275,7 +283,11 @@ async function fetchHead(
   });
 }
 
-async function fetchHash(url: string): Promise<string> {
+async function fetchHash(
+  url: string,
+  limiter: FairfaxRateLimiter,
+): Promise<string> {
+  await limiter.waitIfNeeded(url);
   const resp = await fetch(url, {
     method: "GET",
     redirect: "follow",
@@ -312,7 +324,7 @@ async function scanSeedUrl(
     };
   }
 
-  const hash = await fetchHash(seedUrl.url);
+  const hash = await fetchHash(seedUrl.url, limiter);
   if (current && hash === current.content_hash) {
     await updateLastChecked(current.id);
     return {
@@ -540,7 +552,20 @@ Deno.serve(async (req: Request) => {
 
   try {
     const config = validateSeedConfig(seedConfig);
-    const discoverySources = discoverySourcesOf(config);
+    const requestedSourceId = new URL(req.url).searchParams.get("source");
+    const allDiscoverySources = discoverySourcesOf(config);
+    const discoverySources = requestedSourceId
+      ? allDiscoverySources.filter((s) => s.id === requestedSourceId)
+      : allDiscoverySources;
+
+    if (requestedSourceId && discoverySources.length === 0) {
+      return error(
+        "NOT_FOUND",
+        `Unknown discovery source id: ${requestedSourceId}`,
+        404,
+      );
+    }
+
     const limiter = new FairfaxRateLimiter();
     const fetchPage = buildPageFetcher(limiter);
 
@@ -573,26 +598,42 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    for (const candidate of candidates) {
-      try {
-        results.push(await scanSeedUrl(candidate, limiter));
-      } catch (e) {
-        const message = (e as Error).message;
-        logError(FN_NAME, "URL scan failed", { url: candidate.url, message });
-        results.push({
-          url: candidate.url,
-          doc_type: candidate.docType,
-          action: "error",
-          message,
-        });
-        await writePendingAlert({
-          reason: "change_detection_source_error",
-          url: candidate.url,
-          doc_type: candidate.docType,
-          message,
-        });
-      }
-    }
+    // Bounded concurrency — a real source page can yield 100+ PDF candidates,
+    // and scanning them one at a time (each with its own HEAD/GET round trip)
+    // was the dominant cost in a live run, not the discovery crawl itself.
+    // Firing them all at once via an unbounded Promise.all instead tripped
+    // this platform's edge-function resource limit, so this uses the same
+    // bounded worker-pool the crawler uses. The shared limiter still staggers
+    // actual fairfaxcounty.gov request starts ≥200ms apart regardless.
+    results.push(
+      ...await mapWithConcurrency(
+        candidates,
+        CANDIDATE_SCAN_CONCURRENCY,
+        async (candidate) => {
+          try {
+            return await scanSeedUrl(candidate, limiter);
+          } catch (e) {
+            const message = (e as Error).message;
+            logError(FN_NAME, "URL scan failed", {
+              url: candidate.url,
+              message,
+            });
+            await writePendingAlert({
+              reason: "change_detection_source_error",
+              url: candidate.url,
+              doc_type: candidate.docType,
+              message,
+            });
+            return {
+              url: candidate.url,
+              doc_type: candidate.docType,
+              action: "error" as const,
+              message,
+            };
+          }
+        },
+      ),
+    );
 
     let municode: ChangeDetectionSummary["municode"] = {
       checked: false,
