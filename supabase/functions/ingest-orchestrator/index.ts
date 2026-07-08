@@ -36,7 +36,7 @@ import {
 import { extractAndPersist } from "../_shared/extractor.ts";
 import {
   type AiSession,
-  generateEmbeddings,
+  generateEmbeddingsHttpBatched,
   persistEmbeddings,
   preflight,
 } from "../_shared/embedder.ts";
@@ -106,8 +106,21 @@ const POLL_CLAIM_WINDOW_MS = 80_000;
  * Docling/source fetch cannot turn a multi-row invocation into a resource-limit
  * crash. Explicit pending_ingestion_id calls still receive the full soft
  * deadline for targeted one-off work.
+ *
+ * Matches DOCLING_TIMEOUT_MS rather than a shorter poll-specific figure:
+ * live production data showed real bos_minutes/bos_summary/budget_pdf
+ * conversions (~400KB-1MB, no OCR/table-structure) routinely running past
+ * 30s, so the previous 35_000 value here made poll mode -- the only path that
+ * processes real cron traffic -- time out on nearly every PDF regardless of
+ * size (last_error consistently "Docling call timed out after 29s"/"30s").
+ * The ~108s CPU failure point referenced above came from stacking multiple
+ * rows' local Supabase.ai.Session embedding calls (CPU-bound) in one
+ * invocation; now that all PDF-branch embedding runs over HTTP instead (see
+ * embedDocumentChunks and friends below, same fix PR #83 applied to
+ * ordinance_provisions), that CPU accumulation no longer happens per row, so
+ * the Docling wall-clock budget can go back to matching the single-row value.
  */
-const POLL_PDF_ROW_BUDGET_MS = 35_000;
+const POLL_PDF_ROW_BUDGET_MS = DOCLING_TIMEOUT_MS;
 
 /**
  * Time reserved after a Docling response for chunking, extraction, embeddings,
@@ -440,7 +453,7 @@ async function pdfBranch(
 
 async function embedDocumentChunks(
   documentId: string,
-  session: AiSession,
+  embedUrl: string,
 ): Promise<void> {
   const { data: rows, error: fetchErr } = await db
     .from("document_chunks")
@@ -457,7 +470,7 @@ async function embedDocumentChunks(
   }
 
   const texts = rows.map((r) => r.text as string);
-  const embeddings = await generateEmbeddings(session, texts);
+  const embeddings = await generateEmbeddingsHttpBatched(embedUrl, texts);
 
   // Write embeddings back, one update per chunk — check each write
   for (let i = 0; i < rows.length; i++) {
@@ -496,7 +509,7 @@ async function embedDocumentChunks(
 
 async function embedVoteTallies(
   documentId: string,
-  session: AiSession,
+  embedUrl: string,
 ): Promise<void> {
   const { data: rows, error: fetchErr } = await db
     .from("vote_tallies")
@@ -512,7 +525,7 @@ async function embedVoteTallies(
   }
 
   const texts = rows.map((r) => r.motion_text as string);
-  const embeddings = await generateEmbeddings(session, texts);
+  const embeddings = await generateEmbeddingsHttpBatched(embedUrl, texts);
 
   await persistEmbeddings(db, "vote_tallies", "vote_tally", rows, embeddings);
 
@@ -536,7 +549,7 @@ async function embedVoteTallies(
 
 async function embedPolicyDecisions(
   documentId: string,
-  session: AiSession,
+  embedUrl: string,
 ): Promise<void> {
   const { data: rows, error: fetchErr } = await db
     .from("policy_decisions")
@@ -552,7 +565,7 @@ async function embedPolicyDecisions(
   }
 
   const texts = rows.map((r) => r.raw_extracted_text as string);
-  const embeddings = await generateEmbeddings(session, texts);
+  const embeddings = await generateEmbeddingsHttpBatched(embedUrl, texts);
 
   await persistEmbeddings(
     db,
@@ -582,7 +595,7 @@ async function embedPolicyDecisions(
 
 async function embedBudgetIndicators(
   documentId: string,
-  session: AiSession,
+  embedUrl: string,
 ): Promise<void> {
   const { data: rows, error: fetchErr } = await db
     .from("budget_indicators")
@@ -598,7 +611,7 @@ async function embedBudgetIndicators(
   }
 
   const texts = rows.map((r) => r.raw_extracted_text as string);
-  const embeddings = await generateEmbeddings(session, texts);
+  const embeddings = await generateEmbeddingsHttpBatched(embedUrl, texts);
 
   await persistEmbeddings(
     db,
@@ -628,7 +641,7 @@ async function embedBudgetIndicators(
 
 async function embedNarrativeChunks(
   documentId: string,
-  session: AiSession,
+  embedUrl: string,
 ): Promise<void> {
   const { data: rows, error: fetchErr } = await db
     .from("narrative_chunks")
@@ -644,7 +657,7 @@ async function embedNarrativeChunks(
   }
 
   const texts = rows.map((r) => r.content as string);
-  const embeddings = await generateEmbeddings(session, texts);
+  const embeddings = await generateEmbeddingsHttpBatched(embedUrl, texts);
 
   await persistEmbeddings(
     db,
@@ -895,10 +908,18 @@ async function processClaimedIngestion(
         return success({ status: "skipped", document_id: documentId });
       }
 
-      // ── Task 2-6: embed document_chunks ──────────────────────────────────
-      await embedDocumentChunks(documentId, session);
+      // ── Task 2-6: embed document_chunks and PDF-derived structured tables ─
+      // Runs over HTTP (see generateEmbeddingsHttpBatched), not the local AI
+      // Session -- same fix PR #83 applied to ordinance_provisions, for the
+      // same reason: session.run() is CPU-bound and was exhausting the Edge
+      // Function's CPU-time budget before a single row's embeddings landed,
+      // leaving these documents stuck at status='unknown' with narrative_chunks/
+      // budget_indicators rows created but never embedded.
+      const embedUrl = Deno.env.get("HF_SPACES_DOCLING_URL");
+      if (!embedUrl) throw new Error("HF_SPACES_DOCLING_URL not set");
 
-      // ── Task 2-6: embed all PDF-derived structured tables ─────────────────
+      await embedDocumentChunks(documentId, embedUrl);
+
       // vote_tallies and policy_decisions are written for bos_minutes/bos_summary;
       // budget_indicators for budget_pdf; narrative_chunks for any PDF type
       // that had chunks without structured extraction.
@@ -907,13 +928,13 @@ async function processClaimedIngestion(
       const isBudgetDoc = row.doc_type === "budget_pdf";
 
       if (isBosDoc) {
-        await embedVoteTallies(documentId, session);
-        await embedPolicyDecisions(documentId, session);
+        await embedVoteTallies(documentId, embedUrl);
+        await embedPolicyDecisions(documentId, embedUrl);
       }
       if (isBudgetDoc) {
-        await embedBudgetIndicators(documentId, session);
+        await embedBudgetIndicators(documentId, embedUrl);
       }
-      await embedNarrativeChunks(documentId, session);
+      await embedNarrativeChunks(documentId, embedUrl);
 
       // ── Task 2-6: finalize Document row ──────────────────────────────────
       // Only reached after all embedding functions above have succeeded

@@ -98,7 +98,9 @@ export async function generateEmbeddings(
     results.push(...batchResults);
 
     if (i + EMBED_BATCH_SIZE < texts.length) {
-      await new Promise<void>((resolve) => setTimeout(resolve, EMBED_BATCH_PAUSE_MS));
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, EMBED_BATCH_PAUSE_MS)
+      );
     }
   }
 
@@ -122,9 +124,9 @@ interface EmbedHttpResponse {
  * Mirrors pdfBranch's Docling call: AbortController-bounded fetch, thrown
  * DOMException AbortError distinguished from other failures. Unlike
  * generateEmbeddings (session-based), a failure here fails the whole batch
- * rather than per-text -- the caller sends one text at a time today, so this
- * keeps the null-on-failure contract identical without adding partial-batch
- * bookkeeping this module doesn't otherwise need.
+ * rather than per-text. Callers with more texts than the wrapper's per-request
+ * cap (MAX_EMBED_TEXTS_PER_REQUEST = 100 in docling-wrapper/app.py) must chunk
+ * before calling -- see generateEmbeddingsHttpBatched below.
  *
  * Async I/O (awaiting fetch) does not count against the Edge Function's
  * CPU-time budget, unlike the local session.run() call this replaces for
@@ -175,6 +177,39 @@ export async function generateEmbeddingsHttp(
 }
 
 /**
+ * Requests per call to the wrapper's /embed endpoint. Kept under the
+ * wrapper's own MAX_EMBED_TEXTS_PER_REQUEST cap (100, docling-wrapper/app.py)
+ * with margin so this stays correct even if that cap is tightened.
+ */
+export const EMBED_HTTP_BATCH_SIZE = 50;
+
+/**
+ * generateEmbeddingsHttp wrapper for text arrays that may exceed the /embed
+ * endpoint's per-request cap. A single PDF document can produce more than 100
+ * document_chunks, so callers with an unbounded row count (document_chunks,
+ * vote_tallies, policy_decisions, budget_indicators, narrative_chunks) must
+ * go through this instead of calling generateEmbeddingsHttp directly.
+ *
+ * Unlike embedOrdinanceProvisionsBatched, this does not need a resumable
+ * keyset cursor: those PDF-derived tables hold at most a few hundred rows per
+ * document (one Docling conversion's worth), not the thousands per document
+ * ordinance_provisions can carry, so looping to completion within one
+ * invocation is safe.
+ */
+export async function generateEmbeddingsHttpBatched(
+  embedUrl: string,
+  texts: string[],
+  batchSize: number = EMBED_HTTP_BATCH_SIZE,
+): Promise<Array<number[] | null>> {
+  const results: Array<number[] | null> = [];
+  for (let i = 0; i < texts.length; i += batchSize) {
+    const batch = texts.slice(i, i + batchSize);
+    results.push(...(await generateEmbeddingsHttp(embedUrl, batch)));
+  }
+  return results;
+}
+
+/**
  * Persist generated embeddings back onto their source rows.
  *
  * Mirrors generateEmbeddings' concurrency shape: writes are grouped into
@@ -218,7 +253,9 @@ export async function persistEmbeddings<T extends EmbeddableRow>(
     );
 
     if (i + EMBED_BATCH_SIZE < rows.length) {
-      await new Promise<void>((resolve) => setTimeout(resolve, EMBED_BATCH_PAUSE_MS));
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, EMBED_BATCH_PAUSE_MS)
+      );
     }
   }
 }
