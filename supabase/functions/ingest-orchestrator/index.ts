@@ -38,6 +38,7 @@ import {
 import { handleMunicode } from "./municode.ts";
 import { embedOrdinanceProvisionsBatched } from "./ordinance-embedder.ts";
 import { requestSecret } from "../_shared/admin-auth.ts";
+import { reconciliationInvokeUrl } from "./_reconciliation-url.ts";
 
 // Supabase.ai.Session is injected by the Edge Function runtime.
 // Declare here so TypeScript resolves it; actual availability is checked at runtime.
@@ -632,7 +633,7 @@ async function triggerReconciliationIfNeeded(
 
   try {
     const resp = await fetch(
-      `${supabaseUrl}/functions/v1/reconcile-ordinances`,
+      reconciliationInvokeUrl(supabaseUrl),
       {
         method: "POST",
         headers: {
@@ -644,7 +645,7 @@ async function triggerReconciliationIfNeeded(
     );
     if (!resp.ok) {
       console.warn(
-        `[orchestrator] reconcile-ordinances returned HTTP ${resp.status}`,
+        `[orchestrator] reconciliation returned HTTP ${resp.status}`,
       );
     } else {
       console.log("[orchestrator] reconciliation triggered successfully");
@@ -652,7 +653,7 @@ async function triggerReconciliationIfNeeded(
   } catch (e) {
     // Reconciliation function may not yet be deployed — log and continue.
     console.warn(
-      "[orchestrator] reconcile-ordinances invoke failed (may not be deployed):",
+      "[orchestrator] reconciliation invoke failed (may not be deployed):",
       (e as Error).message,
     );
   }
