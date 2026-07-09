@@ -141,7 +141,7 @@
         "check": { "type": "not_refusal" }
       }
     ],
-    "notes": "Section (D) 'New Structure' fee schedule: accessory structures to R-3/R-4/R-5 construction are 3.00% of estimated construction cost. NOTE: a separate 'residential alteration' percentage fee does not exist in this chunk (alterations use a flat $135 fee) — that variant of this case was dropped as unverifiable rather than authored against a mismatched fact."
+    "notes": "Section (D) 'New Structure' fee schedule: accessory structures to R-3/R-4/R-5 construction are 3.00% of estimated construction cost. This chunk separately contains a distinct 3.00% rate for residential repairs/alterations under Section (K) — see citation-num-022, which cites that line item specifically so the two 3.00% facts aren't conflated."
   },
   {
     "id": "citation-num-007",
@@ -507,5 +507,29 @@
       }
     ],
     "notes": "'signatures of petitioners representing at least 60 percent of the eligible addresses of the proposed District.'"
+  },
+  {
+    "id": "citation-num-022",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the building permit fee percentage for repairs and alterations to an existing residential (R-3, R-4, or R-5) structure, such as re-siding or new roof structures, in Fairfax County?",
+    "chunk_ids": ["019f34d8-1f6b-7c0f-85b5-1303fb0c7e43"],
+    "criteria": [
+      {
+        "id": "citation-num-022-cites",
+        "description": "Response cites the THCOCOFAVI1976_APXQLADESEFESC chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d8-1f6b-7c0f-85b5-1303fb0c7e43" }
+      },
+      {
+        "id": "citation-num-022-contains-pct",
+        "description": "Answer includes the residential repairs/alterations fee percentage",
+        "check": { "type": "answer_contains", "substring": "3.00%" }
+      },
+      {
+        "id": "citation-num-022-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Section (K) 'Repairs and Alterations' (fees for repairs/alterations with no addition or enlargement): 'For residential work (R-3, R-4 and R-5 construction) roof repairs, new roof structures, re-siding: ... 3.00%' — distinct from Section (D) 'New Structure' accessory-structure fee (citation-num-006), which also happens to be 3.00% but is a separate line item on the same fee schedule. Found on re-verification after an initial pass missed this section; query scoped to 'repairs and alterations' language to avoid conflating the two."
   }
 ]
