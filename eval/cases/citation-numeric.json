@@ -1,0 +1,535 @@
+[
+  {
+    "id": "citation-num-001",
+    "category": "citation_accuracy_numeric",
+    "query": "How many members serve on the Fairfax County Board of Supervisors, and how are they elected?",
+    "chunk_ids": ["019f34ba-f015-7be1-9e39-13a91c2df71c"],
+    "criteria": [
+      {
+        "id": "citation-num-001-cites",
+        "description": "Response cites the FACOCO_CH7EL_ART2ELDIBOSU_S7-2-1COBOSU chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34ba-f015-7be1-9e39-13a91c2df71c" }
+      },
+      {
+        "id": "citation-num-001-contains-count",
+        "description": "Answer includes the district-member count",
+        "check": { "type": "answer_contains", "substring": "nine" }
+      },
+      {
+        "id": "citation-num-001-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Board is composed of one at-large chairman plus nine district-elected members (ten total). Chunk content literally says 'nine members ... elected from single-member supervisor election districts'; 'ten' does not appear verbatim in the chunk."
+  },
+  {
+    "id": "citation-num-002",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the BPOL tax rate per $100 of gross receipts for retail businesses in Fairfax County?",
+    "chunk_ids": ["019f34b7-c5a1-7856-a9c9-62829fdf28f1"],
+    "criteria": [
+      {
+        "id": "citation-num-002-cites",
+        "description": "Response cites the FACOCO_CH4TAFI_ART7.1BUPROCLITA_DIV2SCLITA_S4-7.1-29REMELITARA chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34b7-c5a1-7856-a9c9-62829fdf28f1" }
+      },
+      {
+        "id": "citation-num-002-contains-rate",
+        "description": "Answer includes the retail BPOL rate",
+        "check": { "type": "answer_contains", "substring": "$0.17" }
+      },
+      {
+        "id": "citation-num-002-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Retail merchants pay 'Seventeen Cents ($0.17)' per $100 of gross receipts."
+  },
+  {
+    "id": "citation-num-003",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the BPOL tax rate per $100 of gross receipts for contractors in Fairfax County?",
+    "chunk_ids": ["019f34b7-bda6-79d7-8d16-2da652518254"],
+    "criteria": [
+      {
+        "id": "citation-num-003-cites",
+        "description": "Response cites the FACOCO_CH4TAFI_ART7.1BUPROCLITA_DIV2SCLITA_S4-7.1-24COCO chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34b7-bda6-79d7-8d16-2da652518254" }
+      },
+      {
+        "id": "citation-num-003-contains-rate",
+        "description": "Answer includes the contractor BPOL rate",
+        "check": { "type": "answer_contains", "substring": "$0.11" }
+      },
+      {
+        "id": "citation-num-003-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Contractors pay 'Eleven Cents ($0.11)' per $100 of gross receipts."
+  },
+  {
+    "id": "citation-num-004",
+    "category": "citation_accuracy_numeric",
+    "query": "What gross receipts threshold exempts a business from paying the BPOL tax in Fairfax County?",
+    "chunk_ids": ["019f34b7-a223-7d7f-b032-856e4e40d89e"],
+    "criteria": [
+      {
+        "id": "citation-num-004-cites",
+        "description": "Response cites the FACOCO_CH4TAFI_ART7.1BUPROCLITA_S4-7.1-9WHLITAPA chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34b7-a223-7d7f-b032-856e4e40d89e" }
+      },
+      {
+        "id": "citation-num-004-contains-threshold",
+        "description": "Answer includes the exemption threshold",
+        "check": { "type": "answer_contains", "substring": "ten thousand dollars" }
+      },
+      {
+        "id": "citation-num-004-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chunk spells the amount out in words ('ten thousand dollars'); no $ numeral form appears in this section."
+  },
+  {
+    "id": "citation-num-005",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the minimum annual BPOL business license fee in Fairfax County?",
+    "chunk_ids": ["019f34b7-a223-7d7f-b032-856e4e40d89e"],
+    "criteria": [
+      {
+        "id": "citation-num-005-cites",
+        "description": "Response cites the FACOCO_CH4TAFI_ART7.1BUPROCLITA_S4-7.1-9WHLITAPA chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34b7-a223-7d7f-b032-856e4e40d89e" }
+      },
+      {
+        "id": "citation-num-005-contains-fee",
+        "description": "Answer includes the minimum license fee",
+        "check": { "type": "answer_contains", "substring": "thirty dollars" }
+      },
+      {
+        "id": "citation-num-005-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Same chunk as citation-num-004. Chunk spells the amount out in words ('thirty dollars')."
+  },
+  {
+    "id": "citation-num-006",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the building permit fee percentage for accessory structures on R-3, R-4, or R-5 residential lots in Fairfax County?",
+    "chunk_ids": ["019f34d8-1f6b-7c0f-85b5-1303fb0c7e43"],
+    "criteria": [
+      {
+        "id": "citation-num-006-cites",
+        "description": "Response cites the THCOCOFAVI1976_APXQLADESEFESC chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d8-1f6b-7c0f-85b5-1303fb0c7e43" }
+      },
+      {
+        "id": "citation-num-006-contains-pct",
+        "description": "Answer includes the accessory-structure fee percentage",
+        "check": { "type": "answer_contains", "substring": "3.00%" }
+      },
+      {
+        "id": "citation-num-006-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Section (D) 'New Structure' fee schedule: accessory structures to R-3/R-4/R-5 construction are 3.00% of estimated construction cost. This chunk separately contains a distinct 3.00% rate for residential repairs/alterations under Section (K) — see citation-num-022, which cites that line item specifically so the two 3.00% facts aren't conflated."
+  },
+  {
+    "id": "citation-num-007",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the commercial building permit fee per square foot for Type IA/IB construction in Fairfax County?",
+    "chunk_ids": ["019f34d8-1f6b-7c0f-85b5-1303fb0c7e43"],
+    "criteria": [
+      {
+        "id": "citation-num-007-cites",
+        "description": "Response cites the THCOCOFAVI1976_APXQLADESEFESC chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d8-1f6b-7c0f-85b5-1303fb0c7e43" }
+      },
+      {
+        "id": "citation-num-007-contains-fee",
+        "description": "Answer includes the Type IA/IB per-square-foot fee",
+        "check": { "type": "answer_contains", "substring": "$0.270" }
+      },
+      {
+        "id": "citation-num-007-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Same chunk as citation-num-006. Table 1: Type IA/IB commercial fee is $0.270 per square foot."
+  },
+  {
+    "id": "citation-num-008",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the minimum required indoor floor space per child in a licensed child care facility in Fairfax County?",
+    "chunk_ids": ["019f34bd-84a4-7c76-ab64-5772c7f3d27b"],
+    "criteria": [
+      {
+        "id": "citation-num-008-cites",
+        "description": "Response cites the FACOCO_CH30MIPRSCCHCAFAST chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-84a4-7c76-ab64-5772c7f3d27b" }
+      },
+      {
+        "id": "citation-num-008-contains-space",
+        "description": "Answer includes the minimum indoor floor space",
+        "check": { "type": "answer_contains", "substring": "twenty square feet" }
+      },
+      {
+        "id": "citation-num-008-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 30 private school/child care facility requirements."
+  },
+  {
+    "id": "citation-num-009",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the minimum required outdoor play area per child for a licensed child care facility in Fairfax County?",
+    "chunk_ids": ["019f34bd-84a4-7c76-ab64-5772c7f3d27b"],
+    "criteria": [
+      {
+        "id": "citation-num-009-cites",
+        "description": "Response cites the FACOCO_CH30MIPRSCCHCAFAST chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-84a4-7c76-ab64-5772c7f3d27b" }
+      },
+      {
+        "id": "citation-num-009-contains-space",
+        "description": "Answer includes the minimum outdoor play area",
+        "check": { "type": "answer_contains", "substring": "100 square feet" }
+      },
+      {
+        "id": "citation-num-009-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Same chunk as citation-num-008."
+  },
+  {
+    "id": "citation-num-010",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the maximum permissible daytime sound level in decibels in a residential zone in Fairfax County?",
+    "chunk_ids": ["019f34ce-c9aa-729d-91a7-89c890fbcefe"],
+    "criteria": [
+      {
+        "id": "citation-num-010-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH108.1NOOR_ART4PRSO_S108.1-4-2SOGE chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34ce-c9aa-729d-91a7-89c890fbcefe" }
+      },
+      {
+        "id": "citation-num-010-contains-level",
+        "description": "Answer includes the daytime dBA limit",
+        "check": { "type": "answer_contains", "substring": "60" }
+      },
+      {
+        "id": "citation-num-010-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Maximum Sound Levels table: Residential Areas in Residential Districts, 7 a.m. to 10 p.m., 60 dBA continuous."
+  },
+  {
+    "id": "citation-num-011",
+    "category": "citation_accuracy_numeric",
+    "query": "What are the nighttime noise limits in decibels for residential areas in Fairfax County?",
+    "chunk_ids": ["019f34ce-c9aa-729d-91a7-89c890fbcefe"],
+    "criteria": [
+      {
+        "id": "citation-num-011-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH108.1NOOR_ART4PRSO_S108.1-4-2SOGE chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34ce-c9aa-729d-91a7-89c890fbcefe" }
+      },
+      {
+        "id": "citation-num-011-contains-level",
+        "description": "Answer includes the nighttime dBA limit",
+        "check": { "type": "answer_contains", "substring": "55" }
+      },
+      {
+        "id": "citation-num-011-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Same chunk as citation-num-010. Residential Areas, 10 p.m. to 7 a.m., 55 dBA continuous."
+  },
+  {
+    "id": "citation-num-012",
+    "category": "citation_accuracy_numeric",
+    "query": "Between what hours do reduced nighttime noise limits apply in Fairfax County residential areas?",
+    "chunk_ids": ["019f34ce-c9aa-729d-91a7-89c890fbcefe"],
+    "criteria": [
+      {
+        "id": "citation-num-012-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH108.1NOOR_ART4PRSO_S108.1-4-2SOGE chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34ce-c9aa-729d-91a7-89c890fbcefe" }
+      },
+      {
+        "id": "citation-num-012-contains-start",
+        "description": "Answer includes the nighttime start hour",
+        "check": { "type": "answer_contains", "substring": "10 p.m." }
+      },
+      {
+        "id": "citation-num-012-contains-end",
+        "description": "Answer includes the nighttime end hour",
+        "check": { "type": "answer_contains", "substring": "7 a.m." }
+      },
+      {
+        "id": "citation-num-012-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Same chunk as citation-num-010/011. Both hour markers required (AND, not OR)."
+  },
+  {
+    "id": "citation-num-013",
+    "category": "citation_accuracy_numeric",
+    "query": "How many consecutive hours may a vehicle be used for human habitation before violating Fairfax County code?",
+    "chunk_ids": ["019f34cb-1aee-7405-ad99-f9c1a5773c5a"],
+    "criteria": [
+      {
+        "id": "citation-num-013-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH82MOVETR_ART5STSTPA_S82-5-42HAVEPAPURI-W chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34cb-1aee-7405-ad99-f9c1a5773c5a" }
+      },
+      {
+        "id": "citation-num-013-contains-hours",
+        "description": "Answer includes the hour threshold",
+        "check": { "type": "answer_contains", "substring": "six" }
+      },
+      {
+        "id": "citation-num-013-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "'The use of a vehicle for six or more consecutive hours ... shall per se constitute \"human habitation\".'"
+  },
+  {
+    "id": "citation-num-014",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the fine for a parking violation of Section 82-5-26 under the Fairfax County vehicle code?",
+    "chunk_ids": ["019f34c9-1fea-7ec8-93b2-90227d5b7a7b"],
+    "criteria": [
+      {
+        "id": "citation-num-014-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH82MOVETR_ART1INGE_S82-1-32SUENPA chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34c9-1fea-7ec8-93b2-90227d5b7a7b" }
+      },
+      {
+        "id": "citation-num-014-contains-fine",
+        "description": "Answer includes the fine amount",
+        "check": { "type": "answer_contains", "substring": "$50.00" }
+      },
+      {
+        "id": "citation-num-014-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chunk lists several different fines by violation code ($500/$100/$50); query narrowed to Section 82-5-26 specifically ($50.00) to keep the expected answer unambiguous."
+  },
+  {
+    "id": "citation-num-015",
+    "category": "citation_accuracy_numeric",
+    "query": "How many days does a property owner have to comply after receiving a code compliance notice for an inoperative motor vehicle in Fairfax County?",
+    "chunk_ids": ["019f34d0-8235-7b68-96a4-9cdc9d8df05b"],
+    "criteria": [
+      {
+        "id": "citation-num-015-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH110INMOVETRSE_ART3INMOVETRSE_S110-3-3NOVI chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d0-8235-7b68-96a4-9cdc9d8df05b" }
+      },
+      {
+        "id": "citation-num-015-contains-days",
+        "description": "Answer includes the compliance window",
+        "check": { "type": "answer_contains", "substring": "ten (10) days" }
+      },
+      {
+        "id": "citation-num-015-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 110 inoperative motor vehicle enforcement."
+  },
+  {
+    "id": "citation-num-016",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the minimum buffer width in feet required around a Resource Protection Area under Fairfax County Code?",
+    "chunk_ids": ["019f34d1-32d2-7c1c-805d-8fc61b722944"],
+    "criteria": [
+      {
+        "id": "citation-num-016-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH118CHBAPROR_ART1GEPRDE_S118-1-7ARAP chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d1-32d2-7c1c-805d-8fc61b722944" }
+      },
+      {
+        "id": "citation-num-016-contains-width",
+        "description": "Answer includes the buffer width",
+        "check": { "type": "answer_contains", "substring": "100 feet" }
+      },
+      {
+        "id": "citation-num-016-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 118 (Chesapeake Bay Preservation Ordinance) RPA buffer definition: 'Any land within 100 feet of a feature listed in Sections 118-1-7 (b)(1)-(4).'"
+  },
+  {
+    "id": "citation-num-017",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the minimum acreage required to form an Agricultural and Forestal District of Statewide Significance in Fairfax County?",
+    "chunk_ids": ["019f34d0-aa3d-76a9-bc12-87ea7f3263c4"],
+    "criteria": [
+      {
+        "id": "citation-num-017-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH114AGFODISTSI_ART1INGE_S114-1-3ESDI chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d0-aa3d-76a9-bc12-87ea7f3263c4" }
+      },
+      {
+        "id": "citation-num-017-contains-acreage",
+        "description": "Answer includes the minimum acreage",
+        "check": { "type": "answer_contains", "substring": "two hundred (200) acres" }
+      },
+      {
+        "id": "citation-num-017-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Also cited textually in citation-hist-071 (same chunk, different question framing)."
+  },
+  {
+    "id": "citation-num-018",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the renewal period in years for an Agricultural and Forestal District in Fairfax County?",
+    "chunk_ids": ["019f34d3-326b-7ea7-9a99-0f80503eca14"],
+    "criteria": [
+      {
+        "id": "citation-num-018-cites",
+        "description": "Response cites the THCOCOFAVI1976_APXEDIORAGFODISTSI_E-4BEBAFASTAGFODIAR92-V-001-03 chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d3-326b-7ea7-9a99-0f80503eca14" }
+      },
+      {
+        "id": "citation-num-018-contains-years",
+        "description": "Answer includes the renewal period",
+        "check": { "type": "answer_contains", "substring": "ten years" }
+      },
+      {
+        "id": "citation-num-018-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Belmont Bay Farms Statewide Agricultural and Forestal District: reviewed after ten years, renewable for another ten-year period."
+  },
+  {
+    "id": "citation-num-019",
+    "category": "citation_accuracy_numeric",
+    "query": "What maximum franchise fee as a percentage of gross revenues may Fairfax County impose on cable operators under Chapter 9.2?",
+    "chunk_ids": ["019f34bb-93d4-7b06-9ff9-c9dc84103b87"],
+    "criteria": [
+      {
+        "id": "citation-num-019-cites",
+        "description": "Response cites the FACOCO_CH9.2CATE_ART7PA_S9.2-7-1PAGR chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bb-93d4-7b06-9ff9-c9dc84103b87" }
+      },
+      {
+        "id": "citation-num-019-contains-pct",
+        "description": "Answer includes the franchise fee percentage",
+        "check": { "type": "answer_contains", "substring": "five percent" }
+      },
+      {
+        "id": "citation-num-019-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "'a franchise fee of five percent of gross revenues, or such other sum as permitted under law.'"
+  },
+  {
+    "id": "citation-num-020",
+    "category": "citation_accuracy_numeric",
+    "query": "How many days in advance must a commercial solicitor's license application be processed by Fairfax County?",
+    "chunk_ids": ["019f34bd-d54e-7e4f-9164-7a53f79ad35c"],
+    "criteria": [
+      {
+        "id": "citation-num-020-cites",
+        "description": "Response cites the FACOCO_CH31PESOCA_ART2LI_S31-2-8ISDE chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-d54e-7e4f-9164-7a53f79ad35c" }
+      },
+      {
+        "id": "citation-num-020-contains-days",
+        "description": "Answer includes the processing window",
+        "check": { "type": "answer_contains", "substring": "sixty (60) days" }
+      },
+      {
+        "id": "citation-num-020-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "'the Director shall issue the applicant a license within sixty (60) days following the date of the filing of a license application.'"
+  },
+  {
+    "id": "citation-num-021",
+    "category": "citation_accuracy_numeric",
+    "query": "What percentage of eligible addresses must petition before Fairfax County designates a Residential Permit Parking District?",
+    "chunk_ids": ["019f34cb-2594-7e53-b50d-702be2fa5d4d"],
+    "criteria": [
+      {
+        "id": "citation-num-021-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH82MOVETR_ART5AREPEPADI_S82-5A-4CRESMODI chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34cb-2594-7e53-b50d-702be2fa5d4d" }
+      },
+      {
+        "id": "citation-num-021-contains-pct",
+        "description": "Answer includes the petition threshold percentage",
+        "check": { "type": "answer_contains", "substring": "60 percent" }
+      },
+      {
+        "id": "citation-num-021-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "'signatures of petitioners representing at least 60 percent of the eligible addresses of the proposed District.'"
+  },
+  {
+    "id": "citation-num-022",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the building permit fee percentage for repairs and alterations to an existing residential (R-3, R-4, or R-5) structure, such as re-siding or new roof structures, in Fairfax County?",
+    "chunk_ids": ["019f34d8-1f6b-7c0f-85b5-1303fb0c7e43"],
+    "criteria": [
+      {
+        "id": "citation-num-022-cites",
+        "description": "Response cites the THCOCOFAVI1976_APXQLADESEFESC chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d8-1f6b-7c0f-85b5-1303fb0c7e43" }
+      },
+      {
+        "id": "citation-num-022-contains-pct",
+        "description": "Answer includes the residential repairs/alterations fee percentage",
+        "check": { "type": "answer_contains", "substring": "3.00%" }
+      },
+      {
+        "id": "citation-num-022-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Section (K) 'Repairs and Alterations' (fees for repairs/alterations with no addition or enlargement): 'For residential work (R-3, R-4 and R-5 construction) roof repairs, new roof structures, re-siding: ... 3.00%' — distinct from Section (D) 'New Structure' accessory-structure fee (citation-num-006), which also happens to be 3.00% but is a separate line item on the same fee schedule. Found on re-verification after an initial pass missed this section; query scoped to 'repairs and alterations' language to avoid conflating the two."
+  }
+]

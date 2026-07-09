@@ -430,5 +430,731 @@
       }
     ],
     "notes": "Chapter 103 governs Air Pollution Control; answerable from chapter-level node"
+  },
+  {
+    "id": "citation-hist-045",
+    "category": "citation_accuracy_textual",
+    "query": "According to the Fairfax County Code editor's note, what ordinance repealed the former Chapter 9.1 and enacted the current Chapter 9.2 on cable television?",
+    "chunk_ids": ["019f34bb-4793-71c6-be30-1194495faa43"],
+    "criteria": [
+      {
+        "id": "citation-hist-045-cites",
+        "description": "Response cites the FACOCO_CH9.1CORE35-19-9.2 chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bb-4793-71c6-be30-1194495faa43" }
+      },
+      {
+        "id": "citation-hist-045-contains-ord",
+        "description": "Answer includes ordinance number 35-19-9.2",
+        "check": { "type": "answer_contains", "substring": "35-19-9.2" }
+      },
+      {
+        "id": "citation-hist-045-contains-date",
+        "description": "Answer includes adoption date September 24, 2019",
+        "check": { "type": "answer_contains", "substring": "September 24, 2019" }
+      },
+      {
+        "id": "citation-hist-045-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Editor's note: Ord. No. 35-19-9.2, adopted September 24, 2019, effective January 1, 2020, repealed former Chapter 9.1 and enacted Chapter 9.2."
+  },
+  {
+    "id": "citation-hist-046",
+    "category": "citation_accuracy_textual",
+    "query": "When did the ordinance enacting Fairfax County Code Chapter 9.2 (cable television) become effective?",
+    "chunk_ids": ["019f34bb-4793-71c6-be30-1194495faa43"],
+    "criteria": [
+      {
+        "id": "citation-hist-046-cites",
+        "description": "Response cites the FACOCO_CH9.1CORE35-19-9.2 chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bb-4793-71c6-be30-1194495faa43" }
+      },
+      {
+        "id": "citation-hist-046-contains-date",
+        "description": "Answer includes effective date January 1, 2020",
+        "check": { "type": "answer_contains", "substring": "January 1, 2020" }
+      },
+      {
+        "id": "citation-hist-046-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Same chunk as citation-hist-045."
+  },
+  {
+    "id": "citation-hist-047",
+    "category": "citation_accuracy_textual",
+    "query": "According to the Fairfax County Code, what ordinance repealed Chapter 67 (Sanitary Sewers)?",
+    "chunk_ids": ["019f34c6-653b-7c68-bd85-d73f270ab888"],
+    "criteria": [
+      {
+        "id": "citation-hist-047-cites",
+        "description": "Response cites the FACOCO_CH67SASESEDI chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34c6-653b-7c68-bd85-d73f270ab888" }
+      },
+      {
+        "id": "citation-hist-047-contains-repeal-ord",
+        "description": "Answer includes repealing ordinance 39-93-67.1",
+        "check": { "type": "answer_contains", "substring": "39-93-67.1" }
+      },
+      {
+        "id": "citation-hist-047-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 67 was repealed and replaced by Chapter 67.1. Same logical node as citation-hist-015 but a distinct (newer) chunk row."
+  },
+  {
+    "id": "citation-hist-048",
+    "category": "citation_accuracy_textual",
+    "query": "According to the Fairfax County Code, what ordinance repealed Chapter 68 (Individual Sewage Disposal Facilities)?",
+    "chunk_ids": ["019f34c7-490d-7577-8485-f5e8655c8b2e"],
+    "criteria": [
+      {
+        "id": "citation-hist-048-cites",
+        "description": "Response cites the FACOCO_CH68INSEDIFA chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34c7-490d-7577-8485-f5e8655c8b2e" }
+      },
+      {
+        "id": "citation-hist-048-contains-repeal-ord",
+        "description": "Answer includes repealing ordinance 35-03-68",
+        "check": { "type": "answer_contains", "substring": "35-03-68" }
+      },
+      {
+        "id": "citation-hist-048-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 68 was repealed and replaced by Chapter 68.1. Same logical node as citation-hist-016 but a distinct (newer) chunk row."
+  },
+  {
+    "id": "citation-hist-049",
+    "category": "citation_accuracy_textual",
+    "query": "According to the Fairfax County Code, what ordinance repealed Chapter 70 (Water)?",
+    "chunk_ids": ["019f34c8-c51c-7be3-bf6d-2b228ac212b7"],
+    "criteria": [
+      {
+        "id": "citation-hist-049-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH70WA chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34c8-c51c-7be3-bf6d-2b228ac212b7" }
+      },
+      {
+        "id": "citation-hist-049-contains-repeal-ord",
+        "description": "Answer includes repealing ordinance 4-05-70.1",
+        "check": { "type": "answer_contains", "substring": "4-05-70.1" }
+      },
+      {
+        "id": "citation-hist-049-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 70 was repealed and replaced by Chapter 70.1. Same logical node as citation-hist-017 but a distinct (newer) chunk row."
+  },
+  {
+    "id": "citation-hist-050",
+    "category": "citation_accuracy_textual",
+    "query": "According to the Fairfax County Code, what ordinance repealed Chapter 45 (Minimum Housing Hygiene Standards Code)?",
+    "chunk_ids": ["019f34c0-342f-7cd5-8cfb-b67a36d40c1c"],
+    "criteria": [
+      {
+        "id": "citation-hist-050-cites",
+        "description": "Response cites the FACOCO_CH45MIHOHYSTCO chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34c0-342f-7cd5-8cfb-b67a36d40c1c" }
+      },
+      {
+        "id": "citation-hist-050-contains-repeal-ord",
+        "description": "Answer includes repealing ordinance 44-86-45",
+        "check": { "type": "answer_contains", "substring": "44-86-45" }
+      },
+      {
+        "id": "citation-hist-050-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 45 was repealed; no replacement chapter. Same logical node as citation-hist-018 but a distinct (newer) chunk row."
+  },
+  {
+    "id": "citation-hist-051",
+    "category": "citation_accuracy_textual",
+    "query": "According to the Fairfax County Code editor's note, when was Chapter 28 (massage establishments) repealed, and by what ordinance?",
+    "chunk_ids": ["019f34bd-2f3e-73f4-90c7-80292c14bd2e"],
+    "criteria": [
+      {
+        "id": "citation-hist-051-cites",
+        "description": "Response cites the FACOCO_CH28RE chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-2f3e-73f4-90c7-80292c14bd2e" }
+      },
+      {
+        "id": "citation-hist-051-contains-ord",
+        "description": "Answer includes repealing ordinance 08-00-28",
+        "check": { "type": "answer_contains", "substring": "08-00-28" }
+      },
+      {
+        "id": "citation-hist-051-contains-month",
+        "description": "Answer includes the repeal month (Feb./February)",
+        "check": { "type": "answer_contains", "substring": "Feb" }
+      },
+      {
+        "id": "citation-hist-051-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chunk literally reads 'Feb. 7, 2000' (abbreviated); 'Feb' substring matches both abbreviated and spelled-out ('February') answer phrasing. Same logical node as citation-hist-019 but a distinct (newer) chunk row."
+  },
+  {
+    "id": "citation-hist-052",
+    "category": "citation_accuracy_textual",
+    "query": "According to the Fairfax County Code editor's note, what happened to Chapter 84 (Public Transportation)?",
+    "chunk_ids": ["019f34cc-efb5-7689-ba3d-4be9acc2f372"],
+    "criteria": [
+      {
+        "id": "citation-hist-052-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH84PUTRRE47-92-84.1 chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34cc-efb5-7689-ba3d-4be9acc2f372" }
+      },
+      {
+        "id": "citation-hist-052-contains-repealed",
+        "description": "Answer states the chapter was repealed",
+        "check": { "type": "answer_contains", "substring": "repealed" }
+      },
+      {
+        "id": "citation-hist-052-contains-repeal-ord",
+        "description": "Answer includes repealing ordinance 47-92-84.1",
+        "check": { "type": "answer_contains", "substring": "47-92-84.1" }
+      },
+      {
+        "id": "citation-hist-052-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 84 was repealed; replaced by Chapter 84.1. Same logical node as citation-hist-020 but a distinct (newer) chunk row."
+  },
+  {
+    "id": "citation-hist-053",
+    "category": "citation_accuracy_textual",
+    "query": "What change does the Fairfax County Code Appendix W ordinance provision request for Designated Outdoor Refreshment Area (DORA) licenses?",
+    "chunk_ids": ["019f34d8-43de-7a19-9537-3f35437f0a73"],
+    "criteria": [
+      {
+        "id": "citation-hist-053-cites",
+        "description": "Response cites the THCOCOFAVI1976_APXWDEOUREARLI chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d8-43de-7a19-9537-3f35437f0a73" }
+      },
+      {
+        "id": "citation-hist-053-contains-dora",
+        "description": "Answer mentions DORA licenses",
+        "check": { "type": "answer_contains", "substring": "DORA" }
+      },
+      {
+        "id": "citation-hist-053-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "This specific Appendix W row requests an increase in the frequency and/or duration of DORA license events under Va. Code § 4.1-206.3(D)(2)(c). Same logical node as citation-hist-021 but a distinct (newer) chunk row with narrower content."
+  },
+  {
+    "id": "citation-hist-054",
+    "category": "citation_accuracy_textual",
+    "query": "Under Fairfax County Code Appendix W, what Virginia Code section authorizes changes to Designated Outdoor Refreshment Area license frequency or duration?",
+    "chunk_ids": ["019f34d8-43de-7a19-9537-3f35437f0a73"],
+    "criteria": [
+      {
+        "id": "citation-hist-054-cites",
+        "description": "Response cites the THCOCOFAVI1976_APXWDEOUREARLI chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d8-43de-7a19-9537-3f35437f0a73" }
+      },
+      {
+        "id": "citation-hist-054-contains-va-code",
+        "description": "Answer includes Virginia Code citation 4.1-206.3",
+        "check": { "type": "answer_contains", "substring": "4.1-206.3" }
+      },
+      {
+        "id": "citation-hist-054-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Same chunk as citation-hist-053."
+  },
+  {
+    "id": "citation-hist-055",
+    "category": "citation_accuracy_textual",
+    "query": "Under Fairfax County Code Appendix J, what Code section allows a person to shoot a pneumatic gun even in areas otherwise restricted by Chapter 6?",
+    "chunk_ids": ["019f34d7-30d4-74cf-b81a-b1c7d155bd8d"],
+    "criteria": [
+      {
+        "id": "citation-hist-055-cites",
+        "description": "Response cites the THCOCOFAVI1976_APXJORDEARWHFIPNGUMANOBESH chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d7-30d4-74cf-b81a-b1c7d155bd8d" }
+      },
+      {
+        "id": "citation-hist-055-contains-section",
+        "description": "Answer includes Section 6-1-2.1",
+        "check": { "type": "answer_contains", "substring": "6-1-2.1" }
+      },
+      {
+        "id": "citation-hist-055-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "'a person may shoot a pneumatic gun in the following areas and as otherwise allowed by Section 6-1-2.1.' Same logical node as citation-hist-023 but a distinct (newer) chunk row; query narrowed to avoid duplicating the existing 'firearms' check."
+  },
+  {
+    "id": "citation-hist-056",
+    "category": "citation_accuracy_textual",
+    "query": "When was Chapter 31 (Peddlers, Solicitors, and Canvassers) of the Fairfax County Code extensively revised, and by what ordinance?",
+    "chunk_ids": ["019f34bd-b4cd-754c-975a-2ba36ca66fef"],
+    "criteria": [
+      {
+        "id": "citation-hist-056-cites",
+        "description": "Response cites the FACOCO_CH31PESOCA chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-b4cd-754c-975a-2ba36ca66fef" }
+      },
+      {
+        "id": "citation-hist-056-contains-ord",
+        "description": "Answer includes ordinance number 22-84-31",
+        "check": { "type": "answer_contains", "substring": "22-84-31" }
+      },
+      {
+        "id": "citation-hist-056-contains-date",
+        "description": "Answer includes adoption date July 30, 1984",
+        "check": { "type": "answer_contains", "substring": "July 30, 1984" }
+      },
+      {
+        "id": "citation-hist-056-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Major revision Ord. No. 22-84-31 adopted July 30, 1984. Same logical node as citation-hist-024 but a distinct (newer) chunk row."
+  },
+  {
+    "id": "citation-hist-057",
+    "category": "citation_accuracy_textual",
+    "query": "What happened to Chapter 29 (Real Estate Salesman) of the Fairfax County Code?",
+    "chunk_ids": ["019f34bd-772d-7b8b-aef2-36ed40512ce5"],
+    "criteria": [
+      {
+        "id": "citation-hist-057-cites",
+        "description": "Response cites the FACOCO_CH29REESSA chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-772d-7b8b-aef2-36ed40512ce5" }
+      },
+      {
+        "id": "citation-hist-057-contains-repeal-ord",
+        "description": "Answer includes repealing ordinance 31-77-29",
+        "check": { "type": "answer_contains", "substring": "31-77-29" }
+      },
+      {
+        "id": "citation-hist-057-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 29 was repealed by ordinance 31-77-29. Same logical node as citation-hist-025 but a distinct (newer) chunk row."
+  },
+  {
+    "id": "citation-hist-058",
+    "category": "citation_accuracy_textual",
+    "query": "What roads are designated as snow emergency routes in Appendix K of the Fairfax County Code?",
+    "chunk_ids": ["019f34d7-33ad-7d58-aa56-33162ecd4aff"],
+    "criteria": [
+      {
+        "id": "citation-hist-058-cites",
+        "description": "Response cites the THCOCOFAVI1976_APXKDESNEMRO chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d7-33ad-7d58-aa56-33162ecd4aff" }
+      },
+      {
+        "id": "citation-hist-058-contains-route1",
+        "description": "Answer mentions Richmond Highway",
+        "check": { "type": "answer_contains", "substring": "Richmond Highway" }
+      },
+      {
+        "id": "citation-hist-058-contains-route7",
+        "description": "Answer mentions Leesburg Pike",
+        "check": { "type": "answer_contains", "substring": "Leesburg Pike" }
+      },
+      {
+        "id": "citation-hist-058-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Appendix K lists snow emergency routes; Rt. 1 = Richmond Highway, Rt. 7 = Leesburg Pike. Same logical node as citation-hist-041/042 but a distinct (newer) chunk row."
+  },
+  {
+    "id": "citation-hist-059",
+    "category": "citation_accuracy_textual",
+    "query": "What numbering convention does Fairfax County Code Chapter 102 establish for properties and buildings?",
+    "chunk_ids": ["019f34ce-039a-7f60-b3e7-fe89bf6f05cb"],
+    "criteria": [
+      {
+        "id": "citation-hist-059-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH102STSI_ART1PRBUNUSTNA_S102-1-3ASNUCOSENUPO chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34ce-039a-7f60-b3e7-fe89bf6f05cb" }
+      },
+      {
+        "id": "citation-hist-059-contains-system",
+        "description": "Answer mentions the uniform numbering system",
+        "check": { "type": "answer_contains", "substring": "uniform numbering system" }
+      },
+      {
+        "id": "citation-hist-059-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Found via live query of municode_node_id ILIKE '%CH102%': the chapter-level node (THCOCOFAVI1976_CH102STSI) does not itself contain 'uniform numbering system' — this specific Article 1 subsection does. Distinct from citation-hist-043 (chapter-level node)."
+  },
+  {
+    "id": "citation-hist-060",
+    "category": "citation_accuracy_textual",
+    "query": "What division did Fairfax County Code Chapter 103 create within the County Health Department?",
+    "chunk_ids": ["019f34ce-3cdc-7ec6-8b6c-0c2667581cf4"],
+    "criteria": [
+      {
+        "id": "citation-hist-060-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH103AIPOCO_ART2AIPOCODI_S103-2-1AIPOCODICR chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34ce-3cdc-7ec6-8b6c-0c2667581cf4" }
+      },
+      {
+        "id": "citation-hist-060-contains-division",
+        "description": "Answer names the Division of Air Pollution Control",
+        "check": { "type": "answer_contains", "substring": "Division of Air Pollution Control" }
+      },
+      {
+        "id": "citation-hist-060-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Found via live query of municode_node_id = 'S103-2-1AIPOCODICR': content reads 'There is hereby created a Division of Air Pollution Control in the County Health Department' — word order is 'Division of Air Pollution Control', not 'Air Pollution Control Division'. Distinct from citation-hist-044 (chapter-level node)."
+  },
+  {
+    "id": "citation-hist-061",
+    "category": "citation_accuracy_textual",
+    "query": "How does Fairfax County Code Chapter 118 (Chesapeake Bay Preservation Ordinance) define 'Lot'?",
+    "chunk_ids": ["019f34d1-3113-7e95-bc34-feed63ad7d19"],
+    "criteria": [
+      {
+        "id": "citation-hist-061-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH118CHBAPROR_ART1GEPRDE_S118-1-6DE chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d1-3113-7e95-bc34-feed63ad7d19" }
+      },
+      {
+        "id": "citation-hist-061-contains-def",
+        "description": "Answer includes the 'Lot' definition text",
+        "check": { "type": "answer_contains", "substring": "Lot means a parcel of land" }
+      },
+      {
+        "id": "citation-hist-061-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Confirmed via live query: chunk's municode_node_id is CH118CHBAPROR (Chapter 118), not Chapter 112."
+  },
+  {
+    "id": "citation-hist-062",
+    "category": "citation_accuracy_textual",
+    "query": "How does Fairfax County Code Chapter 118 (Chesapeake Bay Preservation Ordinance) define 'impervious surface'?",
+    "chunk_ids": ["019f34d1-3113-7e95-bc34-feed63ad7d19"],
+    "criteria": [
+      {
+        "id": "citation-hist-062-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH118CHBAPROR_ART1GEPRDE_S118-1-6DE chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d1-3113-7e95-bc34-feed63ad7d19" }
+      },
+      {
+        "id": "citation-hist-062-contains-def",
+        "description": "Answer includes the 'impervious surface' definition text",
+        "check": { "type": "answer_contains", "substring": "impedes or prevents natural infiltration" }
+      },
+      {
+        "id": "citation-hist-062-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Same chunk as citation-hist-061 (Chapter 118, not Chapter 112)."
+  },
+  {
+    "id": "citation-hist-063",
+    "category": "citation_accuracy_textual",
+    "query": "How does Fairfax County Code Chapter 4 (BPOL tax) define 'gross receipts'?",
+    "chunk_ids": ["019f34b7-8f6e-74ea-bf10-7f879af8e397"],
+    "criteria": [
+      {
+        "id": "citation-hist-063-cites",
+        "description": "Response cites the FACOCO_CH4TAFI_ART7.1BUPROCLITA_S4-7.1-1DERE chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34b7-8f6e-74ea-bf10-7f879af8e397" }
+      },
+      {
+        "id": "citation-hist-063-contains-def",
+        "description": "Answer includes the 'gross receipts' definition text",
+        "check": { "type": "answer_contains", "substring": "Gross receipts mean the gross receipts" }
+      },
+      {
+        "id": "citation-hist-063-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 4, Article 7.1 (Business, Professional and Occupational License Tax) definitions section."
+  },
+  {
+    "id": "citation-hist-064",
+    "category": "citation_accuracy_textual",
+    "query": "Why does Fairfax County Code require the removal of inoperative motor vehicles?",
+    "chunk_ids": ["019f34d0-6f96-7e77-b8f5-f7a031c99b86"],
+    "criteria": [
+      {
+        "id": "citation-hist-064-cites",
+        "description": "Response cites the inoperative motor vehicle chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d0-6f96-7e77-b8f5-f7a031c99b86" }
+      },
+      {
+        "id": "citation-hist-064-contains-reason",
+        "description": "Answer mentions fire hazard",
+        "check": { "type": "answer_contains", "substring": "fire hazard" }
+      },
+      {
+        "id": "citation-hist-064-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Inoperative motor vehicles are treated as a fire hazard under Chapter 110."
+  },
+  {
+    "id": "citation-hist-065",
+    "category": "citation_accuracy_textual",
+    "query": "How does Fairfax County Code Chapter 116 (Wetlands Zoning Ordinance) define 'wetlands'?",
+    "chunk_ids": ["019f34d1-05a2-7ab3-9056-50714cdd5bbd"],
+    "criteria": [
+      {
+        "id": "citation-hist-065-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH116WEZOOR_ART1INGE_S116-1-2DE chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d1-05a2-7ab3-9056-50714cdd5bbd" }
+      },
+      {
+        "id": "citation-hist-065-contains-def",
+        "description": "Answer includes the 'wetlands' definition text",
+        "check": { "type": "answer_contains", "substring": "vegetated and nonvegetated wetlands" }
+      },
+      {
+        "id": "citation-hist-065-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "'Wetlands means both vegetated and nonvegetated wetlands.'"
+  },
+  {
+    "id": "citation-hist-066",
+    "category": "citation_accuracy_textual",
+    "query": "What subdivision plat approval steps does Fairfax County Code Chapter 101 describe for a minor property line adjustment?",
+    "chunk_ids": ["019f34cd-c797-7d95-bf44-74e5706cfc87"],
+    "criteria": [
+      {
+        "id": "citation-hist-066-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH101SUPR_ART2SUAPPRAPPR_S101-2-1PR chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34cd-c797-7d95-bf44-74e5706cfc87" }
+      },
+      {
+        "id": "citation-hist-066-contains-plat",
+        "description": "Answer mentions preliminary plat",
+        "check": { "type": "answer_contains", "substring": "preliminary plat" }
+      },
+      {
+        "id": "citation-hist-066-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "'a final plat may be submitted and no preliminary plat shall be required' for minor property line adjustments/simple subdivisions with no public improvements."
+  },
+  {
+    "id": "citation-hist-067",
+    "category": "citation_accuracy_textual",
+    "query": "How much advance written notice must a cable Grantee give subscribers before increasing rates under Fairfax County Code Chapter 9.2?",
+    "chunk_ids": ["019f34bb-b530-7b0b-9b00-38b5a9a03c96"],
+    "criteria": [
+      {
+        "id": "citation-hist-067-cites",
+        "description": "Response cites the FACOCO_CH9.2CATE_ART9COPR_S9.2-9-9SURANO chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bb-b530-7b0b-9b00-38b5a9a03c96" }
+      },
+      {
+        "id": "citation-hist-067-contains-clause",
+        "description": "Answer includes the rate-increase notification clause",
+        "check": { "type": "answer_contains", "substring": "shall not implement an increase in rates" }
+      },
+      {
+        "id": "citation-hist-067-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "'A Grantee shall not implement an increase in rates or charges unless ... notified ... in writing at least 60 days in advance of the change.'"
+  },
+  {
+    "id": "citation-hist-068",
+    "category": "citation_accuracy_textual",
+    "query": "What is the stated purpose of Fairfax County Code Chapter 84.1 governing taxicabs?",
+    "chunk_ids": ["019f34cc-f64b-783b-9115-c5dab5151fcc"],
+    "criteria": [
+      {
+        "id": "citation-hist-068-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH84.1PUTR_ART1INGE_S84.1-1-1PUCH chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34cc-f64b-783b-9115-c5dab5151fcc" }
+      },
+      {
+        "id": "citation-hist-068-contains-purpose",
+        "description": "Answer includes the taxicab service purpose clause",
+        "check": { "type": "answer_contains", "substring": "safe, reliable, adequate and efficient taxicab service" }
+      },
+      {
+        "id": "citation-hist-068-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "'The purpose of this Chapter is to regulate the operation of taxicabs ... to ensure safe, reliable, adequate and efficient taxicab service.'"
+  },
+  {
+    "id": "citation-hist-069",
+    "category": "citation_accuracy_textual",
+    "query": "What identification requirements does Fairfax County Code Chapter 31 impose on individual applicants for a peddler/solicitor license?",
+    "chunk_ids": ["019f34bd-ceea-7ece-a9b9-9eaf48282920"],
+    "criteria": [
+      {
+        "id": "citation-hist-069-cites",
+        "description": "Response cites the FACOCO_CH31PESOCA_ART2LI_S31-2-4APLI chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-ceea-7ece-a9b9-9eaf48282920" }
+      },
+      {
+        "id": "citation-hist-069-contains-req",
+        "description": "Answer mentions fingerprinting and photographing",
+        "check": { "type": "answer_contains", "substring": "fingerprinted and photographed" }
+      },
+      {
+        "id": "citation-hist-069-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "'Each applicant, if an individual, shall be required to be fingerprinted and photographed by the County.'"
+  },
+  {
+    "id": "citation-hist-070",
+    "category": "citation_accuracy_textual",
+    "query": "What security may the Wetlands Board require as a condition of a Fairfax County Code Chapter 116 wetlands development permit?",
+    "chunk_ids": ["019f34d1-0eff-7983-93d4-e6fee08c39de"],
+    "criteria": [
+      {
+        "id": "citation-hist-070-cites",
+        "description": "Response cites the Chapter 116 permit-bond chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d1-0eff-7983-93d4-e6fee08c39de" }
+      },
+      {
+        "id": "citation-hist-070-contains-security",
+        "description": "Answer mentions letter of credit",
+        "check": { "type": "answer_contains", "substring": "letter of credit" }
+      },
+      {
+        "id": "citation-hist-070-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "'The Board may require a reasonable bond or letter of credit ... securing to the Commonwealth compliance with the conditions and limitations set forth in the permit.' (47-88-116; 26-94-116.) Reworded from the originally-briefed 'Permitted uses'/'Grounds for' framing, which did not match this chunk's actual content."
+  },
+  {
+    "id": "citation-hist-071",
+    "category": "citation_accuracy_textual",
+    "query": "What acreage minimum does Fairfax County Code Chapter 114 set for establishing an agricultural and forestal district of statewide significance?",
+    "chunk_ids": ["019f34d0-aa3d-76a9-bc12-87ea7f3263c4"],
+    "criteria": [
+      {
+        "id": "citation-hist-071-cites",
+        "description": "Response cites the THCOCOFAVI1976_CH114AGFODISTSI_ART1INGE_S114-1-3ESDI chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d0-aa3d-76a9-bc12-87ea7f3263c4" }
+      },
+      {
+        "id": "citation-hist-071-contains-acreage",
+        "description": "Answer includes the minimum acreage",
+        "check": { "type": "answer_contains", "substring": "two hundred (200) acres" }
+      },
+      {
+        "id": "citation-hist-071-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Same chunk as citation-num-017 (numeric category); kept in both suites to test the same fact via numeric and textual question framing."
+  },
+  {
+    "id": "citation-hist-072",
+    "category": "citation_accuracy_textual",
+    "query": "What sprinkler standard exception does Fairfax County Code Chapter 62 reference for residential construction?",
+    "chunk_ids": ["019f34c5-2eaf-715d-9226-6deb96482974"],
+    "criteria": [
+      {
+        "id": "citation-hist-072-cites",
+        "description": "Response cites the FACOCO_CH62FIPR_ART2FIMA_S62-2-8AMADDEVISTFIPRCO chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34c5-2eaf-715d-9226-6deb96482974" }
+      },
+      {
+        "id": "citation-hist-072-contains-system",
+        "description": "Answer mentions automatic sprinkler system",
+        "check": { "type": "answer_contains", "substring": "automatic sprinkler system" }
+      },
+      {
+        "id": "citation-hist-072-contains-standard",
+        "description": "Answer includes the NFPA13 standard reference",
+        "check": { "type": "answer_contains", "substring": "NFPA13" }
+      },
+      {
+        "id": "citation-hist-072-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "'automatic sprinkler system in accordance with the applicable NFPA13, NFPA 13R, or NFPA13D standard.' Chapter 62 (Fire Prevention)."
+  },
+  {
+    "id": "citation-hist-073",
+    "category": "citation_accuracy_textual",
+    "query": "What is the stated purpose of the Madison Residential Permit Parking District under Fairfax County Code Appendix G?",
+    "chunk_ids": ["019f34d4-1573-74be-80eb-ef52e00e1366"],
+    "criteria": [
+      {
+        "id": "citation-hist-073-cites",
+        "description": "Response cites the THCOCOFAVI1976_APXGREPEPADI_G-11MAREPEPADI chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d4-1573-74be-80eb-ef52e00e1366" }
+      },
+      {
+        "id": "citation-hist-073-contains-heading",
+        "description": "Answer references the Purpose and Intent section",
+        "check": { "type": "answer_contains", "substring": "Purpose and Intent" }
+      },
+      {
+        "id": "citation-hist-073-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "District established to protect the residential area near Madison High School from pollution, noise, and commuter parking impacts."
   }
 ]
