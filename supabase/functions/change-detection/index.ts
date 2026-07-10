@@ -78,6 +78,10 @@ interface ChangeDetectionSummary {
     pending_ingestion_id: string | null;
     reconciliation_triggered: boolean;
   };
+  encode_zoning: {
+    checked: boolean;
+    pending_ingestion_id: string | null;
+  };
   errors: string[];
   results: UrlScanResult[];
 }
@@ -466,6 +470,33 @@ async function checkMunicodeSupplement(
   };
 }
 
+function encodeZoningSource(config: SeedConfig): ApiSource {
+  const source = apiSourcesOf(config).find((s) => s.doc_type === "encode_zoning");
+  if (!source) throw new Error("seed-sources.json missing encode_zoning source");
+  return source;
+}
+
+/**
+ * Ensures exactly one active pending_ingestion exists for the EnCode zoning
+ * ordinance. Unlike checkMunicodeSupplement, this does not pre-check for a
+ * change before creating the row: EnCode has no lightweight version endpoint
+ * separate from the Amendment History Table fetch encode.ts already has to
+ * make to do its own top-level dedup (see encode.ts's VERSION SIGNAL
+ * section) -- duplicating that fetch+hash here would just double the request
+ * count against a robots.txt-disallowed path (see encode.ts file header) for
+ * no benefit. handleEncode() marks the ingestion 'skipped' cheaply (one
+ * request, no tree walk) when nothing has changed, so an unchanged run costs
+ * one extra EnCode GET per invocation, not a full re-walk.
+ */
+async function checkEncodeZoning(
+  config: SeedConfig,
+): Promise<ChangeDetectionSummary["encode_zoning"]> {
+  const source = encodeZoningSource(config);
+  const canonicalUrl = `${source.base_url}/doc-viewer.aspx?secid=2214`;
+  const pendingId = await createPendingIngestion(canonicalUrl, "encode_zoning");
+  return { checked: true, pending_ingestion_id: pendingId };
+}
+
 async function writePendingAlert(
   details: Record<string, unknown>,
 ): Promise<void> {
@@ -515,17 +546,20 @@ function summarizeResults(
   staleAlertsCreated: number,
   discovery: ChangeDetectionSummary["discovery"],
   municode: ChangeDetectionSummary["municode"],
+  encodeZoning: ChangeDetectionSummary["encode_zoning"],
 ): ChangeDetectionSummary {
   return {
     scanned_urls: results.length,
     pending_ingestions_created:
       results.filter((r) => r.action === "pending_ingestion_created").length +
-      (municode.pending_ingestion_id ? 1 : 0),
+      (municode.pending_ingestion_id ? 1 : 0) +
+      (encodeZoning.pending_ingestion_id ? 1 : 0),
     active_ingestions_skipped: results.filter((r) => r.action === "active_ingestion_exists").length,
     last_checked_updates: results.filter((r) => r.action === "last_checked_updated").length,
     stale_alerts_created: staleAlertsCreated,
     discovery,
     municode,
+    encode_zoning: encodeZoning,
     errors: results.filter((r) => r.action === "error").map((r) => `${r.url}: ${r.message}`),
     results,
   };
@@ -649,6 +683,29 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    let encodeZoning: ChangeDetectionSummary["encode_zoning"] = {
+      checked: false,
+      pending_ingestion_id: null,
+    };
+
+    try {
+      encodeZoning = await checkEncodeZoning(config);
+    } catch (e) {
+      const message = (e as Error).message;
+      logError(FN_NAME, "EnCode zoning check failed", { message });
+      results.push({
+        url: "encode_zoning",
+        doc_type: "encode_zoning",
+        action: "error",
+        message,
+      });
+      await writePendingAlert({
+        reason: "change_detection_encode_zoning_error",
+        doc_type: "encode_zoning",
+        message,
+      });
+    }
+
     const staleAlertsCreated = await writeStalenessAlerts();
     const discovery = {
       sources_crawled: discoverySources.length,
@@ -657,7 +714,7 @@ Deno.serve(async (req: Request) => {
     };
 
     return success(
-      summarizeResults(results, staleAlertsCreated, discovery, municode),
+      summarizeResults(results, staleAlertsCreated, discovery, municode, encodeZoning),
     );
   } catch (e) {
     logError(FN_NAME, "fatal error", { message: (e as Error).message });
