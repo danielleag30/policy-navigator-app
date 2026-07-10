@@ -87,7 +87,8 @@ function extractBetween(src: string, startMarker: string, endMarker: string): st
 Deno.test("wiring: municode.ts imports classifyOrphanRecovery from _municode-helpers.ts", async () => {
   const src = await Deno.readTextFile(MUNICODE_SRC);
   assert(
-    src.includes('import { classifyOrphanRecovery } from "./_municode-helpers.ts"'),
+    src.includes("classifyOrphanRecovery") &&
+      src.includes('from "./_municode-helpers.ts"'),
     "municode.ts must import classifyOrphanRecovery",
   );
 });

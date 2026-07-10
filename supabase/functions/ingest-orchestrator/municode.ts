@@ -105,7 +105,20 @@
 import { generate as uuidv7 } from "@std/uuid/v7";
 import db from "../_shared/db-client.ts";
 import { contentHash } from "../_shared/hash.ts";
-import { classifyOrphanRecovery } from "./_municode-helpers.ts";
+import { generateEmbeddingsHttp } from "../_shared/embedder.ts";
+import {
+  buildCurrentIdentityIndex,
+  classifyOrphanRecovery,
+  type CurrentIdentityIndex,
+  DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
+  DEFAULT_HISTORICAL_SUPPLEMENTS,
+  headingMatchesHistoricalChapter,
+  type MunicodeJobSummary,
+  normalizeOnlineDate,
+  resolveHistoricalIdentity,
+  type SelectedHistoricalJob,
+  selectHistoricalJobs,
+} from "./_municode-helpers.ts";
 
 const PRODUCT_ID = "10051";
 const CLIENT_ID = "5335";
@@ -145,18 +158,30 @@ interface QueueItem {
 
 /** Serialized shape persisted to documents.municode_resume_state. */
 interface ResumeState {
+  mode?: "current" | "historical";
   jobId: string;
   effectiveDate: string;
   queue: QueueItem[];
+  historicalJob?: SelectedHistoricalJob;
 }
 
 interface IngestContext {
+  mode?: "current" | "historical";
   baseUrl: string;
   userAgent: string;
   jobId: string;
   documentId: string;
   effectiveDate: string;
 }
+
+interface HistoricalIngestContext extends IngestContext {
+  job: SelectedHistoricalJob;
+  identityIndex: CurrentIdentityIndex;
+  embedUrl: string | null;
+  supersededDate: string | null;
+}
+
+const HISTORICAL_EMBED_PREFLIGHT_TIMEOUT_MS = 20_000;
 
 function requireEnv(name: string): string {
   const value = Deno.env.get(name);
@@ -195,6 +220,11 @@ function defaultEffectiveDate(): string {
   const d = new Date();
   d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().slice(0, 10);
+}
+
+function effectiveDateFromJob(jobPayload: Record<string, unknown>): string {
+  const onlineDate = normalizeOnlineDate(String(jobPayload?.OnlineDate ?? ""));
+  return onlineDate ?? defaultEffectiveDate();
 }
 
 /**
@@ -305,6 +335,147 @@ async function upsertProvision(
   }
 }
 
+async function persistHistoricalEmbedding(
+  ctx: HistoricalIngestContext,
+  provisionId: string,
+  content: string,
+): Promise<void> {
+  if (!ctx.embedUrl) return;
+
+  const [embedding] = await generateEmbeddingsHttp(ctx.embedUrl, [content]);
+  if (!embedding) {
+    console.warn(
+      `[municode-history] null embedding for historical provision ${provisionId}`,
+    );
+    return;
+  }
+
+  const { error: updateErr } = await db
+    .from("ordinance_provisions")
+    .update({ embedding, updated_at: new Date().toISOString() })
+    .eq("id", provisionId);
+  if (updateErr) {
+    throw new Error(
+      `Failed to persist historical embedding for ${provisionId}: ${updateErr.message}`,
+    );
+  }
+}
+
+async function availableHistoricalEmbedUrl(
+  embedUrl: string | null,
+): Promise<string | null> {
+  if (!embedUrl) return null;
+  const [embedding] = await generateEmbeddingsHttp(
+    embedUrl,
+    ["municode historical embedding preflight"],
+    HISTORICAL_EMBED_PREFLIGHT_TIMEOUT_MS,
+  );
+  if (!embedding) {
+    console.warn(
+      "[municode-history] /embed preflight failed; historical rows will be inserted without blocking on per-row embedding this invocation",
+    );
+    return null;
+  }
+  return embedUrl;
+}
+
+async function upsertHistoricalProvision(
+  item: QueueItem,
+  ctx: HistoricalIngestContext,
+  plainContent: string,
+): Promise<void> {
+  const newHash = await contentHash(plainContent);
+  const identity = resolveHistoricalIdentity({
+    rawNodeId: item.id,
+    heading: item.heading,
+    content: plainContent,
+    currentNodeIds: ctx.identityIndex.currentNodeIds,
+    citationToCurrentNodeId: ctx.identityIndex.citationToCurrentNodeId,
+  });
+
+  const { data: existing, error: lookupErr } = await db
+    .from("ordinance_provisions")
+    .select("id, content_hash, embedding")
+    .eq("municode_node_id", identity.nodeId)
+    .eq("effective_date", ctx.effectiveDate)
+    .maybeSingle();
+
+  if (lookupErr) {
+    throw new Error(
+      `historical ordinance_provisions lookup failed for ${identity.nodeId}: ${lookupErr.message}`,
+    );
+  }
+
+  if (existing) {
+    if (existing.content_hash === newHash) {
+      if (!existing.embedding) {
+        await persistHistoricalEmbedding(
+          ctx,
+          existing.id as string,
+          plainContent,
+        );
+      }
+      console.log(
+        `[municode-history] existing snapshot skipped ${identity.nodeId} (${ctx.effectiveDate})`,
+      );
+      return;
+    }
+
+    const { error: updateErr } = await db
+      .from("ordinance_provisions")
+      .update({
+        parent_node_id: item.parentNodeId,
+        depth: item.depth,
+        is_current: false,
+        superseded_date: ctx.supersededDate,
+        section_title: item.heading ?? null,
+        content: plainContent,
+        content_hash: newHash,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id as string);
+    if (updateErr) {
+      throw new Error(
+        `Failed to update historical provision ${existing.id}: ${updateErr.message}`,
+      );
+    }
+    await persistHistoricalEmbedding(ctx, existing.id as string, plainContent);
+    return;
+  }
+
+  const provisionId = uuidv7();
+  const { error: insertErr } = await db.from("ordinance_provisions").insert({
+    id: provisionId,
+    document_id: ctx.documentId,
+    municode_node_id: identity.nodeId,
+    parent_node_id: item.parentNodeId,
+    depth: item.depth,
+    effective_date: ctx.effectiveDate,
+    is_current: false,
+    superseded_date: ctx.supersededDate,
+    section_title: item.heading ?? null,
+    content: plainContent,
+    content_hash: newHash,
+  });
+
+  if (insertErr?.code === "23505") {
+    console.warn(
+      `[municode-history] duplicate snapshot skipped: ${identity.nodeId} (${ctx.effectiveDate})`,
+    );
+    return;
+  }
+  if (insertErr) {
+    throw new Error(
+      `Historical Municode provision insert failed for ${identity.nodeId}: ${insertErr.message}`,
+    );
+  }
+
+  console.log(
+    `[municode-history] inserted ${identity.nodeId} (${identity.strategy}, ${ctx.effectiveDate})`,
+  );
+  await persistHistoricalEmbedding(ctx, provisionId, plainContent);
+}
+
 /**
  * Fetch content for one queued node, upsert it (supersession-aware), and
  * return its children (if any) so the caller can push them onto the walk
@@ -345,7 +516,15 @@ async function processNode(
   if (rawContent !== null && rawContent !== "") {
     const plainContent = stripHtml(rawContent);
     if (plainContent) {
-      await upsertProvision(item, ctx, plainContent);
+      if (ctx.mode === "historical") {
+        await upsertHistoricalProvision(
+          item,
+          ctx as HistoricalIngestContext,
+          plainContent,
+        );
+      } else {
+        await upsertProvision(item, ctx, plainContent);
+      }
     } else {
       console.log(
         `[municode] skipping ${item.id} (depth ${item.depth}) — empty after HTML strip`,
@@ -423,10 +602,14 @@ async function drainQueue(
       deadlineMs !== undefined && Date.now() >= deadlineMs - DEADLINE_BUFFER_MS
     ) {
       const state: ResumeState = {
+        mode: ctx.mode ?? "current",
         jobId: ctx.jobId,
         effectiveDate: ctx.effectiveDate,
         queue,
       };
+      if (ctx.mode === "historical") {
+        state.historicalJob = (ctx as HistoricalIngestContext).job;
+      }
       const { error: persistErr } = await db
         .from("documents")
         .update({
@@ -524,21 +707,24 @@ type ResumableLookup =
  * without doing any work this invocation.
  */
 async function findResumableDocument(): Promise<ResumableLookup> {
-  const { data: candidate, error: findErr } = await db
+  const { data: candidates, error: findErr } = await db
     .from("documents")
-    .select("id")
+    .select("id, municode_resume_state")
     .eq("doc_type", "municode_api")
     .eq("status", "unknown")
     .not("municode_resume_state", "is", null)
     .order("ingested_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .limit(10);
 
   if (findErr) {
     throw new Error(
       `Municode resumable-document lookup failed: ${findErr.message}`,
     );
   }
+  const candidate = (candidates ?? []).find((row) => {
+    const state = row.municode_resume_state as ResumeState | null;
+    return state?.mode !== "historical";
+  });
   if (!candidate) return { kind: "none" };
 
   const nowIso = new Date().toISOString();
@@ -569,6 +755,655 @@ async function findResumableDocument(): Promise<ResumableLookup> {
     kind: "claimed",
     documentId: claimed.id as string,
     state: claimed.municode_resume_state as ResumeState,
+  };
+}
+
+async function fetchProductJobs(
+  baseUrl: string,
+  userAgent: string,
+): Promise<MunicodeJobSummary[]> {
+  const jobs = await fetchJson(
+    `${baseUrl}/Jobs/product/${PRODUCT_ID}`,
+    userAgent,
+  );
+  if (!Array.isArray(jobs)) {
+    throw new Error("Municode /Jobs/product response was not an array");
+  }
+  return jobs as MunicodeJobSummary[];
+}
+
+function latestJobFromProductJobs(
+  jobs: MunicodeJobSummary[],
+): SelectedHistoricalJob {
+  const selected = selectHistoricalJobs(
+    jobs,
+    "",
+    jobs.map((job) => {
+      const match = (job.Name ?? "").match(/\bSupplement\s+(\d+)\b/i);
+      return match ? Number(match[1]) : -1;
+    }).filter((n) => n >= 0),
+  );
+  const latest = selected.at(-1);
+  if (!latest) {
+    throw new Error("Municode product jobs did not include any supplements");
+  }
+  return latest;
+}
+
+function nextOnlineDateAfter(
+  jobs: MunicodeJobSummary[],
+  job: SelectedHistoricalJob,
+): string | null {
+  const ordered = selectHistoricalJobs(
+    jobs,
+    "",
+    jobs.map((candidate) => {
+      const match = (candidate.Name ?? "").match(/\bSupplement\s+(\d+)\b/i);
+      return match ? Number(match[1]) : -1;
+    }).filter((n) => n >= 0),
+  );
+  const idx = ordered.findIndex((candidate) => candidate.jobId === job.jobId);
+  return idx >= 0 ? ordered[idx + 1]?.onlineDate ?? null : null;
+}
+
+function prioritizeHistoricalJobs(
+  jobs: SelectedHistoricalJob[],
+): SelectedHistoricalJob[] {
+  const priority = [
+    156,
+    157,
+    155,
+    158,
+    159,
+    160,
+    126,
+    127,
+    128,
+    129,
+    130,
+    176,
+    177,
+    178,
+  ];
+  return [...jobs].sort((a, b) => {
+    const ai = priority.indexOf(a.supplementNumber);
+    const bi = priority.indexOf(b.supplementNumber);
+    const arank = ai === -1 ? Number.MAX_SAFE_INTEGER : ai;
+    const brank = bi === -1 ? Number.MAX_SAFE_INTEGER : bi;
+    if (arank !== brank) return arank - brank;
+    return a.onlineDate.localeCompare(b.onlineDate);
+  });
+}
+
+async function loadCurrentIdentityIndex(): Promise<CurrentIdentityIndex> {
+  const { data: rows, error } = await db
+    .from("ordinance_provisions")
+    .select("municode_node_id, section_title, content")
+    .eq("is_current", true);
+  if (error) {
+    throw new Error(
+      `Current Municode identity index lookup failed: ${error.message}`,
+    );
+  }
+  return buildCurrentIdentityIndex(
+    (rows ?? []).map((row) => ({
+      municode_node_id: row.municode_node_id as string,
+      section_title: row.section_title as string | null,
+      content: row.content as string | null,
+    })),
+  );
+}
+
+async function alignCurrentDocumentDate(
+  baseUrl: string,
+  latestJob: SelectedHistoricalJob,
+): Promise<void> {
+  const canonicalUrl =
+    `${baseUrl}/CodesContent?clientId=${CLIENT_ID}&productId=${PRODUCT_ID}&jobId=${latestJob.jobId}`;
+  const { data: doc, error: lookupErr } = await db
+    .from("documents")
+    .select("id, source_published_at")
+    .eq("url", canonicalUrl)
+    .maybeSingle();
+  if (lookupErr) {
+    throw new Error(
+      `Current Municode document lookup failed: ${lookupErr.message}`,
+    );
+  }
+  if (!doc) return;
+
+  const { error: docErr } = await db
+    .from("documents")
+    .update({
+      source_published_at: latestJob.onlineDate,
+      title: `Fairfax County Code of Ordinances — ${latestJob.name}`,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", doc.id as string);
+  if (docErr) {
+    throw new Error(
+      `Current Municode document date update failed: ${docErr.message}`,
+    );
+  }
+
+  const { error: provisionErr } = await db
+    .from("ordinance_provisions")
+    .update({
+      effective_date: latestJob.onlineDate,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("document_id", doc.id as string)
+    .eq("is_current", true)
+    .neq("effective_date", latestJob.onlineDate);
+  if (provisionErr) {
+    throw new Error(
+      `Current Municode provision date update failed: ${provisionErr.message}`,
+    );
+  }
+}
+
+type HistoricalClaim =
+  | { kind: "claimed"; documentId: string }
+  | { kind: "already-complete"; documentId: string }
+  | { kind: "leased"; documentId: string };
+
+async function claimOrCreateHistoricalDocument(
+  baseUrl: string,
+  job: SelectedHistoricalJob,
+  tocHash: string,
+  rootNodes: TocNode[],
+): Promise<HistoricalClaim> {
+  const canonicalUrl =
+    `${baseUrl}/CodesContent?clientId=${CLIENT_ID}&productId=${PRODUCT_ID}&jobId=${job.jobId}`;
+
+  const { data: existing, error: lookupErr } = await db
+    .from("documents")
+    .select("id, status, municode_resume_state")
+    .eq("url", canonicalUrl)
+    .maybeSingle();
+  if (lookupErr) {
+    throw new Error(`Historical document lookup failed: ${lookupErr.message}`);
+  }
+
+  if (!existing) {
+    const now = new Date().toISOString();
+    const documentId = uuidv7();
+    const leaseExpiresAt = new Date(
+      Date.now() + RESUME_LEASE_MINUTES * 60 * 1000,
+    ).toISOString();
+    const { error: insertErr } = await db.from("documents").insert({
+      id: documentId,
+      url: canonicalUrl,
+      filename: null,
+      doc_type: "municode_api",
+      status: "unknown",
+      ingested_at: now,
+      last_checked_at: now,
+      content_hash: tocHash,
+      source_published_at: job.onlineDate,
+      title: `Fairfax County Code of Ordinances — ${job.name}`,
+      fiscal_year: null,
+      docling_version: null,
+      resume_claim_expires_at: leaseExpiresAt,
+      raw_api_response: {
+        historical_backfill: true,
+        jobId: job.jobId,
+        supplement: job.supplementNumber,
+        selected_roots: rootNodes.map((node) => ({
+          id: node.Id,
+          heading: node.Heading,
+        })),
+      },
+    });
+    if (insertErr?.code === "23505") {
+      return { kind: "leased", documentId };
+    }
+    if (insertErr) {
+      throw new Error(
+        `Historical Municode document insert failed: ${insertErr.message}`,
+      );
+    }
+    return { kind: "claimed", documentId };
+  }
+
+  if (existing.status !== "unknown") {
+    return {
+      kind: "already-complete",
+      documentId: existing.id as string,
+    };
+  }
+
+  const nowIso = new Date().toISOString();
+  const leaseExpiresAt = new Date(
+    Date.now() + RESUME_LEASE_MINUTES * 60 * 1000,
+  ).toISOString();
+  const { data: claimed, error: claimErr } = await db
+    .from("documents")
+    .update({ resume_claim_expires_at: leaseExpiresAt })
+    .eq("id", existing.id as string)
+    .or(`resume_claim_expires_at.is.null,resume_claim_expires_at.lt.${nowIso}`)
+    .select("id")
+    .maybeSingle();
+  if (claimErr) {
+    throw new Error(`Historical document claim failed: ${claimErr.message}`);
+  }
+  if (!claimed) {
+    return { kind: "leased", documentId: existing.id as string };
+  }
+  return { kind: "claimed", documentId: existing.id as string };
+}
+
+type HistoricalResumableLookup =
+  | { kind: "claimed"; documentId: string; state: ResumeState }
+  | { kind: "leased"; documentId: string }
+  | { kind: "none" };
+
+async function findResumableHistoricalDocument(): Promise<
+  HistoricalResumableLookup
+> {
+  const { data: candidates, error: findErr } = await db
+    .from("documents")
+    .select("id, municode_resume_state")
+    .eq("doc_type", "municode_api")
+    .eq("status", "unknown")
+    .not("municode_resume_state", "is", null)
+    .order("ingested_at", { ascending: true })
+    .limit(10);
+  if (findErr) {
+    throw new Error(
+      `Historical Municode resumable-document lookup failed: ${findErr.message}`,
+    );
+  }
+
+  const candidate = (candidates ?? []).find((row) => {
+    const state = row.municode_resume_state as ResumeState | null;
+    return state?.mode === "historical";
+  });
+  if (!candidate) return { kind: "none" };
+
+  const nowIso = new Date().toISOString();
+  const leaseExpiresAt = new Date(
+    Date.now() + RESUME_LEASE_MINUTES * 60 * 1000,
+  ).toISOString();
+
+  const { data: claimed, error: claimErr } = await db
+    .from("documents")
+    .update({ resume_claim_expires_at: leaseExpiresAt })
+    .eq("id", candidate.id as string)
+    .not("municode_resume_state", "is", null)
+    .or(`resume_claim_expires_at.is.null,resume_claim_expires_at.lt.${nowIso}`)
+    .select("id, municode_resume_state")
+    .maybeSingle();
+  if (claimErr) {
+    throw new Error(
+      `Historical Municode resume claim failed: ${claimErr.message}`,
+    );
+  }
+  if (!claimed) return { kind: "leased", documentId: candidate.id as string };
+  return {
+    kind: "claimed",
+    documentId: claimed.id as string,
+    state: claimed.municode_resume_state as ResumeState,
+  };
+}
+
+async function finalizeHistoricalDocument(documentId: string): Promise<void> {
+  const { error } = await db
+    .from("documents")
+    .update({
+      status: "superseded",
+      municode_resume_state: null,
+      resume_claim_expires_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", documentId);
+  if (error) {
+    throw new Error(
+      `Historical Municode document finalization failed: ${error.message}`,
+    );
+  }
+}
+
+async function embedMissingHistoricalProvisions(
+  documentId: string,
+  embedUrl: string | null,
+  deadlineMs?: number,
+): Promise<{ processed: number; complete: boolean }> {
+  if (!embedUrl) {
+    const { count, error } = await db
+      .from("ordinance_provisions")
+      .select("id", { count: "exact", head: true })
+      .eq("document_id", documentId)
+      .eq("is_current", false)
+      .is("embedding", null);
+    if (error) {
+      throw new Error(
+        `Historical embedding backlog count failed: ${error.message}`,
+      );
+    }
+    return { processed: 0, complete: (count ?? 0) === 0 };
+  }
+
+  let processed = 0;
+  while (true) {
+    if (
+      deadlineMs !== undefined && Date.now() >= deadlineMs - DEADLINE_BUFFER_MS
+    ) {
+      return { processed, complete: false };
+    }
+
+    const { data: rows, error: fetchErr } = await db
+      .from("ordinance_provisions")
+      .select("id, content")
+      .eq("document_id", documentId)
+      .eq("is_current", false)
+      .is("embedding", null)
+      .order("id")
+      .limit(5);
+    if (fetchErr) {
+      throw new Error(
+        `Historical embedding backlog lookup failed: ${fetchErr.message}`,
+      );
+    }
+    if (!rows || rows.length === 0) {
+      return { processed, complete: true };
+    }
+
+    for (const row of rows) {
+      if (
+        deadlineMs !== undefined &&
+        Date.now() >= deadlineMs - DEADLINE_BUFFER_MS
+      ) {
+        return { processed, complete: false };
+      }
+      const [embedding] = await generateEmbeddingsHttp(
+        embedUrl,
+        [row.content as string],
+      );
+      if (!embedding) {
+        console.warn(
+          `[municode-history] null embedding while retrying historical provision ${row.id}`,
+        );
+        return { processed, complete: false };
+      }
+      const { error: updateErr } = await db
+        .from("ordinance_provisions")
+        .update({ embedding, updated_at: new Date().toISOString() })
+        .eq("id", row.id as string);
+      if (updateErr) {
+        throw new Error(
+          `Historical embedding retry update failed for ${row.id}: ${updateErr.message}`,
+        );
+      }
+      processed += 1;
+    }
+  }
+}
+
+async function fetchTocForJob(
+  baseUrl: string,
+  userAgent: string,
+  jobId: string,
+): Promise<TocNode> {
+  const tocUrl =
+    `${baseUrl}/codesToc?clientId=${CLIENT_ID}&productId=${PRODUCT_ID}&jobId=${jobId}`;
+  const tocPayload = await fetchJson(tocUrl, userAgent) as TocNode;
+  if (
+    typeof tocPayload !== "object" || tocPayload === null ||
+    !Array.isArray(tocPayload.Children)
+  ) {
+    throw new Error(
+      `Municode codesToc response missing Children for historical job ${jobId}`,
+    );
+  }
+  return tocPayload;
+}
+
+function isChapter4(heading: string | null | undefined): boolean {
+  return /^chapter\s+4(?:\b|\.)/i.test((heading ?? "").trim());
+}
+
+function isArticle6UtilityTax(heading: string | null | undefined): boolean {
+  const normalized = (heading ?? "").trim().toLowerCase();
+  return normalized.startsWith("article 6") &&
+    (normalized.includes("utility") || normalized.includes("ut"));
+}
+
+async function selectHistoricalRootNodes(
+  baseUrl: string,
+  userAgent: string,
+  jobId: string,
+  chapterNodes: TocNode[],
+): Promise<TocNode[]> {
+  const roots: TocNode[] = [];
+  for (const node of chapterNodes) {
+    if (isChapter4(node.Heading)) {
+      await sleep(SUBSECTION_DELAY_MS);
+      const children = await fetchNodeChildren(
+        baseUrl,
+        jobId,
+        node.Id,
+        userAgent,
+      );
+      roots.push(
+        ...children.filter((child) => isArticle6UtilityTax(child.Heading)),
+      );
+      continue;
+    }
+    if (
+      headingMatchesHistoricalChapter(node.Heading, [
+        "Chapter 9.1",
+        "Chapter 9.2",
+      ])
+    ) {
+      roots.push(node);
+    }
+  }
+  return roots;
+}
+
+export interface MunicodeHistoricalBackfillResult {
+  complete: boolean;
+  selectedSupplements: number[];
+  selectedChapterPrefixes: readonly string[];
+  processedJobs: Array<{
+    jobId: string;
+    supplement: number;
+    onlineDate: string;
+    documentId: string;
+    status: "processed" | "skipped" | "resumed";
+  }>;
+  reason?: string;
+}
+
+export async function handleMunicodeHistoricalBackfill(
+  deadlineMs?: number,
+): Promise<MunicodeHistoricalBackfillResult> {
+  const baseUrl = requireEnv("MUNICODE_BASE_URL");
+  const userAgent = requireEnv("MUNICODE_USER_AGENT");
+  const embedUrl = await availableHistoricalEmbedUrl(
+    Deno.env.get("HF_SPACES_DOCLING_URL") ?? null,
+  );
+
+  const productJobs = await fetchProductJobs(baseUrl, userAgent);
+  const latestJob = latestJobFromProductJobs(productJobs);
+  const selectedJobs = prioritizeHistoricalJobs(
+    selectHistoricalJobs(
+      productJobs,
+      latestJob.jobId,
+      DEFAULT_HISTORICAL_SUPPLEMENTS,
+    ),
+  );
+  await alignCurrentDocumentDate(baseUrl, latestJob);
+
+  const selectedSupplements = selectedJobs.map((job) => job.supplementNumber);
+  const processedJobs: MunicodeHistoricalBackfillResult["processedJobs"] = [];
+  const identityIndex = await loadCurrentIdentityIndex();
+
+  const resumable = await findResumableHistoricalDocument();
+  if (resumable.kind === "leased") {
+    return {
+      complete: false,
+      selectedSupplements,
+      selectedChapterPrefixes: DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
+      processedJobs,
+      reason: `historical resume lease held for ${resumable.documentId}`,
+    };
+  }
+  if (resumable.kind === "claimed") {
+    const job = resumable.state.historicalJob;
+    if (!job) {
+      throw new Error(
+        `Historical resume state for ${resumable.documentId} is missing job metadata`,
+      );
+    }
+    const ctx: HistoricalIngestContext = {
+      mode: "historical",
+      baseUrl,
+      userAgent,
+      jobId: job.jobId,
+      documentId: resumable.documentId,
+      effectiveDate: job.onlineDate,
+      job,
+      identityIndex,
+      embedUrl,
+      supersededDate: nextOnlineDateAfter(productJobs, job),
+    };
+    const result = await drainQueue(
+      resumable.state.queue,
+      ctx,
+      deadlineMs,
+      true,
+    );
+    if (!result.complete) {
+      return {
+        complete: false,
+        selectedSupplements,
+        selectedChapterPrefixes: DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
+        processedJobs,
+        reason: `resumed ${job.name} hit soft deadline`,
+      };
+    }
+    await finalizeHistoricalDocument(resumable.documentId);
+    processedJobs.push({
+      jobId: job.jobId,
+      supplement: job.supplementNumber,
+      onlineDate: job.onlineDate,
+      documentId: resumable.documentId,
+      status: "resumed",
+    });
+  }
+
+  for (const job of selectedJobs) {
+    if (
+      deadlineMs !== undefined && Date.now() >= deadlineMs - DEADLINE_BUFFER_MS
+    ) {
+      return {
+        complete: false,
+        selectedSupplements,
+        selectedChapterPrefixes: DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
+        processedJobs,
+        reason: "soft deadline reached before next historical job",
+      };
+    }
+
+    await sleep(REQUEST_DELAY_MS);
+    const tocPayload = await fetchTocForJob(baseUrl, userAgent, job.jobId);
+    const roots = await selectHistoricalRootNodes(
+      baseUrl,
+      userAgent,
+      job.jobId,
+      tocPayload.Children!,
+    );
+    if (roots.length === 0) {
+      continue;
+    }
+
+    const tocHash = await contentHash(JSON.stringify({
+      historicalBackfill: true,
+      jobId: job.jobId,
+      roots: roots.map((node) => node.Id),
+    }));
+    const claim = await claimOrCreateHistoricalDocument(
+      baseUrl,
+      job,
+      tocHash,
+      roots,
+    );
+    if (claim.kind === "leased") {
+      return {
+        complete: false,
+        selectedSupplements,
+        selectedChapterPrefixes: DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
+        processedJobs,
+        reason: `historical document lease held for ${job.name}`,
+      };
+    }
+    if (claim.kind === "already-complete") {
+      const embedResult = await embedMissingHistoricalProvisions(
+        claim.documentId,
+        embedUrl,
+        deadlineMs,
+      );
+      if (!embedResult.complete) {
+        return {
+          complete: false,
+          selectedSupplements,
+          selectedChapterPrefixes: DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
+          processedJobs,
+          reason:
+            `historical embedding backlog for ${job.name} hit soft deadline after ${embedResult.processed} row(s)`,
+        };
+      }
+      processedJobs.push({
+        jobId: job.jobId,
+        supplement: job.supplementNumber,
+        onlineDate: job.onlineDate,
+        documentId: claim.documentId,
+        status: "skipped",
+      });
+      continue;
+    }
+
+    const queue: QueueItem[] = [];
+    pushChildren(queue, roots, tocPayload.Id ?? null, 1);
+    const ctx: HistoricalIngestContext = {
+      mode: "historical",
+      baseUrl,
+      userAgent,
+      jobId: job.jobId,
+      documentId: claim.documentId,
+      effectiveDate: job.onlineDate,
+      job,
+      identityIndex,
+      embedUrl,
+      supersededDate: nextOnlineDateAfter(productJobs, job),
+    };
+    const result = await drainQueue(queue, ctx, deadlineMs, false);
+    if (!result.complete) {
+      return {
+        complete: false,
+        selectedSupplements,
+        selectedChapterPrefixes: DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
+        processedJobs,
+        reason: `${job.name} hit soft deadline`,
+      };
+    }
+    await finalizeHistoricalDocument(claim.documentId);
+    processedJobs.push({
+      jobId: job.jobId,
+      supplement: job.supplementNumber,
+      onlineDate: job.onlineDate,
+      documentId: claim.documentId,
+      status: "processed",
+    });
+  }
+
+  return {
+    complete: true,
+    selectedSupplements,
+    selectedChapterPrefixes: DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
+    processedJobs,
   };
 }
 
@@ -620,6 +1455,7 @@ export async function handleMunicode(
       `[municode] resuming in-progress walk for document ${resumable.documentId}`,
     );
     const ctx: IngestContext = {
+      mode: "current",
       baseUrl,
       userAgent,
       jobId: resumable.state.jobId,
@@ -681,7 +1517,7 @@ export async function handleMunicode(
   }
 
   const rootId = (tocPayload as TocNode).Id ?? null;
-  const effectiveDate = defaultEffectiveDate();
+  const effectiveDate = effectiveDateFromJob(jobPayload);
   let documentId: string;
 
   if (existing && !forceFullReingest) {
@@ -864,8 +1700,10 @@ export async function handleMunicode(
         ingested_at: now,
         last_checked_at: now,
         content_hash: hash,
-        source_published_at: null,
-        title: `Fairfax County Code of Ordinances — Supplement ${jobId}`,
+        source_published_at: effectiveDate,
+        title: `Fairfax County Code of Ordinances — ${
+          String(jobPayload?.Name ?? `Supplement ${jobId}`)
+        }`,
         fiscal_year: null,
         docling_version: null,
         raw_api_response: { jobId, toc_node_count: chapterNodes.length },
@@ -884,6 +1722,7 @@ export async function handleMunicode(
   pushChildren(queue, chapterNodes, rootId, 1);
 
   const ctx: IngestContext = {
+    mode: "current",
     baseUrl,
     userAgent,
     jobId,
