@@ -91,6 +91,8 @@ export function supplementNumber(name: string | undefined): number | null {
 
 export function normalizeOnlineDate(value: string | undefined): string | null {
   if (!value) return null;
+  const datePart = value.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (datePart) return datePart[1];
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return date.toISOString().slice(0, 10);
@@ -230,7 +232,10 @@ export function headingMatchesHistoricalChapter(
   prefixes: readonly string[] = DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
 ): boolean {
   const normalized = normalizeCitationText(heading ?? "");
-  return prefixes.some((prefix) =>
-    normalized.startsWith(normalizeCitationText(prefix))
-  );
+  return prefixes.some((prefix) => {
+    const normalizedPrefix = normalizeCitationText(prefix);
+    if (!normalized.startsWith(normalizedPrefix)) return false;
+    const remainder = normalized.slice(normalizedPrefix.length);
+    return remainder === "" || /^[\s.:-]/.test(remainder);
+  });
 }

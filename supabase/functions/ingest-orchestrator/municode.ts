@@ -163,7 +163,6 @@ interface ResumeState {
   effectiveDate: string;
   queue: QueueItem[];
   historicalJob?: SelectedHistoricalJob;
-  rootNodeIds?: string[];
 }
 
 interface IngestContext {
@@ -929,6 +928,9 @@ async function claimOrCreateHistoricalDocument(
   if (!existing) {
     const now = new Date().toISOString();
     const documentId = uuidv7();
+    const leaseExpiresAt = new Date(
+      Date.now() + RESUME_LEASE_MINUTES * 60 * 1000,
+    ).toISOString();
     const { error: insertErr } = await db.from("documents").insert({
       id: documentId,
       url: canonicalUrl,
@@ -942,6 +944,7 @@ async function claimOrCreateHistoricalDocument(
       title: `Fairfax County Code of Ordinances — ${job.name}`,
       fiscal_year: null,
       docling_version: null,
+      resume_claim_expires_at: leaseExpiresAt,
       raw_api_response: {
         historical_backfill: true,
         jobId: job.jobId,

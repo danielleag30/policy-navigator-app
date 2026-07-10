@@ -3,6 +3,7 @@ import {
   DEFAULT_HISTORICAL_SUPPLEMENTS,
   extractCitationKey,
   headingMatchesHistoricalChapter,
+  normalizeOnlineDate,
   resolveHistoricalIdentity,
   selectHistoricalJobs,
 } from "../supabase/functions/ingest-orchestrator/_municode-helpers.ts";
@@ -47,6 +48,11 @@ Deno.test("selectHistoricalJobs keeps the bounded default supplement set and exc
     selected.every((job) => job.jobId !== "5"),
     "latest/current job must not be inserted as a superseded historical snapshot",
   );
+});
+
+Deno.test("normalizeOnlineDate preserves the date part without timezone drift", () => {
+  assertEquals(normalizeOnlineDate("2019-09-11T00:00:00"), "2019-09-11");
+  assertEquals(normalizeOnlineDate("2019-11-19"), "2019-11-19");
 });
 
 Deno.test("extractCitationKey prefers section citations over chapter citations", () => {
@@ -129,6 +135,10 @@ Deno.test("headingMatchesHistoricalChapter limits the initial backfill to the sc
     !headingMatchesHistoricalChapter("Chapter 15.2 Noise"),
     "unscoped chapters should not be walked in the initial bounded backfill",
   );
+  assert(
+    !headingMatchesHistoricalChapter("Chapter 9.10 Future Cable Rules"),
+    "Chapter 9.1 must not match Chapter 9.10",
+  );
 });
 
 const MUNICODE_SRC = new URL(
@@ -156,7 +166,10 @@ Deno.test("wiring: drainQueue accepts the resume-state flag used by historical c
   const src = await Deno.readTextFile(MUNICODE_SRC);
   const signatureStart = src.indexOf("async function drainQueue(");
   assert(signatureStart !== -1, "drainQueue signature not found");
-  const signatureEnd = src.indexOf("): Promise<MunicodeResult>", signatureStart);
+  const signatureEnd = src.indexOf(
+    "): Promise<MunicodeResult>",
+    signatureStart,
+  );
   assert(signatureEnd !== -1, "drainQueue return type not found");
   const signature = src.slice(signatureStart, signatureEnd);
   assert(
