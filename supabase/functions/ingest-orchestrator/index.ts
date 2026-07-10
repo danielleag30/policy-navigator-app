@@ -40,7 +40,10 @@ import {
   persistEmbeddings,
   preflight,
 } from "../_shared/embedder.ts";
-import { handleMunicode } from "./municode.ts";
+import {
+  handleMunicode,
+  handleMunicodeHistoricalBackfill,
+} from "./municode.ts";
 import {
   embedOrdinanceProvisionsBatched,
   ORDINANCE_EMBED_FETCH_PAGE_SIZE,
@@ -1150,8 +1153,11 @@ Deno.serve(async (req: Request) => {
     return error("NOT_FOUND", "Method not allowed", 405);
   }
 
-  let body: { pending_ingestion_id?: string; force_full_reingest?: boolean } =
-    {};
+  let body: {
+    pending_ingestion_id?: string;
+    force_full_reingest?: boolean;
+    municode_historical_backfill?: boolean;
+  } = {};
   try {
     const text = await req.text();
     if (text.trim()) {
@@ -1175,6 +1181,34 @@ Deno.serve(async (req: Request) => {
       );
     }
     forceFullReingest = true;
+  }
+
+  if (body?.municode_historical_backfill === true) {
+    const adminSecret = Deno.env.get("ADMIN_SECRET");
+    if (!adminSecret || requestSecret(req) !== adminSecret) {
+      return error(
+        "UNAUTHORIZED",
+        "municode_historical_backfill requires a valid admin secret",
+        401,
+      );
+    }
+    try {
+      const result = await handleMunicodeHistoricalBackfill(SOFT_DEADLINE_MS);
+      return success({
+        status: result.complete ? "done" : "in_progress",
+        ...result,
+      });
+    } catch (e) {
+      console.error(
+        "[orchestrator] municode historical backfill failed:",
+        (e as Error).message,
+      );
+      return error(
+        "INGESTION_FAILED",
+        "Municode historical backfill failed",
+        500,
+      );
+    }
   }
 
   if (body?.pending_ingestion_id) {
