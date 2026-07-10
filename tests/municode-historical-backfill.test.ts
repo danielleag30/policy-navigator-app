@@ -152,6 +152,24 @@ Deno.test("wiring: normal Municode resume ignores historical resume states", asy
   );
 });
 
+Deno.test("wiring: drainQueue accepts the resume-state flag used by historical callers", async () => {
+  const src = await Deno.readTextFile(MUNICODE_SRC);
+  const signatureStart = src.indexOf("async function drainQueue(");
+  assert(signatureStart !== -1, "drainQueue signature not found");
+  const signatureEnd = src.indexOf("): Promise<MunicodeResult>", signatureStart);
+  assert(signatureEnd !== -1, "drainQueue return type not found");
+  const signature = src.slice(signatureStart, signatureEnd);
+  assert(
+    signature.includes("hadResumeState: boolean"),
+    "drainQueue must accept the fourth hadResumeState argument used by resume callers",
+  );
+  assert(
+    src.includes("drainQueue(resumable.state.queue, ctx, deadlineMs, true)") &&
+      src.includes("drainQueue(queue, ctx, deadlineMs, false)"),
+    "historical callers must pass the resume-state flag explicitly",
+  );
+});
+
 Deno.test("wiring: historical backfill is admin-only and does not run from normal polling", async () => {
   const src = await Deno.readTextFile(INDEX_SRC);
   const flagIdx = src.indexOf("municode_historical_backfill");
