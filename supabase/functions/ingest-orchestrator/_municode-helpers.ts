@@ -48,6 +48,38 @@ export function classifyOrphanRecovery(
   return provisionCount > 0 ? "finalize-only" : "rewalk-from-root";
 }
 
+const HISTORICAL_EMBEDDING_RETRY_MINUTES: Record<number, number> = {
+  1: 5,
+  2: 15,
+  3: 60,
+};
+
+export interface HistoricalEmbeddingRetrySchedule {
+  attempts: number;
+  nextAttemptAt: string;
+  lastError: string;
+}
+
+export function historicalEmbeddingRetryDelayMinutes(
+  nextAttemptNumber: number,
+): number {
+  return HISTORICAL_EMBEDDING_RETRY_MINUTES[nextAttemptNumber] ?? 6 * 60;
+}
+
+export function scheduleHistoricalEmbeddingRetry(
+  currentAttempts: number | null | undefined,
+  reason: string,
+  nowMs: number = Date.now(),
+): HistoricalEmbeddingRetrySchedule {
+  const attempts = Math.max(0, currentAttempts ?? 0) + 1;
+  const delayMinutes = historicalEmbeddingRetryDelayMinutes(attempts);
+  return {
+    attempts,
+    nextAttemptAt: new Date(nowMs + delayMinutes * 60 * 1000).toISOString(),
+    lastError: reason,
+  };
+}
+
 export interface MunicodeJobSummary {
   Id: number | string;
   Name?: string;

@@ -23,7 +23,8 @@ function assert(condition: unknown, message: string): asserts condition {
 function assertEquals<T>(actual: T, expected: T, message?: string): void {
   if (actual !== expected) {
     throw new Error(
-      message ?? `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+      message ??
+        `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
     );
   }
 }
@@ -45,7 +46,11 @@ Deno.test("classifyOrphanRecovery: existing document already 'current' → inser
 Deno.test("classifyOrphanRecovery: existing document still holds a resume_state → insert-fresh (findResumableDocument's territory)", () => {
   const orphan = {
     status: "unknown",
-    municode_resume_state: { jobId: "1", effectiveDate: "2026-01-01", queue: [] },
+    municode_resume_state: {
+      jobId: "1",
+      effectiveDate: "2026-01-01",
+      queue: [],
+    },
   };
   assertEquals(classifyOrphanRecovery(orphan, 500), "insert-fresh");
 });
@@ -76,7 +81,11 @@ const MUNICODE_SRC = new URL(
   import.meta.url,
 ).pathname;
 
-function extractBetween(src: string, startMarker: string, endMarker: string): string {
+function extractBetween(
+  src: string,
+  startMarker: string,
+  endMarker: string,
+): string {
   const startIdx = src.indexOf(startMarker);
   assert(startIdx !== -1, `Start marker not found: "${startMarker}"`);
   const endIdx = src.indexOf(endMarker, startIdx + startMarker.length);
@@ -112,8 +121,14 @@ Deno.test("wiring: finalize-only branch returns complete:true without reaching t
     'if (action === "finalize-only") {',
     'else if (action === "rewalk-from-root") {',
   );
-  assert(branch.includes("complete: true"), "finalize-only must return complete: true");
-  assert(branch.includes("skipped: false"), "finalize-only must return skipped: false");
+  assert(
+    branch.includes("complete: true"),
+    "finalize-only must return complete: true",
+  );
+  assert(
+    branch.includes("skipped: false"),
+    "finalize-only must return skipped: false",
+  );
   assert(
     !branch.includes('db.from("documents").insert'),
     "finalize-only must not insert a new document row",
@@ -138,6 +153,35 @@ Deno.test("wiring: rewalk-from-root branch reuses the orphan id and does not ins
   assert(
     !branch.includes('db.from("documents").insert'),
     "rewalk-from-root must not insert a new document row (would hit documents_url_key again)",
+  );
+});
+
+Deno.test("wiring: provisionCount === 0 orphan recovery re-walks from root instead of finalize-only", async () => {
+  const src = await Deno.readTextFile(MUNICODE_SRC);
+  const countBlock = extractBetween(
+    src,
+    "let provisionCount = 0;",
+    "const action = classifyOrphanRecovery(",
+  );
+  assert(
+    countBlock.includes('db\n        .from("ordinance_provisions")') &&
+      countBlock.includes('.eq("document_id", orphan.id as string)') &&
+      countBlock.includes("provisionCount = count ?? 0;"),
+    "orphan recovery must compute provisionCount before classification",
+  );
+
+  const rewalkBranch = extractBetween(
+    src,
+    'else if (action === "rewalk-from-root") {',
+    "} else {\n      // 4. Create Document shell row",
+  );
+  assert(
+    rewalkBranch.includes("re-walking from root"),
+    "zero-provision recovery must explicitly take the re-walk path",
+  );
+  assert(
+    !rewalkBranch.includes('select("municode_node_id")'),
+    "zero-provision recovery must not read back provisions as if the walk had already drained",
   );
 });
 
@@ -170,7 +214,10 @@ Deno.test("wiring: orphan-recovery claim runs for both finalize-only and rewalk-
     'if (action === "finalize-only" || action === "rewalk-from-root") {',
   );
   const finalizeBranchIdx = src.indexOf('if (action === "finalize-only") {');
-  assert(claimGuardIdx !== -1, "combined claim guard for both recovery actions not found");
+  assert(
+    claimGuardIdx !== -1,
+    "combined claim guard for both recovery actions not found",
+  );
   assert(finalizeBranchIdx !== -1, "finalize-only branch not found");
   assert(
     claimGuardIdx < finalizeBranchIdx,
@@ -208,7 +255,11 @@ Deno.test("wiring: a lost orphan-recovery claim requeues (complete:false) withou
     'if (action === "finalize-only" || action === "rewalk-from-root") {',
     'if (action === "finalize-only") {',
   );
-  const lossBranch = extractBetween(claimBlock, "if (!claimedOrphan) {", "\n      }\n    }");
+  const lossBranch = extractBetween(
+    claimBlock,
+    "if (!claimedOrphan) {",
+    "\n      }\n    }",
+  );
   assert(
     lossBranch.includes("complete: false"),
     "losing the claim must report complete: false (requeue), not proceed",

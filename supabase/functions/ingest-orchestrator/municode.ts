@@ -116,6 +116,7 @@ import {
   type MunicodeJobSummary,
   normalizeOnlineDate,
   resolveHistoricalIdentity,
+  scheduleHistoricalEmbeddingRetry,
   type SelectedHistoricalJob,
   selectHistoricalJobs,
 } from "./_municode-helpers.ts";
@@ -1064,24 +1065,149 @@ async function finalizeHistoricalDocument(documentId: string): Promise<void> {
   }
 }
 
+interface HistoricalEmbeddingRow {
+  id: string;
+  content: string;
+  historical_embedding_attempts?: number | null;
+}
+
+export interface MunicodeHistoricalEmbeddingRetryResult {
+  processed: number;
+  scheduled: number;
+  complete: boolean;
+  reason?: string;
+}
+
+function historicalEmbeddingDueFilter(nowIso: string): string {
+  return `historical_embedding_next_attempt_at.is.null,historical_embedding_next_attempt_at.lte.${nowIso}`;
+}
+
+async function markHistoricalEmbeddingRetry(
+  row: Pick<HistoricalEmbeddingRow, "id" | "historical_embedding_attempts">,
+  reason: string,
+): Promise<void> {
+  const retry = scheduleHistoricalEmbeddingRetry(
+    row.historical_embedding_attempts,
+    reason,
+  );
+  const { error } = await db
+    .from("ordinance_provisions")
+    .update({
+      historical_embedding_attempts: retry.attempts,
+      historical_embedding_next_attempt_at: retry.nextAttemptAt,
+      historical_embedding_last_error: retry.lastError,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", row.id);
+  if (error) {
+    throw new Error(
+      `Historical embedding retry scheduling failed for ${row.id}: ${error.message}`,
+    );
+  }
+}
+
+async function persistHistoricalEmbeddingRetrySuccess(
+  rowId: string,
+  embedding: number[],
+): Promise<void> {
+  const { error } = await db
+    .from("ordinance_provisions")
+    .update({
+      embedding,
+      historical_embedding_next_attempt_at: null,
+      historical_embedding_last_error: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", rowId);
+  if (error) {
+    throw new Error(
+      `Historical embedding retry update failed for ${rowId}: ${error.message}`,
+    );
+  }
+}
+
+async function fetchHistoricalEmbeddingBacklogRows(
+  documentId: string | null,
+  limit: number,
+  respectRetrySchedule: boolean,
+): Promise<HistoricalEmbeddingRow[]> {
+  let query = db
+    .from("ordinance_provisions")
+    .select("id, content, historical_embedding_attempts")
+    .eq("is_current", false)
+    .is("embedding", null);
+
+  if (documentId) {
+    query = query.eq("document_id", documentId);
+  }
+  if (respectRetrySchedule) {
+    query = query.or(historicalEmbeddingDueFilter(new Date().toISOString()));
+  }
+
+  const { data: rows, error: fetchErr } = await query
+    .order("historical_embedding_next_attempt_at", {
+      ascending: true,
+      nullsFirst: true,
+    })
+    .order("id")
+    .limit(limit);
+  if (fetchErr) {
+    throw new Error(
+      `Historical embedding backlog lookup failed: ${fetchErr.message}`,
+    );
+  }
+  return (rows ?? []) as HistoricalEmbeddingRow[];
+}
+
+async function countHistoricalEmbeddingBacklog(
+  documentId: string | null,
+  respectRetrySchedule: boolean,
+): Promise<number> {
+  let query = db
+    .from("ordinance_provisions")
+    .select("id", { count: "exact", head: true })
+    .eq("is_current", false)
+    .is("embedding", null);
+
+  if (documentId) {
+    query = query.eq("document_id", documentId);
+  }
+  if (respectRetrySchedule) {
+    query = query.or(historicalEmbeddingDueFilter(new Date().toISOString()));
+  }
+
+  const { count, error } = await query;
+  if (error) {
+    throw new Error(
+      `Historical embedding backlog count failed: ${error.message}`,
+    );
+  }
+  return count ?? 0;
+}
+
 async function embedMissingHistoricalProvisions(
   documentId: string,
   embedUrl: string | null,
   deadlineMs?: number,
+  respectRetrySchedule = false,
 ): Promise<{ processed: number; complete: boolean }> {
   if (!embedUrl) {
-    const { count, error } = await db
-      .from("ordinance_provisions")
-      .select("id", { count: "exact", head: true })
-      .eq("document_id", documentId)
-      .eq("is_current", false)
-      .is("embedding", null);
-    if (error) {
-      throw new Error(
-        `Historical embedding backlog count failed: ${error.message}`,
-      );
+    const rows = await fetchHistoricalEmbeddingBacklogRows(
+      documentId,
+      25,
+      respectRetrySchedule,
+    );
+    for (const row of rows) {
+      await markHistoricalEmbeddingRetry(row, "embed_url_unavailable");
     }
-    return { processed: 0, complete: (count ?? 0) === 0 };
+    const remaining = await countHistoricalEmbeddingBacklog(
+      documentId,
+      respectRetrySchedule,
+    );
+    return {
+      processed: 0,
+      complete: rows.length === 0 && remaining === 0,
+    };
   }
 
   let processed = 0;
@@ -1092,20 +1218,12 @@ async function embedMissingHistoricalProvisions(
       return { processed, complete: false };
     }
 
-    const { data: rows, error: fetchErr } = await db
-      .from("ordinance_provisions")
-      .select("id, content")
-      .eq("document_id", documentId)
-      .eq("is_current", false)
-      .is("embedding", null)
-      .order("id")
-      .limit(5);
-    if (fetchErr) {
-      throw new Error(
-        `Historical embedding backlog lookup failed: ${fetchErr.message}`,
-      );
-    }
-    if (!rows || rows.length === 0) {
+    const rows = await fetchHistoricalEmbeddingBacklogRows(
+      documentId,
+      5,
+      respectRetrySchedule,
+    );
+    if (rows.length === 0) {
       return { processed, complete: true };
     }
 
@@ -1118,23 +1236,91 @@ async function embedMissingHistoricalProvisions(
       }
       const [embedding] = await generateEmbeddingsHttp(
         embedUrl,
-        [row.content as string],
+        [row.content],
       );
       if (!embedding) {
         console.warn(
           `[municode-history] null embedding while retrying historical provision ${row.id}`,
         );
+        await markHistoricalEmbeddingRetry(row, "embed_generation_failed");
         return { processed, complete: false };
       }
-      const { error: updateErr } = await db
-        .from("ordinance_provisions")
-        .update({ embedding, updated_at: new Date().toISOString() })
-        .eq("id", row.id as string);
-      if (updateErr) {
-        throw new Error(
-          `Historical embedding retry update failed for ${row.id}: ${updateErr.message}`,
-        );
+      await persistHistoricalEmbeddingRetrySuccess(row.id, embedding);
+      processed += 1;
+    }
+  }
+}
+
+export async function handleMunicodeHistoricalEmbeddingRetry(
+  deadlineMs?: number,
+): Promise<MunicodeHistoricalEmbeddingRetryResult> {
+  const dueCount = await countHistoricalEmbeddingBacklog(null, true);
+  if (dueCount === 0) {
+    return { processed: 0, scheduled: 0, complete: true };
+  }
+
+  const embedUrl = await availableHistoricalEmbedUrl(
+    Deno.env.get("HF_SPACES_DOCLING_URL") ?? null,
+  );
+
+  let processed = 0;
+  let scheduled = 0;
+
+  if (!embedUrl) {
+    const rows = await fetchHistoricalEmbeddingBacklogRows(null, 25, true);
+    for (const row of rows) {
+      await markHistoricalEmbeddingRetry(row, "embed_url_unavailable");
+      scheduled += 1;
+    }
+    return {
+      processed,
+      scheduled,
+      complete: rows.length === 0,
+      reason: rows.length === 0 ? undefined : "embed_url_unavailable",
+    };
+  }
+
+  while (true) {
+    if (
+      deadlineMs !== undefined && Date.now() >= deadlineMs - DEADLINE_BUFFER_MS
+    ) {
+      return {
+        processed,
+        scheduled,
+        complete: false,
+        reason: "soft_deadline",
+      };
+    }
+
+    const rows = await fetchHistoricalEmbeddingBacklogRows(null, 5, true);
+    if (rows.length === 0) {
+      return { processed, scheduled, complete: true };
+    }
+
+    for (const row of rows) {
+      if (
+        deadlineMs !== undefined &&
+        Date.now() >= deadlineMs - DEADLINE_BUFFER_MS
+      ) {
+        return {
+          processed,
+          scheduled,
+          complete: false,
+          reason: "soft_deadline",
+        };
       }
+      const [embedding] = await generateEmbeddingsHttp(embedUrl, [row.content]);
+      if (!embedding) {
+        await markHistoricalEmbeddingRetry(row, "embed_generation_failed");
+        scheduled += 1;
+        return {
+          processed,
+          scheduled,
+          complete: false,
+          reason: "embed_generation_failed",
+        };
+      }
+      await persistHistoricalEmbeddingRetrySuccess(row.id, embedding);
       processed += 1;
     }
   }

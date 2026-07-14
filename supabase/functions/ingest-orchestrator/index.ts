@@ -22,7 +22,7 @@
  * No stack traces are exposed in any response.
  */
 
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import "@supabase/functions-js/edge-runtime.d.ts";
 import { generate as uuidv7 } from "@std/uuid/v7";
 import db from "../_shared/db-client.ts";
 import { error, success } from "../_shared/response.ts";
@@ -43,6 +43,7 @@ import {
 import {
   handleMunicode,
   handleMunicodeHistoricalBackfill,
+  handleMunicodeHistoricalEmbeddingRetry,
 } from "./municode.ts";
 import {
   embedOrdinanceProvisionsBatched,
@@ -1234,6 +1235,31 @@ Deno.serve(async (req: Request) => {
       claim.claim.newAttempts,
       SOFT_DEADLINE_MS,
       forceFullReingest,
+    );
+  }
+
+  try {
+    const historicalEmbeddingRetry =
+      await handleMunicodeHistoricalEmbeddingRetry(SOFT_DEADLINE_MS);
+    if (
+      historicalEmbeddingRetry.processed > 0 ||
+      historicalEmbeddingRetry.scheduled > 0 ||
+      !historicalEmbeddingRetry.complete
+    ) {
+      return success({
+        status: historicalEmbeddingRetry.complete ? "done" : "in_progress",
+        historical_embedding_retry: historicalEmbeddingRetry,
+      });
+    }
+  } catch (e) {
+    console.error(
+      "[orchestrator] historical embedding retry failed:",
+      (e as Error).message,
+    );
+    return error(
+      "INGESTION_FAILED",
+      "Historical embedding retry failed",
+      500,
     );
   }
 
