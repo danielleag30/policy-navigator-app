@@ -24,12 +24,12 @@
 --      ambiguous across doc_types. documents.resume_claim_expires_at (added
 --      for Municode's concurrency-race fix) is generic and reused as-is.
 
-ALTER TABLE documents DROP CONSTRAINT documents_doc_type_check;
+ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_doc_type_check;
 ALTER TABLE documents ADD CONSTRAINT documents_doc_type_check CHECK (doc_type IN (
   'budget_pdf', 'bos_minutes', 'bos_summary', 'ordinance', 'municode_api', 'encode_zoning'
 ));
 
-ALTER TABLE pending_ingestions DROP CONSTRAINT pending_ingestions_doc_type_check;
+ALTER TABLE pending_ingestions DROP CONSTRAINT IF EXISTS pending_ingestions_doc_type_check;
 ALTER TABLE pending_ingestions ADD CONSTRAINT pending_ingestions_doc_type_check CHECK (doc_type IN (
   'budget_pdf', 'bos_minutes', 'bos_summary', 'ordinance', 'municode_api', 'encode_zoning'
 ));

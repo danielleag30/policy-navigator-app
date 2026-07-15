@@ -345,6 +345,220 @@ Deno.test("wiring: the encode_zoning branch embeds via the external HTTP path (e
   );
 });
 
+// ---------------------------------------------------------------------------
+// ENCODE_ZONING_ENABLED compliance gate (blocking fix -- codex cross-vendor
+// review of PR #92): EnCode's robots.txt disallows /regs/ for generic bots,
+// so nothing may hit the site on an unattended schedule without this gate
+// checked at BOTH call sites -- change-detection (before a fresh
+// pending_ingestion row is created) and ingest-orchestrator (before
+// handleEncode makes any fetch/db call). No live Supabase instance is
+// available in CI (see file header), so these are static source-inspection
+// tests like the rest of this file, not behavioral db-mocked tests.
+// ---------------------------------------------------------------------------
+
+const CHANGE_DETECTION_SRC = new URL(
+  "../supabase/functions/change-detection/index.ts",
+  import.meta.url,
+).pathname;
+
+function extractBetween(
+  src: string,
+  startMarker: string,
+  endMarker: string,
+): string {
+  const startIdx = src.indexOf(startMarker);
+  assert(startIdx !== -1, `Start marker not found: "${startMarker}"`);
+  const endIdx = src.indexOf(endMarker, startIdx + startMarker.length);
+  assert(endIdx !== -1, `End marker not found after start: "${endMarker}"`);
+  return src.slice(startIdx, endIdx);
+}
+
+Deno.test("gate: checkEncodeZoning (change-detection) checks ENCODE_ZONING_ENABLED before creating a pending_ingestion row", async () => {
+  const src = await Deno.readTextFile(CHANGE_DETECTION_SRC);
+  const fnBody = extractBetween(
+    src,
+    "async function checkEncodeZoning(",
+    "\nasync function writePendingAlert",
+  );
+
+  const gateIdx = fnBody.indexOf(
+    'Deno.env.get("ENCODE_ZONING_ENABLED") !== "true"',
+  );
+  const createIdx = fnBody.indexOf("await createPendingIngestion(");
+
+  assert(gateIdx !== -1, "checkEncodeZoning must check ENCODE_ZONING_ENABLED");
+  assert(
+    createIdx !== -1,
+    "checkEncodeZoning must still call createPendingIngestion on the enabled path",
+  );
+  assert(
+    gateIdx < createIdx,
+    "the ENCODE_ZONING_ENABLED check must appear before createPendingIngestion is called",
+  );
+});
+
+Deno.test("gate: checkEncodeZoning returns without a pending_ingestion_id when the gate is off", async () => {
+  const src = await Deno.readTextFile(CHANGE_DETECTION_SRC);
+  const fnBody = extractBetween(
+    src,
+    "async function checkEncodeZoning(",
+    "\nasync function writePendingAlert",
+  );
+  const gateBlock = extractBetween(
+    fnBody,
+    'Deno.env.get("ENCODE_ZONING_ENABLED") !== "true") {',
+    "}",
+  );
+  assert(
+    gateBlock.includes("checked: false") &&
+      gateBlock.includes("pending_ingestion_id: null"),
+    `gate-off branch must return { checked: false, pending_ingestion_id: null }, got: ${gateBlock}`,
+  );
+});
+
+Deno.test("gate: handleEncode (ingest-orchestrator) checks ENCODE_ZONING_ENABLED before any fetch or resumable-document lookup", async () => {
+  const src = await Deno.readTextFile(ENCODE_SRC);
+  const fnBody = extractBetween(
+    src,
+    "export async function handleEncode(",
+    "\n  const baseUrl = envOrDefault",
+  );
+
+  const gateIdx = fnBody.indexOf(
+    'Deno.env.get("ENCODE_ZONING_ENABLED") !== "true"',
+  );
+  const resumableIdx = src.indexOf("await findResumableDocument()");
+  const versionSignalIdx = src.indexOf("await fetchVersionSignalHash(");
+
+  assert(gateIdx !== -1, "handleEncode must check ENCODE_ZONING_ENABLED");
+  assert(
+    resumableIdx !== -1 && versionSignalIdx !== -1,
+    "handleEncode must still reach the resumable-document lookup and version-signal fetch on the enabled path",
+  );
+  // gateIdx is an offset into fnBody (which starts at "export async function
+  // handleEncode("), so compare against the same-origin offsets.
+  const handleEncodeStart = src.indexOf("export async function handleEncode(");
+  assert(
+    handleEncodeStart + gateIdx < resumableIdx &&
+      handleEncodeStart + gateIdx < versionSignalIdx,
+    "the ENCODE_ZONING_ENABLED check must run before any network/db lookup in handleEncode",
+  );
+});
+
+Deno.test("gate: handleEncode marks the pending_ingestion row 'skipped' with a clear reason and makes no fetch() call when disabled", async () => {
+  const src = await Deno.readTextFile(ENCODE_SRC);
+  const gateBlock = extractBetween(
+    src,
+    'Deno.env.get("ENCODE_ZONING_ENABLED") !== "true") {',
+    'return { documentId: "", nodeIds: [], skipped: true, complete: true };',
+  );
+  assert(
+    gateBlock.includes('status: "skipped"'),
+    "disabled-gate branch must mark the pending_ingestion row status: 'skipped'",
+  );
+  assert(
+    gateBlock.includes("last_error:"),
+    "disabled-gate branch must record a clear reason via last_error",
+  );
+  assert(
+    !gateBlock.includes("fetch("),
+    "disabled-gate branch must not make any fetch() call",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Partial-failure must block finalization (blocking fix -- codex cross-vendor
+// review of PR #92): a per-node content or child-TOC fetch failure inside
+// processNode() must not let drainQueue() return complete: true, because
+// index.ts flips documents.status to 'current' immediately after a
+// complete: true / skipped: false result -- an entire subtree silently
+// vanishing must not be presented as a complete, verified ordinance.
+// ---------------------------------------------------------------------------
+
+Deno.test("partial-failure: processNode reports failed:true (not just a console warning) when the content fetch throws", async () => {
+  const src = await Deno.readTextFile(ENCODE_SRC);
+  const fnBody = extractBetween(
+    src,
+    "async function processNode(",
+    "\n/** Push a node's children",
+  );
+
+  const contentCatch = extractBetween(
+    fnBody,
+    "try {\n    plainContent = await fetchSectionContent(",
+    "if (plainContent) {",
+  );
+  assert(
+    contentCatch.includes("failed = true"),
+    "the content-fetch catch block must set failed = true, not just log",
+  );
+});
+
+Deno.test("partial-failure: processNode reports failed:true when the child-TOC fetch throws (not just an empty children array)", async () => {
+  const src = await Deno.readTextFile(ENCODE_SRC);
+  const fnBody = extractBetween(
+    src,
+    "async function processNode(",
+    "\n/** Push a node's children",
+  );
+
+  const childrenCatchBlock = extractBetween(
+    fnBody,
+    "} catch (e) {\n    console.warn(\n      `[encode] children fetch failed",
+    "\n  }\n}",
+  );
+  assert(
+    childrenCatchBlock.includes("failed: true"),
+    `children-fetch catch block must return failed: true (not silently return an empty array), got: ${childrenCatchBlock}`,
+  );
+});
+
+Deno.test("partial-failure: drainQueue persists resume state and throws (never returns complete: true) when a node reports failed", async () => {
+  const src = await Deno.readTextFile(ENCODE_SRC);
+  const fnBody = extractBetween(
+    src,
+    "async function drainQueue(",
+    "\n/** Minutes an exclusive resume-claim lease",
+  );
+
+  const failureBlock = extractBetween(
+    fnBody,
+    "if (failed) {",
+    "if (children.length > 0) {",
+  );
+  assert(
+    failureBlock.includes("persistResumeState(queue, ctx)"),
+    "the failure branch must persist resume state so progress/retry position is not lost",
+  );
+  assert(
+    failureBlock.includes("throw new Error("),
+    "the failure branch must throw rather than return, so index.ts never reaches the finalize-as-current step",
+  );
+  assert(
+    !failureBlock.includes("complete: true") &&
+      !failureBlock.includes("return {"),
+    "the failure branch must not itself construct an EncodeResult (no complete:true/false return) -- it must throw",
+  );
+});
+
+Deno.test("partial-failure: the failure branch requeues the failed item itself (not just the remaining stack) for retry", async () => {
+  const src = await Deno.readTextFile(ENCODE_SRC);
+  const fnBody = extractBetween(
+    src,
+    "async function drainQueue(",
+    "\n/** Minutes an exclusive resume-claim lease",
+  );
+  const failureBlock = extractBetween(
+    fnBody,
+    "if (failed) {",
+    "if (children.length > 0) {",
+  );
+  assert(
+    failureBlock.includes("queue.push(item)"),
+    "the failed node must be pushed back onto the queue before persisting resume state, so retry re-attempts it",
+  );
+});
+
 Deno.test("wiring: encode_zoning is a recognized doc_type in the discovery-crawler's DocType union and seed-sources.json", async () => {
   const discoverySrc = await Deno.readTextFile(
     new URL(

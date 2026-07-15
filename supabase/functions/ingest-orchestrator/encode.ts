@@ -67,6 +67,15 @@
  * recovery for a walk that drained but crashed before finalization. Does
  * NOT set documents.status or generate embeddings -- index.ts (task 2-6)
  * owns that, via the same embedOrdinanceProvisionsBatched used for Municode.
+ *
+ * COMPLIANCE GATE: per the COMPLIANCE NOTE above, this source must not make
+ * a single request against the robots.txt-disallowed /regs/ path on an
+ * unattended schedule without human/legal sign-off. handleEncode() checks
+ * ENCODE_ZONING_ENABLED before any network or lookup call and skips the
+ * ingestion (no fetch, no DB writes beyond marking the row skipped) unless
+ * it is exactly "true". Both the pg_cron poll path and an explicit
+ * pending_ingestion_id call are covered, since both funnel through this
+ * function. Set the secret to "true" only after that sign-off.
  */
 
 import { generate as uuidv7 } from "@std/uuid/v7";
@@ -256,17 +265,29 @@ async function upsertProvision(
   }
 }
 
+interface ProcessNodeResult {
+  children: EncodeTocChild[];
+  /** True if the content fetch or the child-TOC fetch threw for this node. */
+  failed: boolean;
+}
+
 /**
  * Fetch content for one queued node, upsert it, and return its children (if
  * any) so the caller can push them onto the walk stack. Mirrors
  * municode.ts's processNode: descent into children happens regardless of
  * whether the content insert was skipped as unchanged.
+ *
+ * Unlike municode.ts's processNode, a fetch failure here is reported back to
+ * the caller via `failed` rather than only logged -- see drainQueue's
+ * failure handling for why: a silently-truncated subtree must not let the
+ * document finalize as status='current' with data missing.
  */
 async function processNode(
   item: QueueItem,
   ctx: IngestContext,
-): Promise<EncodeTocChild[]> {
+): Promise<ProcessNodeResult> {
   let plainContent = "";
+  let failed = false;
   try {
     plainContent = await fetchSectionContent(
       ctx.baseUrl,
@@ -274,6 +295,7 @@ async function processNode(
       ctx.userAgent,
     );
   } catch (e) {
+    failed = true;
     console.warn(
       `[encode] content fetch failed for ${item.secid} (depth ${item.depth}): ${
         (e as Error).message
@@ -283,13 +305,13 @@ async function processNode(
 
   if (plainContent) {
     await upsertProvision(item, ctx, plainContent);
-  } else {
+  } else if (!failed) {
     console.log(
       `[encode] skipping ${item.secid} (depth ${item.depth}) — empty content`,
     );
   }
 
-  if (!item.hasChildren || !item.tocid) return [];
+  if (!item.hasChildren || !item.tocid) return { children: [], failed };
 
   await sleep(SUBSECTION_DELAY_MS);
   try {
@@ -306,14 +328,14 @@ async function processNode(
         }: ${children.length} children of ${item.secid}`,
       );
     }
-    return children;
+    return { children, failed };
   } catch (e) {
     console.warn(
       `[encode] children fetch failed for ${item.secid}: ${
         (e as Error).message
       }`,
     );
-    return [];
+    return { children: [], failed: true };
   }
 }
 
@@ -346,8 +368,45 @@ export interface EncodeResult {
 }
 
 /**
+ * Persist the remaining walk stack to documents.encode_resume_state so a
+ * later invocation can pick the walk back up from where it left off (mirrors
+ * municode.ts's equivalent deadline-persist step).
+ */
+async function persistResumeState(
+  queue: QueueItem[],
+  ctx: IngestContext,
+): Promise<void> {
+  const state: ResumeState = { effectiveDate: ctx.effectiveDate, queue };
+  const { error: persistErr } = await db
+    .from("documents")
+    .update({
+      encode_resume_state: state,
+      resume_claim_expires_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", ctx.documentId);
+  if (persistErr) {
+    throw new Error(
+      `Failed to persist EnCode resume state: ${persistErr.message}`,
+    );
+  }
+}
+
+/**
  * Drain the walk stack, checking the soft deadline before each item. Mirrors
- * municode.ts's drainQueue exactly (see that file for the full rationale).
+ * municode.ts's drainQueue (see that file for the full rationale), with one
+ * addition: municode.ts's processNode swallows a per-node fetch failure
+ * entirely (log + treat as childless), which lets an entire subtree silently
+ * vanish while the document still finalizes as status='current' with data
+ * missing. Here, a fetch failure persists the same resume state used for the
+ * soft-deadline case (so no progress is lost) but then throws instead of
+ * returning complete: true/false -- letting the failure propagate to
+ * index.ts's normal catch-all error path (attempts++, backoff via
+ * nextAttemptAt, eventual ABSOLUTE_MAX_ATTEMPTS skip). That path is
+ * deliberately NOT the same as the deadline-resume return: requeueForResume
+ * is attempt-neutral (decrements attempts back), which is correct for "ran
+ * out of time" but would let a permanently-broken node retry forever against
+ * a robots.txt-sensitive site if reused here for genuine fetch failures.
  */
 async function drainQueue(
   queue: QueueItem[],
@@ -359,20 +418,7 @@ async function drainQueue(
     if (
       deadlineMs !== undefined && Date.now() >= deadlineMs - DEADLINE_BUFFER_MS
     ) {
-      const state: ResumeState = { effectiveDate: ctx.effectiveDate, queue };
-      const { error: persistErr } = await db
-        .from("documents")
-        .update({
-          encode_resume_state: state,
-          resume_claim_expires_at: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", ctx.documentId);
-      if (persistErr) {
-        throw new Error(
-          `Failed to persist EnCode resume state: ${persistErr.message}`,
-        );
-      }
+      await persistResumeState(queue, ctx);
       console.warn(
         `[encode] soft deadline hit with ${queue.length} node(s) remaining; persisted resume state for document ${ctx.documentId}`,
       );
@@ -386,7 +432,18 @@ async function drainQueue(
 
     const item = queue.pop()!;
     await sleep(item.depth <= 1 ? REQUEST_DELAY_MS : SUBSECTION_DELAY_MS);
-    const children = await processNode(item, ctx);
+    const { children, failed } = await processNode(item, ctx);
+
+    if (failed) {
+      queue.push(item);
+      await persistResumeState(queue, ctx);
+      throw new Error(
+        `EnCode fetch failed for node ${item.secid} (depth ${item.depth}) -- ` +
+          `resume state persisted for document ${ctx.documentId}; document will ` +
+          `not finalize as current until this node succeeds`,
+      );
+    }
+
     if (children.length > 0) {
       pushChildren(queue, children, item.secid, item.depth + 1);
     }
@@ -515,6 +572,32 @@ export async function handleEncode(
   deadlineMs?: number,
   forceFullReingest = false,
 ): Promise<EncodeResult> {
+  // 0. Compliance gate -- see file header COMPLIANCE NOTE / COMPLIANCE GATE.
+  // Checked before any fetch() or db call so an unset secret costs nothing
+  // beyond one status update, no matter which entry point reached this
+  // function (cron poll or an explicit pending_ingestion_id call).
+  if (Deno.env.get("ENCODE_ZONING_ENABLED") !== "true") {
+    const { error: skipErr } = await db
+      .from("pending_ingestions")
+      .update({
+        status: "skipped",
+        last_error:
+          "encode_zoning disabled pending human/legal sign-off on the robots.txt " +
+          "/regs/ exclusion (see encode.ts file header) -- set ENCODE_ZONING_ENABLED=true to enable",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", pendingIngestionId);
+    if (skipErr) {
+      throw new Error(
+        `Failed to mark EnCode ingestion as skipped (compliance gate): ${skipErr.message}`,
+      );
+    }
+    console.warn(
+      "[encode] ENCODE_ZONING_ENABLED is not set to 'true' — skipping without any network request",
+    );
+    return { documentId: "", nodeIds: [], skipped: true, complete: true };
+  }
+
   const baseUrl = envOrDefault("ENCODE_BASE_URL", DEFAULT_ENCODE_BASE_URL);
   const userAgent = envOrDefault(
     "ENCODE_USER_AGENT",

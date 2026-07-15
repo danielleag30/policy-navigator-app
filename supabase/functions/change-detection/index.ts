@@ -137,7 +137,9 @@ class FairfaxRateLimiter {
 
     const shouldDelay = this.#anyRequestStarted;
     this.#anyRequestStarted = true;
-    this.#chain = this.#chain.then(() => shouldDelay ? sleep(FAIRFAX_REQUEST_DELAY_MS) : undefined);
+    this.#chain = this.#chain.then(() =>
+      shouldDelay ? sleep(FAIRFAX_REQUEST_DELAY_MS) : undefined
+    );
     return this.#chain;
   }
 }
@@ -371,14 +373,18 @@ function extractMunicodeJobId(payload: unknown): string {
 }
 
 function municodeSource(config: SeedConfig): ApiSource {
-  const source = apiSourcesOf(config).find((s) => s.doc_type === "municode_api");
+  const source = apiSourcesOf(config).find((s) =>
+    s.doc_type === "municode_api"
+  );
   if (!source) throw new Error("seed-sources.json missing municode_api source");
   return source;
 }
 
 function municodeLatestJobUrl(config: SeedConfig): string {
   const source = municodeSource(config);
-  const latestPattern = source.url_patterns.find((p) => p.includes("/Jobs/latest/"));
+  const latestPattern = source.url_patterns.find((p) =>
+    p.includes("/Jobs/latest/")
+  );
   if (!latestPattern || isPlaceholderPattern(latestPattern)) {
     throw new Error("seed-sources.json missing Municode /Jobs/latest seed URL");
   }
@@ -459,7 +465,9 @@ async function checkMunicodeSupplement(
   }
 
   const pendingId = await createPendingIngestion(url, "municode_api");
-  const triggered = pendingId ? await triggerReconciliation(jobId, pendingId) : false;
+  const triggered = pendingId
+    ? await triggerReconciliation(jobId, pendingId)
+    : false;
 
   return {
     checked: true,
@@ -471,8 +479,12 @@ async function checkMunicodeSupplement(
 }
 
 function encodeZoningSource(config: SeedConfig): ApiSource {
-  const source = apiSourcesOf(config).find((s) => s.doc_type === "encode_zoning");
-  if (!source) throw new Error("seed-sources.json missing encode_zoning source");
+  const source = apiSourcesOf(config).find((s) =>
+    s.doc_type === "encode_zoning"
+  );
+  if (!source) {
+    throw new Error("seed-sources.json missing encode_zoning source");
+  }
   return source;
 }
 
@@ -491,6 +503,14 @@ function encodeZoningSource(config: SeedConfig): ApiSource {
 async function checkEncodeZoning(
   config: SeedConfig,
 ): Promise<ChangeDetectionSummary["encode_zoning"]> {
+  // COMPLIANCE GATE: mirrors handleEncode()'s own ENCODE_ZONING_ENABLED check
+  // (encode.ts file header) so this function doesn't create a fresh
+  // pending_ingestion every 6-hour run while the source is disabled pending
+  // sign-off -- handleEncode() would just mark each one 'skipped' anyway, but
+  // skipping row creation here avoids the pointless churn.
+  if (Deno.env.get("ENCODE_ZONING_ENABLED") !== "true") {
+    return { checked: false, pending_ingestion_id: null };
+  }
   const source = encodeZoningSource(config);
   const canonicalUrl = `${source.base_url}/doc-viewer.aspx?secid=2214`;
   const pendingId = await createPendingIngestion(canonicalUrl, "encode_zoning");
@@ -554,13 +574,17 @@ function summarizeResults(
       results.filter((r) => r.action === "pending_ingestion_created").length +
       (municode.pending_ingestion_id ? 1 : 0) +
       (encodeZoning.pending_ingestion_id ? 1 : 0),
-    active_ingestions_skipped: results.filter((r) => r.action === "active_ingestion_exists").length,
-    last_checked_updates: results.filter((r) => r.action === "last_checked_updated").length,
+    active_ingestions_skipped:
+      results.filter((r) => r.action === "active_ingestion_exists").length,
+    last_checked_updates:
+      results.filter((r) => r.action === "last_checked_updated").length,
     stale_alerts_created: staleAlertsCreated,
     discovery,
     municode,
     encode_zoning: encodeZoning,
-    errors: results.filter((r) => r.action === "error").map((r) => `${r.url}: ${r.message}`),
+    errors: results.filter((r) => r.action === "error").map((r) =>
+      `${r.url}: ${r.message}`
+    ),
     results,
   };
 }
@@ -714,7 +738,13 @@ Deno.serve(async (req: Request) => {
     };
 
     return success(
-      summarizeResults(results, staleAlertsCreated, discovery, municode, encodeZoning),
+      summarizeResults(
+        results,
+        staleAlertsCreated,
+        discovery,
+        municode,
+        encodeZoning,
+      ),
     );
   } catch (e) {
     logError(FN_NAME, "fatal error", { message: (e as Error).message });
