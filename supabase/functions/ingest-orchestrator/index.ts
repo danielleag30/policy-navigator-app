@@ -1241,13 +1241,16 @@ Deno.serve(async (req: Request) => {
   try {
     const historicalEmbeddingRetry =
       await handleMunicodeHistoricalEmbeddingRetry(SOFT_DEADLINE_MS);
-    if (
-      historicalEmbeddingRetry.processed > 0 ||
-      historicalEmbeddingRetry.scheduled > 0 ||
-      !historicalEmbeddingRetry.complete
-    ) {
+    // Only bail out early if the retry ran out of deadline budget — if it
+    // drained the due backlog (even having done work) within budget, fall
+    // through to the regular pending_ingestions loop below using whatever
+    // deadline remains (CLAIM_DEADLINE_MS/SOFT_DEADLINE_MS are absolute
+    // timestamps anchored to FUNCTION_START_MS, so this happens for free).
+    // Otherwise a single due historical-embedding-retry row would starve
+    // regular ingestion for the entire cron tick.
+    if (!historicalEmbeddingRetry.complete) {
       return success({
-        status: historicalEmbeddingRetry.complete ? "done" : "in_progress",
+        status: "in_progress",
         historical_embedding_retry: historicalEmbeddingRetry,
       });
     }
