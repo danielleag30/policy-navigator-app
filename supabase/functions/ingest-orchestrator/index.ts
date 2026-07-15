@@ -22,7 +22,7 @@
  * No stack traces are exposed in any response.
  */
 
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import "@supabase/functions-js/edge-runtime.d.ts";
 import { generate as uuidv7 } from "@std/uuid/v7";
 import db from "../_shared/db-client.ts";
 import { error, success } from "../_shared/response.ts";
@@ -43,6 +43,7 @@ import {
 import {
   handleMunicode,
   handleMunicodeHistoricalBackfill,
+  handleMunicodeHistoricalEmbeddingRetry,
 } from "./municode.ts";
 import {
   embedOrdinanceProvisionsBatched,
@@ -1234,6 +1235,34 @@ Deno.serve(async (req: Request) => {
       claim.claim.newAttempts,
       SOFT_DEADLINE_MS,
       forceFullReingest,
+    );
+  }
+
+  try {
+    const historicalEmbeddingRetry =
+      await handleMunicodeHistoricalEmbeddingRetry(SOFT_DEADLINE_MS);
+    // Only bail out early if the retry ran out of deadline budget — if it
+    // drained the due backlog (even having done work) within budget, fall
+    // through to the regular pending_ingestions loop below using whatever
+    // deadline remains (CLAIM_DEADLINE_MS/SOFT_DEADLINE_MS are absolute
+    // timestamps anchored to FUNCTION_START_MS, so this happens for free).
+    // Otherwise a single due historical-embedding-retry row would starve
+    // regular ingestion for the entire cron tick.
+    if (!historicalEmbeddingRetry.complete) {
+      return success({
+        status: "in_progress",
+        historical_embedding_retry: historicalEmbeddingRetry,
+      });
+    }
+  } catch (e) {
+    console.error(
+      "[orchestrator] historical embedding retry failed:",
+      (e as Error).message,
+    );
+    return error(
+      "INGESTION_FAILED",
+      "Historical embedding retry failed",
+      500,
     );
   }
 

@@ -3,8 +3,10 @@ import {
   DEFAULT_HISTORICAL_SUPPLEMENTS,
   extractCitationKey,
   headingMatchesHistoricalChapter,
+  historicalEmbeddingRetryDelayMinutes,
   normalizeOnlineDate,
   resolveHistoricalIdentity,
+  scheduleHistoricalEmbeddingRetry,
   selectHistoricalJobs,
 } from "../supabase/functions/ingest-orchestrator/_municode-helpers.ts";
 
@@ -149,6 +151,10 @@ const INDEX_SRC = new URL(
   "../supabase/functions/ingest-orchestrator/index.ts",
   import.meta.url,
 ).pathname;
+const RETRY_MIGRATION_SRC = new URL(
+  "../supabase/migrations/20260713000000_historical_embedding_retry_queue.sql",
+  import.meta.url,
+).pathname;
 
 Deno.test("wiring: normal Municode resume ignores historical resume states", async () => {
   const src = await Deno.readTextFile(MUNICODE_SRC);
@@ -196,5 +202,114 @@ Deno.test("wiring: historical backfill is admin-only and does not run from norma
   assert(
     src.includes("municode_historical_backfill requires a valid admin secret"),
     "historical backfill must require ADMIN_SECRET",
+  );
+});
+
+Deno.test("historical embedding retry schedule uses bounded backoff and records the failure reason", () => {
+  assertEquals(historicalEmbeddingRetryDelayMinutes(1), 5);
+  assertEquals(historicalEmbeddingRetryDelayMinutes(2), 15);
+  assertEquals(historicalEmbeddingRetryDelayMinutes(3), 60);
+  assertEquals(historicalEmbeddingRetryDelayMinutes(4), 360);
+
+  const retry = scheduleHistoricalEmbeddingRetry(
+    1,
+    "embed_generation_failed",
+    Date.parse("2026-07-13T12:00:00.000Z"),
+  );
+  assertEquals(retry.attempts, 2);
+  assertEquals(retry.nextAttemptAt, "2026-07-13T12:15:00.000Z");
+  assertEquals(retry.lastError, "embed_generation_failed");
+});
+
+Deno.test("wiring: historical embed timeout/null fallback schedules a row retry", async () => {
+  const src = await Deno.readTextFile(MUNICODE_SRC);
+  const fallbackIdx = src.indexOf(
+    "if (!embedding) {\n        console.warn(\n          `[municode-history] null embedding while retrying historical provision",
+  );
+  assert(fallbackIdx !== -1, "null embedding fallback branch not found");
+  const fallbackBlock = src.slice(
+    fallbackIdx,
+    src.indexOf("return { processed, complete: false };", fallbackIdx),
+  );
+  assert(
+    fallbackBlock.includes(
+      'markHistoricalEmbeddingRetry(row, "embed_generation_failed")',
+    ),
+    "null embedding fallback must schedule the failed historical row for retry",
+  );
+});
+
+Deno.test("wiring: missing /embed URL schedules historical null rows instead of only counting them", async () => {
+  const src = await Deno.readTextFile(MUNICODE_SRC);
+  const noUrlIdx = src.indexOf("if (!embedUrl) {");
+  assert(noUrlIdx !== -1, "missing embedUrl branch not found");
+  const noUrlBlock = src.slice(
+    noUrlIdx,
+    src.indexOf("let processed = 0;", noUrlIdx),
+  );
+  assert(
+    noUrlBlock.includes(
+      'markHistoricalEmbeddingRetry(row, "embed_url_unavailable")',
+    ),
+    "missing /embed URL branch must schedule historical rows for retry",
+  );
+  assert(
+    !noUrlBlock.includes(
+      "return { processed: 0, complete: (count ?? 0) === 0 };",
+    ),
+    "missing /embed URL branch must not just count and exit",
+  );
+});
+
+Deno.test("wiring: normal cron poll picks up due historical embedding retries before pending-ingestion polling", async () => {
+  const src = await Deno.readTextFile(INDEX_SRC);
+  const retryIdx = src.indexOf(
+    "handleMunicodeHistoricalEmbeddingRetry(SOFT_DEADLINE_MS)",
+  );
+  const loopIdx = src.indexOf("runPendingIngestionLoop({");
+  assert(retryIdx !== -1, "historical embedding retry pickup not wired");
+  assert(loopIdx !== -1, "normal pending-ingestion poll loop not found");
+  assert(
+    retryIdx < loopIdx,
+    "historical embedding retry pickup must run before the normal cron poll loop",
+  );
+});
+
+Deno.test("wiring: historical embedding cron pickup checks for due rows before /embed preflight", async () => {
+  const src = await Deno.readTextFile(MUNICODE_SRC);
+  const handlerIdx = src.indexOf(
+    "export async function handleMunicodeHistoricalEmbeddingRetry",
+  );
+  assert(handlerIdx !== -1, "historical embedding retry handler not found");
+  const handler = src.slice(handlerIdx);
+  const dueCountIdx = handler.indexOf(
+    "const dueCount = await countHistoricalEmbeddingBacklog(null, true);",
+  );
+  const preflightIdx = handler.indexOf("await availableHistoricalEmbedUrl(");
+  assert(dueCountIdx !== -1, "due-row count guard not found");
+  assert(preflightIdx !== -1, "/embed preflight call not found");
+  assert(
+    dueCountIdx < preflightIdx,
+    "cron pickup must avoid /embed preflight when no historical retry rows are due",
+  );
+});
+
+Deno.test("migration: historical embedding retry queue and current-node partial indexes exist", async () => {
+  const src = await Deno.readTextFile(RETRY_MIGRATION_SRC);
+  assert(
+    src.includes("historical_embedding_next_attempt_at timestamptz"),
+    "retry migration must add historical_embedding_next_attempt_at",
+  );
+  assert(
+    src.includes("ordinance_provisions_historical_embedding_retry_idx") &&
+      src.includes("WHERE is_current = false") &&
+      src.includes("AND embedding IS NULL"),
+    "retry migration must add a due-row partial index for null historical embeddings",
+  );
+  assert(
+    src.includes("ordinance_provisions_current_municode_node_id_idx") &&
+      src.includes("ON ordinance_provisions (municode_node_id)") &&
+      src.includes("WHERE is_current = true"),
+    "migration must add the requested current municode_node_id partial index",
   );
 });
