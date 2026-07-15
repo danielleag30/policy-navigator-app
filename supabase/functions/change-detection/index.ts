@@ -2,113 +2,51 @@
  * change-detection — scheduled source freshness scanner.
  *
  * Invoked by pg_cron every 6 hours (cron registration is task 2-16).
- * Reads supabase/config/seed-sources.json. Discovery sources (bos_summary,
- * bos_minutes, budget_pdf) are crawled via _discovery.ts — starting from each
- * source's discovery_urls and following same-hostname links up to
- * discovery_depth hops — to find candidate document URLs, which are then
- * scanned exactly like any other seed URL. The municode_api source is not
- * crawled; it keeps its own base_url/url_patterns lookup.
+ * Reads supabase/config/seed-sources.json and delegates the actual work to
+ * _orchestrate.ts's runChangeDetectionCycle: discovery sources (bos_summary,
+ * bos_minutes, budget_committee_meeting, budget_pdf_advertised,
+ * budget_pdf_adopted) are crawled via _crawl_state.ts's resumable, per-source
+ * checkpointed cycle -- each invocation picks up exactly where the last one
+ * (this one, if there's time left, or the next cron tick) left off, rather
+ * than losing all progress at this platform's ~150s IDLE_TIMEOUT the way the
+ * old single-pass BFS crawl did. municode_api and encode_zoning are not
+ * crawled; they keep their own base_url/url_patterns lookup, unconditionally
+ * checked every invocation regardless of the discovery loop's outcome (see
+ * _orchestrate.ts's file header for why that ordering matters).
  *
- * A single invocation crawling every discovery source can run long enough on
- * a slow real site to approach this platform's edge-function execution
- * budget. POST ?source=<id> restricts discovery crawling to one source id
- * (see supabase/config/seed-sources.json) for a cheaper, targeted run;
- * municode_api and the staleness sweep still run every invocation regardless.
+ * POST ?source=<id> restricts discovery crawling to one source id (see
+ * supabase/config/seed-sources.json) for a cheaper, targeted run; municode_api,
+ * encode_zoning, and the staleness sweep still run every invocation regardless.
+ *
+ * This file owns only the HTTP-request-shaped concerns (rate limiting real
+ * network fetches, request parsing, response envelope) that don't belong in
+ * the pure/testable _orchestrate.ts, which has no top-level Deno.serve() so
+ * it can be exercised directly by _orchestrate_test.ts with fake dependencies.
  */
 
 // deno-lint-ignore no-unversioned-import
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { generate as uuidv7 } from "@std/uuid/v7";
 import db from "../_shared/db-client.ts";
 import { contentHash } from "../_shared/hash.ts";
 import { error, success } from "../_shared/response.ts";
 import { elapsed, logError, logInfo, logWarn } from "../_shared/logger.ts";
 import seedConfig from "../../config/seed-sources.json" with { type: "json" };
 import {
-  type ApiSource,
-  apiSourcesOf,
-  discoverAllCandidates,
-  type DiscoveredUrl,
-  discoverySourcesOf,
-  type DocType,
-  mapWithConcurrency,
   type PageFetchResult,
   type SeedConfig,
   validateSeedConfig,
 } from "./_discovery.ts";
+import type { HeadFetchResult } from "./_crawl_state.ts";
+import {
+  type OrchestrateDb,
+  runChangeDetectionCycle,
+  UnknownSourceError,
+} from "./_orchestrate.ts";
 
 const FN_NAME = "change-detection";
 
-interface CurrentDocument {
-  id: string;
-  url: string;
-  doc_type: DocType;
-  content_hash: string;
-  last_checked_at: string;
-}
-
-interface UrlScanResult {
-  url: string;
-  doc_type: DocType;
-  action:
-    | "pending_ingestion_created"
-    | "active_ingestion_exists"
-    | "last_checked_updated"
-    | "error";
-  pending_ingestion_id?: string;
-  document_id?: string;
-  message?: string;
-}
-
-interface ChangeDetectionSummary {
-  scanned_urls: number;
-  pending_ingestions_created: number;
-  active_ingestions_skipped: number;
-  last_checked_updates: number;
-  stale_alerts_created: number;
-  discovery: {
-    sources_crawled: number;
-    candidate_urls_found: number;
-    crawl_errors: number;
-  };
-  municode: {
-    checked: boolean;
-    job_id: string | null;
-    previous_job_id: string | null;
-    pending_ingestion_id: string | null;
-    reconciliation_triggered: boolean;
-  };
-  encode_zoning: {
-    checked: boolean;
-    pending_ingestion_id: string | null;
-  };
-  errors: string[];
-  results: UrlScanResult[];
-}
-
 const FAIRFAX_REQUEST_DELAY_MS = 200;
-const STALE_DOCUMENT_DAYS = 14;
 const DEFAULT_USER_AGENT = "PolicyNavigator/1.0 change-detection";
-const PLACEHOLDER_PREFIX = "REPLACE_WITH_";
-const CANDIDATE_SCAN_CONCURRENCY = 8;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function isPlaceholderPattern(pattern: string): boolean {
-  return pattern.trim().startsWith(PLACEHOLDER_PREFIX);
-}
-
-function toAbsoluteUrl(baseUrl: string, pattern: string): string {
-  if (/^https?:\/\//i.test(pattern)) return new URL(pattern).toString();
-  return new URL(pattern, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`)
-    .toString();
-}
 
 function isFairfaxCountyUrl(url: string): boolean {
   const hostname = new URL(url).hostname.toLowerCase();
@@ -118,7 +56,7 @@ function isFairfaxCountyUrl(url: string): boolean {
 
 /**
  * Shared 200ms-between-requests limiter for every fairfaxcounty.gov call this
- * function makes — HEAD-based change checks and discovery-page GETs alike —
+ * function makes -- HEAD-based change checks and discovery-page GETs alike --
  * so both request kinds count against the same budget instead of stacking.
  *
  * Callers may invoke waitIfNeeded concurrently (the discovery crawler fetches
@@ -142,6 +80,10 @@ class FairfaxRateLimiter {
     );
     return this.#chain;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function userAgent(): string {
@@ -187,104 +129,22 @@ async function fetchDiscoveryPage(
   };
 }
 
-async function getCurrentDocument(
-  url: string,
-): Promise<CurrentDocument | null> {
-  const { data, error: lookupErr } = await db
-    .from("documents")
-    .select("id, url, doc_type, content_hash, last_checked_at")
-    .eq("url", url)
-    .eq("status", "current")
-    .maybeSingle();
-
-  if (lookupErr) {
-    throw new Error(`Document lookup failed for ${url}: ${lookupErr.message}`);
-  }
-  return data as CurrentDocument | null;
-}
-
-async function hasActivePendingIngestion(
-  url: string,
-  docType: DocType,
-): Promise<boolean> {
-  const { count, error: lookupErr } = await db
-    .from("pending_ingestions")
-    .select("id", { count: "exact", head: true })
-    .eq("url", url)
-    .eq("doc_type", docType)
-    .in("status", ["pending", "processing"]);
-
-  if (lookupErr) {
-    throw new Error(
-      `PendingIngestion lookup failed for ${url}: ${lookupErr.message}`,
-    );
-  }
-  return (count ?? 0) > 0;
-}
-
-async function createPendingIngestion(
-  url: string,
-  docType: DocType,
-): Promise<string | null> {
-  if (await hasActivePendingIngestion(url, docType)) return null;
-
-  const id = uuidv7();
-  const { error: insertErr } = await db.from("pending_ingestions").insert({
-    id,
-    url,
-    doc_type: docType,
-    detected_at: new Date().toISOString(),
-    status: "pending",
-  });
-
-  if (insertErr) {
-    throw new Error(
-      `PendingIngestion insert failed for ${url}: ${insertErr.message}`,
-    );
-  }
-
-  return id;
-}
-
-async function updateLastChecked(documentId: string): Promise<void> {
-  const { error: updateErr } = await db
-    .from("documents")
-    .update({ last_checked_at: new Date().toISOString() })
-    .eq("id", documentId);
-
-  if (updateErr) {
-    throw new Error(
-      `Document last_checked_at update failed for ${documentId}: ${updateErr.message}`,
-    );
-  }
-}
-
-function normalizedValidator(value: string): string {
-  return value.trim().replace(/^W\//i, "").replace(/^"|"$/g, "").toLowerCase();
-}
-
-function headMatchesStoredHash(headers: Headers, storedHash: string): boolean {
-  const etag = headers.get("etag");
-  if (!etag) return false;
-
-  const lastModified = headers.get("last-modified");
-  const stored = normalizedValidator(storedHash);
-
-  return [etag, lastModified]
-    .filter((v): v is string => Boolean(v))
-    .some((v) => normalizedValidator(v) === stored);
-}
-
 async function fetchHead(
   url: string,
   limiter: FairfaxRateLimiter,
-): Promise<Response> {
+): Promise<HeadFetchResult> {
   await limiter.waitIfNeeded(url);
-  return fetch(url, {
+  const resp = await fetch(url, {
     method: "HEAD",
     redirect: "follow",
     headers: { "User-Agent": userAgent() },
   });
+  return {
+    ok: resp.ok,
+    status: resp.status,
+    etag: resp.headers.get("etag"),
+    lastModified: resp.headers.get("last-modified"),
+  };
 }
 
 async function fetchHash(
@@ -303,110 +163,16 @@ async function fetchHash(
   return contentHash(new Uint8Array(await resp.arrayBuffer()));
 }
 
-async function scanSeedUrl(
-  seedUrl: DiscoveredUrl,
-  limiter: FairfaxRateLimiter,
-): Promise<UrlScanResult> {
-  const current = await getCurrentDocument(seedUrl.url);
-  const headResp = await fetchHead(seedUrl.url, limiter);
-
-  if (!headResp.ok && headResp.status !== 405) {
-    throw new Error(`HEAD ${seedUrl.url} returned HTTP ${headResp.status}`);
+async function fetchJson(url: string): Promise<unknown> {
+  const resp = await fetch(url, {
+    method: "GET",
+    redirect: "follow",
+    headers: { "User-Agent": userAgent() },
+  });
+  if (!resp.ok) {
+    throw new Error(`GET ${url} returned HTTP ${resp.status}`);
   }
-
-  if (
-    current && headResp.ok &&
-    headMatchesStoredHash(headResp.headers, current.content_hash)
-  ) {
-    await updateLastChecked(current.id);
-    return {
-      url: seedUrl.url,
-      doc_type: seedUrl.docType,
-      action: "last_checked_updated",
-      document_id: current.id,
-      message: "remote validator matched stored content_hash",
-    };
-  }
-
-  const hash = await fetchHash(seedUrl.url, limiter);
-  if (current && hash === current.content_hash) {
-    await updateLastChecked(current.id);
-    return {
-      url: seedUrl.url,
-      doc_type: seedUrl.docType,
-      action: "last_checked_updated",
-      document_id: current.id,
-      message: "content hash unchanged",
-    };
-  }
-
-  const pendingId = await createPendingIngestion(seedUrl.url, seedUrl.docType);
-  if (!pendingId) {
-    return {
-      url: seedUrl.url,
-      doc_type: seedUrl.docType,
-      action: "active_ingestion_exists",
-      document_id: current?.id,
-    };
-  }
-
-  return {
-    url: seedUrl.url,
-    doc_type: seedUrl.docType,
-    action: "pending_ingestion_created",
-    pending_ingestion_id: pendingId,
-    document_id: current?.id,
-  };
-}
-
-function extractMunicodeJobId(payload: unknown): string {
-  if (!isRecord(payload)) {
-    throw new Error("Municode latest job response must be an object");
-  }
-
-  for (const key of ["jobId", "Id", "id"]) {
-    const value = payload[key];
-    if (value != null) return String(value);
-  }
-
-  throw new Error("Municode latest job response missing jobId/Id");
-}
-
-function municodeSource(config: SeedConfig): ApiSource {
-  const source = apiSourcesOf(config).find((s) =>
-    s.doc_type === "municode_api"
-  );
-  if (!source) throw new Error("seed-sources.json missing municode_api source");
-  return source;
-}
-
-function municodeLatestJobUrl(config: SeedConfig): string {
-  const source = municodeSource(config);
-  const latestPattern = source.url_patterns.find((p) =>
-    p.includes("/Jobs/latest/")
-  );
-  if (!latestPattern || isPlaceholderPattern(latestPattern)) {
-    throw new Error("seed-sources.json missing Municode /Jobs/latest seed URL");
-  }
-
-  return toAbsoluteUrl(source.base_url, latestPattern);
-}
-
-async function latestReconciledMunicodeJobId(): Promise<string | null> {
-  const { data, error: lookupErr } = await db
-    .from("code_reconciliation_logs")
-    .select("supplement_job_id, created_at")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (lookupErr) {
-    throw new Error(
-      `CodeReconciliationLog lookup failed: ${lookupErr.message}`,
-    );
-  }
-
-  return data?.supplement_job_id ? String(data.supplement_job_id) : null;
+  return await resp.json();
 }
 
 async function triggerReconciliation(
@@ -438,155 +204,8 @@ async function triggerReconciliation(
   }
 }
 
-async function checkMunicodeSupplement(
-  config: SeedConfig,
-): Promise<ChangeDetectionSummary["municode"]> {
-  const url = municodeLatestJobUrl(config);
-  const resp = await fetch(url, {
-    method: "GET",
-    redirect: "follow",
-    headers: { "User-Agent": userAgent() },
-  });
-  if (!resp.ok) {
-    throw new Error(`Municode latest job GET returned HTTP ${resp.status}`);
-  }
-
-  const jobId = extractMunicodeJobId(await resp.json());
-  const previousJobId = await latestReconciledMunicodeJobId();
-
-  if (previousJobId === jobId) {
-    return {
-      checked: true,
-      job_id: jobId,
-      previous_job_id: previousJobId,
-      pending_ingestion_id: null,
-      reconciliation_triggered: false,
-    };
-  }
-
-  const pendingId = await createPendingIngestion(url, "municode_api");
-  const triggered = pendingId
-    ? await triggerReconciliation(jobId, pendingId)
-    : false;
-
-  return {
-    checked: true,
-    job_id: jobId,
-    previous_job_id: previousJobId,
-    pending_ingestion_id: pendingId,
-    reconciliation_triggered: triggered,
-  };
-}
-
-function encodeZoningSource(config: SeedConfig): ApiSource {
-  const source = apiSourcesOf(config).find((s) =>
-    s.doc_type === "encode_zoning"
-  );
-  if (!source) {
-    throw new Error("seed-sources.json missing encode_zoning source");
-  }
-  return source;
-}
-
-/**
- * Ensures exactly one active pending_ingestion exists for the EnCode zoning
- * ordinance. Unlike checkMunicodeSupplement, this does not pre-check for a
- * change before creating the row: EnCode has no lightweight version endpoint
- * separate from the Amendment History Table fetch encode.ts already has to
- * make to do its own top-level dedup (see encode.ts's VERSION SIGNAL
- * section) -- duplicating that fetch+hash here would just double the request
- * count against a robots.txt-disallowed path (see encode.ts file header) for
- * no benefit. handleEncode() marks the ingestion 'skipped' cheaply (one
- * request, no tree walk) when nothing has changed, so an unchanged run costs
- * one extra EnCode GET per invocation, not a full re-walk.
- */
-async function checkEncodeZoning(
-  config: SeedConfig,
-): Promise<ChangeDetectionSummary["encode_zoning"]> {
-  // COMPLIANCE GATE: mirrors handleEncode()'s own ENCODE_ZONING_ENABLED check
-  // (encode.ts file header) so this function doesn't create a fresh
-  // pending_ingestion every 6-hour run while the source is disabled pending
-  // sign-off -- handleEncode() would just mark each one 'skipped' anyway, but
-  // skipping row creation here avoids the pointless churn.
-  if (Deno.env.get("ENCODE_ZONING_ENABLED") !== "true") {
-    return { checked: false, pending_ingestion_id: null };
-  }
-  const source = encodeZoningSource(config);
-  const canonicalUrl = `${source.base_url}/doc-viewer.aspx?secid=2214`;
-  const pendingId = await createPendingIngestion(canonicalUrl, "encode_zoning");
-  return { checked: true, pending_ingestion_id: pendingId };
-}
-
-async function writePendingAlert(
-  details: Record<string, unknown>,
-): Promise<void> {
-  const { error: alertErr } = await db.from("pending_alerts").insert({
-    id: uuidv7(),
-    alert_type: "ingestion_failure",
-    details,
-    triggered_at: new Date().toISOString(),
-  });
-
-  if (alertErr) {
-    throw new Error(`PendingAlert insert failed: ${alertErr.message}`);
-  }
-}
-
-async function writeStalenessAlerts(): Promise<number> {
-  const threshold = new Date(
-    Date.now() - STALE_DOCUMENT_DAYS * 24 * 60 * 60 * 1000,
-  ).toISOString();
-  const { data, error: staleErr } = await db
-    .from("documents")
-    .select("id, url, doc_type, last_checked_at")
-    .eq("status", "current")
-    .lt("last_checked_at", threshold);
-
-  if (staleErr) {
-    throw new Error(`Stale document lookup failed: ${staleErr.message}`);
-  }
-  if (!data || data.length === 0) return 0;
-
-  for (const doc of data) {
-    await writePendingAlert({
-      reason: "document_stale",
-      document_id: doc.id,
-      url: doc.url,
-      doc_type: doc.doc_type,
-      last_checked_at: doc.last_checked_at,
-      stale_after_days: STALE_DOCUMENT_DAYS,
-    });
-  }
-
-  return data.length;
-}
-
-function summarizeResults(
-  results: UrlScanResult[],
-  staleAlertsCreated: number,
-  discovery: ChangeDetectionSummary["discovery"],
-  municode: ChangeDetectionSummary["municode"],
-  encodeZoning: ChangeDetectionSummary["encode_zoning"],
-): ChangeDetectionSummary {
-  return {
-    scanned_urls: results.length,
-    pending_ingestions_created:
-      results.filter((r) => r.action === "pending_ingestion_created").length +
-      (municode.pending_ingestion_id ? 1 : 0) +
-      (encodeZoning.pending_ingestion_id ? 1 : 0),
-    active_ingestions_skipped:
-      results.filter((r) => r.action === "active_ingestion_exists").length,
-    last_checked_updates:
-      results.filter((r) => r.action === "last_checked_updated").length,
-    stale_alerts_created: staleAlertsCreated,
-    discovery,
-    municode,
-    encode_zoning: encodeZoning,
-    errors: results.filter((r) => r.action === "error").map((r) =>
-      `${r.url}: ${r.message}`
-    ),
-    results,
-  };
+function isEncodeZoningEnabled(): boolean {
+  return Deno.env.get("ENCODE_ZONING_ENABLED") === "true";
 }
 
 Deno.serve(async (req: Request) => {
@@ -597,156 +216,45 @@ Deno.serve(async (req: Request) => {
   const runStart = Date.now();
 
   try {
-    const config = validateSeedConfig(seedConfig);
+    const config: SeedConfig = validateSeedConfig(seedConfig);
     const requestedSourceId = new URL(req.url).searchParams.get("source");
-    const allDiscoverySources = discoverySourcesOf(config);
-    const discoverySources = requestedSourceId
-      ? allDiscoverySources.filter((s) => s.id === requestedSourceId)
-      : allDiscoverySources;
-
-    if (requestedSourceId && discoverySources.length === 0) {
-      return error(
-        "NOT_FOUND",
-        `Unknown discovery source id: ${requestedSourceId}`,
-        404,
-      );
-    }
-
     const limiter = new FairfaxRateLimiter();
     const fetchPage = buildPageFetcher(limiter);
 
-    const { candidates, errors: crawlErrors } = await discoverAllCandidates(
-      discoverySources,
-      fetchPage,
+    const result = await runChangeDetectionCycle(
+      {
+        // db-client.ts's real SupabaseClient doesn't structurally satisfy
+        // OrchestrateDb's narrow per-table interfaces (its query builder's
+        // .then() resolves an unconstrained generic row type) -- same cast
+        // pattern as budget-committee-backfill/index.ts's BackfillDb.
+        db: db as unknown as OrchestrateDb,
+        config,
+        fetchPage,
+        fetchHead: (url: string) => fetchHead(url, limiter),
+        fetchHash: (url: string) => fetchHash(url, limiter),
+        fetchJson,
+        triggerReconciliation,
+        isEncodeZoningEnabled,
+      },
+      { requestedSourceId },
     );
-    logInfo(FN_NAME, "discovery crawl complete", {
-      sources_crawled: discoverySources.length,
-      candidate_urls_found: candidates.length,
-      crawl_errors: crawlErrors.length,
+
+    logInfo(FN_NAME, "change detection cycle complete", {
       elapsed_ms: elapsed(runStart),
+      sources_attempted: result.discovery.sources_attempted,
+      sources_leased: result.discovery.sources_leased,
+      municode_checked: result.municode.checked,
+      encode_zoning_checked: result.encode_zoning.checked,
+      stale_documents_found: result.stale_documents_found,
+      stale_alerts_created: result.stale_alerts_created,
+      error_count: result.errors.length,
     });
 
-    const results: UrlScanResult[] = [];
-
-    for (const crawlErr of crawlErrors) {
-      results.push({
-        url: crawlErr.url,
-        doc_type: crawlErr.docType,
-        action: "error",
-        message: crawlErr.message,
-      });
-      await writePendingAlert({
-        reason: "change_detection_discovery_error",
-        url: crawlErr.url,
-        source_id: crawlErr.sourceId,
-        doc_type: crawlErr.docType,
-        message: crawlErr.message,
-      });
-    }
-
-    // Bounded concurrency — a real source page can yield 100+ PDF candidates,
-    // and scanning them one at a time (each with its own HEAD/GET round trip)
-    // was the dominant cost in a live run, not the discovery crawl itself.
-    // Firing them all at once via an unbounded Promise.all instead tripped
-    // this platform's edge-function resource limit, so this uses the same
-    // bounded worker-pool the crawler uses. The shared limiter still staggers
-    // actual fairfaxcounty.gov request starts ≥200ms apart regardless.
-    results.push(
-      ...await mapWithConcurrency(
-        candidates,
-        CANDIDATE_SCAN_CONCURRENCY,
-        async (candidate) => {
-          try {
-            return await scanSeedUrl(candidate, limiter);
-          } catch (e) {
-            const message = (e as Error).message;
-            logError(FN_NAME, "URL scan failed", {
-              url: candidate.url,
-              message,
-            });
-            await writePendingAlert({
-              reason: "change_detection_source_error",
-              url: candidate.url,
-              doc_type: candidate.docType,
-              message,
-            });
-            return {
-              url: candidate.url,
-              doc_type: candidate.docType,
-              action: "error" as const,
-              message,
-            };
-          }
-        },
-      ),
-    );
-
-    let municode: ChangeDetectionSummary["municode"] = {
-      checked: false,
-      job_id: null,
-      previous_job_id: null,
-      pending_ingestion_id: null,
-      reconciliation_triggered: false,
-    };
-
-    try {
-      municode = await checkMunicodeSupplement(config);
-    } catch (e) {
-      const message = (e as Error).message;
-      logError(FN_NAME, "Municode check failed", { message });
-      results.push({
-        url: "municode_api",
-        doc_type: "municode_api",
-        action: "error",
-        message,
-      });
-      await writePendingAlert({
-        reason: "change_detection_municode_error",
-        doc_type: "municode_api",
-        message,
-      });
-    }
-
-    let encodeZoning: ChangeDetectionSummary["encode_zoning"] = {
-      checked: false,
-      pending_ingestion_id: null,
-    };
-
-    try {
-      encodeZoning = await checkEncodeZoning(config);
-    } catch (e) {
-      const message = (e as Error).message;
-      logError(FN_NAME, "EnCode zoning check failed", { message });
-      results.push({
-        url: "encode_zoning",
-        doc_type: "encode_zoning",
-        action: "error",
-        message,
-      });
-      await writePendingAlert({
-        reason: "change_detection_encode_zoning_error",
-        doc_type: "encode_zoning",
-        message,
-      });
-    }
-
-    const staleAlertsCreated = await writeStalenessAlerts();
-    const discovery = {
-      sources_crawled: discoverySources.length,
-      candidate_urls_found: candidates.length,
-      crawl_errors: crawlErrors.length,
-    };
-
-    return success(
-      summarizeResults(
-        results,
-        staleAlertsCreated,
-        discovery,
-        municode,
-        encodeZoning,
-      ),
-    );
+    return success(result);
   } catch (e) {
+    if (e instanceof UnknownSourceError) {
+      return error("NOT_FOUND", e.message, 404);
+    }
     logError(FN_NAME, "fatal error", { message: (e as Error).message });
     return error("INGESTION_FAILED", "Change detection failed", 500);
   }
