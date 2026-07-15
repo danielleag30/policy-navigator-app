@@ -18,7 +18,8 @@ export type DocType =
   | "bos_minutes"
   | "bos_summary"
   | "ordinance"
-  | "municode_api";
+  | "municode_api"
+  | "encode_zoning";
 
 export interface DiscoverySource {
   id: string;

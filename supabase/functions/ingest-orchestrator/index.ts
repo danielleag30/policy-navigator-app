@@ -45,6 +45,7 @@ import {
   handleMunicodeHistoricalBackfill,
   handleMunicodeHistoricalEmbeddingRetry,
 } from "./municode.ts";
+import { handleEncode } from "./encode.ts";
 import {
   embedOrdinanceProvisionsBatched,
   ORDINANCE_EMBED_FETCH_PAGE_SIZE,
@@ -873,6 +874,7 @@ async function processClaimedIngestion(
   try {
     const isPdf = (PDF_DOC_TYPES as readonly string[]).includes(row.doc_type);
     const isMunicode = row.doc_type === "municode_api";
+    const isEncode = row.doc_type === "encode_zoning";
 
     // ── Task 2-6: construct AI Session BEFORE any rows are created ──────────
     // Both constructor failure and preflight failure defer without consuming a
@@ -1025,6 +1027,75 @@ async function processClaimedIngestion(
 
       // ── Task 2-6: check for overlapping PendingCodeChange rows ───────────
       await triggerReconciliationIfNeeded(documentId, nodeIds);
+
+      // Mark ingestion done
+      const { error: ingestDoneErr } = await db
+        .from("pending_ingestions")
+        .update({ status: "done", updated_at: new Date().toISOString() })
+        .eq("id", pendingIngestionId);
+      if (ingestDoneErr) {
+        throw new Error(
+          `Ingestion completion update failed: ${ingestDoneErr.message}`,
+        );
+      }
+
+      return success({
+        status: "done",
+        document_id: documentId,
+        provision_count: nodeIds.length,
+      });
+    }
+
+    // ── EnCode zoning branch ────────────────────────────────────────────────
+    if (isEncode) {
+      const { documentId, nodeIds, skipped, complete } = await handleEncode(
+        pendingIngestionId,
+        softDeadlineMs,
+        forceFullReingest,
+      );
+
+      if (!complete) {
+        return await requeueForResume(
+          pendingIngestionId,
+          newAttempts,
+          "[orchestrator] EnCode soft deadline hit — requeued for resume",
+        );
+      }
+
+      if (skipped) {
+        return success({ status: "skipped", document_id: documentId });
+      }
+
+      // ── Task 2-6: embed ordinance_provisions ─────────────────────────────
+      // Same HTTP embedding path as Municode (PR #83/#89) -- never the local
+      // AI Session for this table, for the same CPU-budget reason.
+      const embedUrl = Deno.env.get("HF_SPACES_DOCLING_URL");
+      if (!embedUrl) throw new Error("HF_SPACES_DOCLING_URL not set");
+
+      const encodeEmbedResult = await embedOrdinanceProvisionsBatched(
+        db,
+        embedUrl,
+        documentId,
+        ORDINANCE_EMBED_FETCH_PAGE_SIZE,
+        Math.max(0, softDeadlineMs - Date.now()),
+      );
+      if (!encodeEmbedResult.complete) {
+        return await requeueForResume(
+          pendingIngestionId,
+          newAttempts,
+          `[orchestrator] ordinance_provisions embedding soft deadline hit ` +
+            `(${encodeEmbedResult.processed} row(s) embedded this invocation) — requeued for resume`,
+        );
+      }
+
+      // ── Task 2-6: finalize Document row ──────────────────────────────────
+      const { error: docFinalErr } = await db
+        .from("documents")
+        .update({ status: "current", updated_at: new Date().toISOString() })
+        .eq("id", documentId);
+      if (docFinalErr) {
+        throw new Error(`Document finalization failed: ${docFinalErr.message}`);
+      }
 
       // Mark ingestion done
       const { error: ingestDoneErr } = await db

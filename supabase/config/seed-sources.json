@@ -108,6 +108,16 @@
         "/Jobs/latest/10051"
       ],
       "notes": "Municode jurisdiction code 10051 = Fairfax County, VA"
+    },
+    {
+      "id": "encode_zoning",
+      "doc_type": "encode_zoning",
+      "label": "EnCode — Fairfax County Zoning Ordinance (Chapter 112.2)",
+      "base_url": "https://online.encodeplus.com/regs/fairfaxcounty-va",
+      "url_patterns": [
+        "/doc-view.aspx?ajax=0&secid=3044"
+      ],
+      "notes": "Fairfax County's Zoning Ordinance is NOT on Municode (product 10051 jumps Chapter 110 -> 113); it lives on the separate EnCode platform. url_patterns[0] is the Amendment History Table (secid 3044, a direct child of the ordinance root, secid 2214/tocid 001) used as the change-detection version signal -- see encode.ts's VERSION SIGNAL section. COMPLIANCE: online.encodeplus.com/robots.txt disallows /regs/ for User-agent: * (only Googlebot/msnbot/bingbot are allowlisted) -- flagged for human/legal sign-off before this runs on an unattended recurring schedule; see encode.ts file header."
     }
   ]
 }

@@ -78,6 +78,10 @@ interface ChangeDetectionSummary {
     pending_ingestion_id: string | null;
     reconciliation_triggered: boolean;
   };
+  encode_zoning: {
+    checked: boolean;
+    pending_ingestion_id: string | null;
+  };
   errors: string[];
   results: UrlScanResult[];
 }
@@ -133,7 +137,9 @@ class FairfaxRateLimiter {
 
     const shouldDelay = this.#anyRequestStarted;
     this.#anyRequestStarted = true;
-    this.#chain = this.#chain.then(() => shouldDelay ? sleep(FAIRFAX_REQUEST_DELAY_MS) : undefined);
+    this.#chain = this.#chain.then(() =>
+      shouldDelay ? sleep(FAIRFAX_REQUEST_DELAY_MS) : undefined
+    );
     return this.#chain;
   }
 }
@@ -367,14 +373,18 @@ function extractMunicodeJobId(payload: unknown): string {
 }
 
 function municodeSource(config: SeedConfig): ApiSource {
-  const source = apiSourcesOf(config).find((s) => s.doc_type === "municode_api");
+  const source = apiSourcesOf(config).find((s) =>
+    s.doc_type === "municode_api"
+  );
   if (!source) throw new Error("seed-sources.json missing municode_api source");
   return source;
 }
 
 function municodeLatestJobUrl(config: SeedConfig): string {
   const source = municodeSource(config);
-  const latestPattern = source.url_patterns.find((p) => p.includes("/Jobs/latest/"));
+  const latestPattern = source.url_patterns.find((p) =>
+    p.includes("/Jobs/latest/")
+  );
   if (!latestPattern || isPlaceholderPattern(latestPattern)) {
     throw new Error("seed-sources.json missing Municode /Jobs/latest seed URL");
   }
@@ -455,7 +465,9 @@ async function checkMunicodeSupplement(
   }
 
   const pendingId = await createPendingIngestion(url, "municode_api");
-  const triggered = pendingId ? await triggerReconciliation(jobId, pendingId) : false;
+  const triggered = pendingId
+    ? await triggerReconciliation(jobId, pendingId)
+    : false;
 
   return {
     checked: true,
@@ -464,6 +476,45 @@ async function checkMunicodeSupplement(
     pending_ingestion_id: pendingId,
     reconciliation_triggered: triggered,
   };
+}
+
+function encodeZoningSource(config: SeedConfig): ApiSource {
+  const source = apiSourcesOf(config).find((s) =>
+    s.doc_type === "encode_zoning"
+  );
+  if (!source) {
+    throw new Error("seed-sources.json missing encode_zoning source");
+  }
+  return source;
+}
+
+/**
+ * Ensures exactly one active pending_ingestion exists for the EnCode zoning
+ * ordinance. Unlike checkMunicodeSupplement, this does not pre-check for a
+ * change before creating the row: EnCode has no lightweight version endpoint
+ * separate from the Amendment History Table fetch encode.ts already has to
+ * make to do its own top-level dedup (see encode.ts's VERSION SIGNAL
+ * section) -- duplicating that fetch+hash here would just double the request
+ * count against a robots.txt-disallowed path (see encode.ts file header) for
+ * no benefit. handleEncode() marks the ingestion 'skipped' cheaply (one
+ * request, no tree walk) when nothing has changed, so an unchanged run costs
+ * one extra EnCode GET per invocation, not a full re-walk.
+ */
+async function checkEncodeZoning(
+  config: SeedConfig,
+): Promise<ChangeDetectionSummary["encode_zoning"]> {
+  // COMPLIANCE GATE: mirrors handleEncode()'s own ENCODE_ZONING_ENABLED check
+  // (encode.ts file header) so this function doesn't create a fresh
+  // pending_ingestion every 6-hour run while the source is disabled pending
+  // sign-off -- handleEncode() would just mark each one 'skipped' anyway, but
+  // skipping row creation here avoids the pointless churn.
+  if (Deno.env.get("ENCODE_ZONING_ENABLED") !== "true") {
+    return { checked: false, pending_ingestion_id: null };
+  }
+  const source = encodeZoningSource(config);
+  const canonicalUrl = `${source.base_url}/doc-viewer.aspx?secid=2214`;
+  const pendingId = await createPendingIngestion(canonicalUrl, "encode_zoning");
+  return { checked: true, pending_ingestion_id: pendingId };
 }
 
 async function writePendingAlert(
@@ -515,18 +566,25 @@ function summarizeResults(
   staleAlertsCreated: number,
   discovery: ChangeDetectionSummary["discovery"],
   municode: ChangeDetectionSummary["municode"],
+  encodeZoning: ChangeDetectionSummary["encode_zoning"],
 ): ChangeDetectionSummary {
   return {
     scanned_urls: results.length,
     pending_ingestions_created:
       results.filter((r) => r.action === "pending_ingestion_created").length +
-      (municode.pending_ingestion_id ? 1 : 0),
-    active_ingestions_skipped: results.filter((r) => r.action === "active_ingestion_exists").length,
-    last_checked_updates: results.filter((r) => r.action === "last_checked_updated").length,
+      (municode.pending_ingestion_id ? 1 : 0) +
+      (encodeZoning.pending_ingestion_id ? 1 : 0),
+    active_ingestions_skipped:
+      results.filter((r) => r.action === "active_ingestion_exists").length,
+    last_checked_updates:
+      results.filter((r) => r.action === "last_checked_updated").length,
     stale_alerts_created: staleAlertsCreated,
     discovery,
     municode,
-    errors: results.filter((r) => r.action === "error").map((r) => `${r.url}: ${r.message}`),
+    encode_zoning: encodeZoning,
+    errors: results.filter((r) => r.action === "error").map((r) =>
+      `${r.url}: ${r.message}`
+    ),
     results,
   };
 }
@@ -649,6 +707,29 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    let encodeZoning: ChangeDetectionSummary["encode_zoning"] = {
+      checked: false,
+      pending_ingestion_id: null,
+    };
+
+    try {
+      encodeZoning = await checkEncodeZoning(config);
+    } catch (e) {
+      const message = (e as Error).message;
+      logError(FN_NAME, "EnCode zoning check failed", { message });
+      results.push({
+        url: "encode_zoning",
+        doc_type: "encode_zoning",
+        action: "error",
+        message,
+      });
+      await writePendingAlert({
+        reason: "change_detection_encode_zoning_error",
+        doc_type: "encode_zoning",
+        message,
+      });
+    }
+
     const staleAlertsCreated = await writeStalenessAlerts();
     const discovery = {
       sources_crawled: discoverySources.length,
@@ -657,7 +738,13 @@ Deno.serve(async (req: Request) => {
     };
 
     return success(
-      summarizeResults(results, staleAlertsCreated, discovery, municode),
+      summarizeResults(
+        results,
+        staleAlertsCreated,
+        discovery,
+        municode,
+        encodeZoning,
+      ),
     );
   } catch (e) {
     logError(FN_NAME, "fatal error", { message: (e as Error).message });
