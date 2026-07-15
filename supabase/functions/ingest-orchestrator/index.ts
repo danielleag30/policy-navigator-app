@@ -1326,14 +1326,16 @@ Deno.serve(async (req: Request) => {
       });
     }
   } catch (e) {
+    // This backlog-drain step is ancillary to the regular pending_ingestions
+    // loop below, which is the higher-priority path (real document ingestion).
+    // A failure here -- e.g. a schema this step depends on not yet matching
+    // what this deploy expects -- must not take down the whole invocation and
+    // skip regular ingestion for the cron tick. Log and fall through, the
+    // same "don't let historical-retry work starve regular ingestion"
+    // principle the !complete guard above already applies on the success path.
     console.error(
-      "[orchestrator] historical embedding retry failed:",
+      "[orchestrator] historical embedding retry failed — continuing to regular ingestion:",
       (e as Error).message,
-    );
-    return error(
-      "INGESTION_FAILED",
-      "Historical embedding retry failed",
-      500,
     );
   }
 
