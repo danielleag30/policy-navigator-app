@@ -94,5 +94,245 @@
       }
     ],
     "notes": "Real: Chapter 9.1 (Communications) is_current=false, 52 real sections dated 2019-09-11; fully repealed with zero active regulatory sections in the current corpus (its only is_current=true row, FACOCO_CH9.1CORE35-19-9.2 / chunk 019f34bb-4793-71c6-be30-1194495faa43, is a repealed-chapter marker containing only the editor's note, not regulatory text; verified). Replaced by Chapter 9.2 (Cable Television), current, effective Jan 1 2020 per editor's note on the current chapter-level row. Trap: 'before 2020' framing invites retrieval of genuine old Chapter 9.1 text (e.g. Section 9.1-3-1 'Requirement of a Franchise', chunk 019f4c15-1571-7623-b778-e09762462260) as if it answers a present-tense question; correct handling should surface the historical Chapter 9.1 content while clearly flagging that it was superseded by Chapter 9.2."
+  },
+  {
+    "id": "adversarial-005",
+    "category": "adversarial_near_miss",
+    "query": "What does Fairfax County Code Section 23-1-5 say about the limitation on the amount of bonds a bondsman can issue?",
+    "chunk_ids": ["019f34bd-1505-7069-bd21-f8088d93338a"],
+    "criteria": [
+      {
+        "id": "adversarial-005-not-old-topic",
+        "description": "Response does not restate the old, unrelated bond-amount-limitation text as current Section 23-1-5",
+        "check": { "type": "answer_not_contains", "substring": "true market value of his real estate" }
+      },
+      {
+        "id": "adversarial-005-cites-current",
+        "description": "Response cites the current Section 23-1-5 (Compliance with law)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-1505-7069-bd21-f8088d93338a" }
+      },
+      {
+        "id": "adversarial-005-not-refusal",
+        "description": "Response gives a substantive answer rather than a blanket refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Genuine citation-reuse trap, not a renumbering -- explicitly root-caused and calibrated in PR #97's contentSimilarity() fix. Old row (is_current=false, no current-row match at its own node_id): id 019f6927-4e0b-79de-8b43-2d437fadfaa8, node FACOCO_CH23BO_ART1GERE_S23-1-5LIAMBOBEIS, section_title 'Section 23-1-5. - Limitation on amount of bonds to be issued.', effective_date 2026-01-16, superseded_date 2026-04-28: 'No professional bondsman shall enter into any such bond if the aggregate of the penalty of such bond and all other bonds on which he has not been released from liability is in excess of the true market value of his real estate.' Municode reassigned the citation number '23-1-5' to a wholly unrelated new provision after the old one was repealed (Ord. 34-25-23): current row id 019f34bd-1505-7069-bd21-f8088d93338a, node FACOCO_CH23BO_ART1GERE_S23-1-5COLA, section_title 'Section 23-1-5. - Compliance with law.', effective_date 2026-04-28: 'Any person that is licensed under this Article as a bondsman or agent for any bondsman must comply with all applicable laws governing bondsmen in Virginia.' The query names the citation number and the old topic together, inviting the model to conflate them; correct behavior is to answer with the current, unrelated 'Compliance with law' text and not surface the old bond-limitation language as if it were still at that citation."
+  },
+  {
+    "id": "adversarial-006",
+    "category": "adversarial_near_miss",
+    "query": "Under Fairfax County Code Section 5-1-25, is it illegal to possess an open alcoholic beverage container on a sidewalk?",
+    "chunk_ids": ["019f34ba-9064-7e57-85bc-8a6367fd7472"],
+    "criteria": [
+      {
+        "id": "adversarial-006-contains-sidewalk",
+        "description": "Response confirms sidewalks adjoining a public street are covered under the current, expanded Section 5-1-25",
+        "check": { "type": "answer_contains", "substring": "sidewalk" }
+      },
+      {
+        "id": "adversarial-006-cites-current",
+        "description": "Response cites the current, consolidated Section 5-1-25",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34ba-9064-7e57-85bc-8a6367fd7472" }
+      },
+      {
+        "id": "adversarial-006-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Trap: the citation number '5-1-25' is stable across old and current rows, but the current section is a consolidation of two formerly separate sections, so a query phrased around the old narrow scope risks a stale-looking (but not literally wrong) partial answer. Old row: id 019f6923-c95b-70c7-80a3-67d1240bace7, node FACOCO_CH5OF_ART1OFAGPUPESA_S5-1-25POOPALBECOPR, section_title 'Section 5-1-25. - Possession of open alcoholic beverage containers prohibited.', effective_date 2025-09-19, superseded_date 2026-01-16: 'It shall be unlawful for any person to possess an open alcoholic beverage container while in a public park, playground, or on a public street.' (no sidewalk, no drinking/tendering language). Current row: id 019f34ba-9064-7e57-85bc-8a6367fd7472, node FACOCO_CH5OF_ART1OFAGPUPESA_S5-1-25POOPALBECOPRPEDRALBETEANPUPL, section_title 'Section 5-1-25. - Possession of open alcoholic beverage containers prohibited and penalty for drinking alcoholic beverages or tendering to another in a public place.', effective_date 2026-04-28: '(a) It is unlawful for any person to possess an open alcoholic beverage container while in a public park, playground, on a public street, or on any sidewalk adjoining any public street.' -- Ord. 17-25-5 both added the sidewalk language and absorbed the old, separate Section 5-1-27 (drinking/tendering) into this section, which is why old Section 5-1-27 (id 019f6923-cc31-7f6b-85d1-c7d12eee4dbe) has no current-row match of its own."
+  },
+  {
+    "id": "adversarial-007",
+    "category": "adversarial_near_miss",
+    "query": "Does a Fairfax County landlord need to post a notice with the Tenant-Landlord Commission's phone number in the rental office?",
+    "chunk_ids": ["019f34bc-a02e-7fe3-949f-c126c498871e"],
+    "criteria": [
+      {
+        "id": "adversarial-007-not-old-commission",
+        "description": "Response does not present the defunct Tenant-Landlord Commission as the current notice contact",
+        "check": { "type": "answer_not_contains", "substring": "Tenant-Landlord Commission" }
+      },
+      {
+        "id": "adversarial-007-contains-current-office",
+        "description": "Response names the current office (Department of Cable and Consumer Services)",
+        "check": { "type": "answer_contains", "substring": "Department of Cable and Consumer Services" }
+      },
+      {
+        "id": "adversarial-007-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Trap: query names the defunct 'Tenant-Landlord Commission' by its old name, inviting retrieval of Section 12-1-2 pre-amendment text. Old row: id 019f692e-d113-7416-9b56-bc1b76be16c9, node FACOCO_CH12TEANRE_ART1INGE_S12-1-2SIOFLA, effective_date 2025-04-25, superseded_date 2025-07-11: 'a sign containing notice of the existence of the Fairfax County Tenant-Landlord Commission and the telephone number of its office. Landlords shall obtain such signs from the Fairfax County Department of Consumer Affairs.' Current row: id 019f34bc-a02e-7fe3-949f-c126c498871e, same node_id (Ord. 05-25-12), effective_date 2026-04-28: 'a sign containing notice of the existence of the Fairfax County Department of Cable and Consumer Services and the telephone number of its office. Landlords shall obtain such signs from the Fairfax County Department of Cable and Consumer Services.' The Commission was eliminated (its definition in Section 12-1-1 is now '(5) Reserved.', see temporal-003); correct behavior names only the current department, not the old Commission."
+  },
+  {
+    "id": "adversarial-008",
+    "category": "adversarial_near_miss",
+    "query": "Does the Supervisor of Assessments issue bondsman licenses in Fairfax County under Section 23-1-3?",
+    "chunk_ids": ["019f34bd-099b-7456-8ed8-71ec04f0bdf9"],
+    "criteria": [
+      {
+        "id": "adversarial-008-not-old-office",
+        "description": "Response does not present the defunct 'Supervisor of Assessments' as the current issuing authority",
+        "check": { "type": "answer_not_contains", "substring": "Supervisor of Assessments" }
+      },
+      {
+        "id": "adversarial-008-contains-current-office",
+        "description": "Response names the current issuing office (Director of the Department of Tax Administration)",
+        "check": { "type": "answer_contains", "substring": "Director of the Department of Tax Administration" }
+      },
+      {
+        "id": "adversarial-008-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Trap: query names the defunct 'Supervisor of Assessments' office by name, inviting retrieval of pre-Ord. 34-25-23 text. Old row: id 019f6927-4b1c-7e74-aa90-199a038df002, node FACOCO_CH23BO_ART1GERE_S23-1-3ISLI, effective_date 2026-01-16, superseded_date 2026-04-28: 'the Supervisor of Assessments of the County shall issue to the applicant a license...'. Current row: id 019f34bd-099b-7456-8ed8-71ec04f0bdf9, same node_id, effective_date 2026-04-28: 'the Director of the Department of Tax Administration shall issue to the applicant a license...'. This is a bare-renaming amendment (same substantive licensing rule, new issuing office) -- same trap pattern as the Section 21-1-2 automobile-graveyard renaming (temporal-007), applied to a different chapter and office."
+  },
+  {
+    "id": "adversarial-009",
+    "category": "adversarial_near_miss",
+    "query": "If a Fairfax County construction plan resubmission addresses all deficiencies, how many days does the County have to act on it under Section 101-2-4?",
+    "chunk_ids": ["019f34cd-cdc9-7344-9d3c-f964fec11fd3"],
+    "criteria": [
+      {
+        "id": "adversarial-009-not-old-number",
+        "description": "Response does not restate the superseded 45-day resubmission window as current",
+        "check": { "type": "answer_not_contains", "substring": "45 days" }
+      },
+      {
+        "id": "adversarial-009-contains-current-number",
+        "description": "Response states the current 30-day resubmission window",
+        "check": { "type": "answer_contains", "substring": "30 days" }
+      },
+      {
+        "id": "adversarial-009-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Numeric near-miss trap on the same section as temporal-009, but a different number within it (the resubmission-review window, not the initial-review window), so the two cases are not duplicates. Old row: id 019f6927-32de-73e0-9ce0-8e7fbe32d037, node THCOCOFAVI1976_CH101SUPR_ART2SUAPPRAPPR_S101-2-4COPL, effective_date 2026-01-16, superseded_date 2026-04-28: 'Any construction plan that has been previously disapproved and has been modified and corrected to address all deficiencies must be acted upon within 45 days, except under abnormal circumstances...'. Current row: id 019f34cd-cdc9-7344-9d3c-f964fec11fd3, same node_id, effective_date 2026-04-28: '...must be acted upon within 30 days, except under abnormal circumstances...', with the current text also adding a further tiered 14-day/7-day process for third-or-subsequent resubmissions that did not exist in the old text at all."
+  },
+  {
+    "id": "adversarial-010",
+    "category": "adversarial_near_miss",
+    "query": "What is the minimum required storage volume per acre for a temporary sediment trap in a Resource Protection Area under Fairfax County Code Section 124.1-6-3?",
+    "chunk_ids": ["019f34d2-8b53-746d-98b4-a5e66c0b92b4"],
+    "criteria": [
+      {
+        "id": "adversarial-010-not-old-number",
+        "description": "Response does not restate the superseded local numeric standard (202 cubic yards per acre) as current",
+        "check": { "type": "answer_not_contains", "substring": "202 cubic yards" }
+      },
+      {
+        "id": "adversarial-010-cites-current",
+        "description": "Response cites the current Section 124.1-6-3",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d2-8b53-746d-98b4-a5e66c0b92b4" }
+      },
+      {
+        "id": "adversarial-010-not-refusal",
+        "description": "Response gives a substantive answer (deferring to the state handbook) rather than a blanket refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Numeric trap: the old section had a locally-specified override number that the current section deletes entirely, so a query fishing for 'the number' risks surfacing the stale figure. Old row: id 019f6927-7afa-744c-9c1a-cbf97b09d057, node THCOCOFAVI1976_CH124.1ERSTMAOR_ART6ERSECOPLREMISTTECR_S124.1-6-3ERSECOCRTEMEMIST, effective_date 2026-01-16, superseded_date 2026-04-28: 'For land areas designated as Resource Protection Areas (RPAs), the minimum storage volume is 202 cubic yards per acre of disturbed area. Pipe outlet sediment traps are required for drainage areas of one to three acres...' Current row: id 019f34d2-8b53-746d-98b4-a5e66c0b92b4, same node_id (Ord. 36-25-124.1), effective_date 2026-04-28: all of that numeric detail is deleted; the current text instead reads '(A) An erosion and sediment control plan must be consistent with the criteria, techniques, and methods contained in 9VAC25-875-560 of the VESM Regulation, the Standards & Specifications as contained in the current Virginia Stormwater Management Handbook and the Public Facilities Manual. When the standards vary between the publications, the most stringent standard will apply.' Correct behavior is to say the County no longer specifies its own override number and instead defers to the state handbook/PFM, not to repeat the old 202-cubic-yard figure."
+  },
+  {
+    "id": "adversarial-011",
+    "category": "adversarial_near_miss",
+    "query": "Is there a $25.00 per-lock charge cap when a Fairfax County landlord installs deadbolt locks under Section 12-1-4?",
+    "chunk_ids": ["019f34bc-a37a-7a38-9c7d-a98060fca273"],
+    "criteria": [
+      {
+        "id": "adversarial-011-not-old-cap",
+        "description": "Response does not present the defunct $25.00-per-lock charge cap as current law",
+        "check": { "type": "answer_not_contains", "substring": "Twenty-five Dollars" }
+      },
+      {
+        "id": "adversarial-011-cites-current",
+        "description": "Response cites the current Section 12-1-4",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bc-a37a-7a38-9c7d-a98060fca273" }
+      },
+      {
+        "id": "adversarial-011-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Three-way node trap on the same citation number, distinct from temporal-002/temporal-012's two-way (old-vs-current) traps. There are THREE distinct Section 12-1-4 rows in the corpus: (1) the current row (id 019f34bc-a37a-7a38-9c7d-a98060fca273, effective 2026-04-28) requiring deadbolt locks/peepholes in multifamily buildings with no charge cap language at all; (2) a 2025-dated historical row at the SAME node_id (id 019f692e-d67a-7f2f-8a4b-e3e6f7f8dfbe, see temporal-002) with the pre-Ord.-05-25-12 'any one building' framing, also with no charge cap; and (3) a genuinely distinct, much older 'Repealed, effective July 1, 1989' row at a DIFFERENT node_id (id 019f692e-d420-773e-a39c-8479fb603dad, node FACOCO_CH12TEANRE_ART1INGE_S12-1-4LOPEREEFJU11989, effective_date 2025-04-25, superseded_date 2025-07-11), which is the true pre-1976/pre-1989 tenant-request-triggered regime: 'in no event shall the charges to the tenant exceed Twenty-five Dollars ($25.00) per lock and Ten Dollars ($10.00) per peephole.' That defunct 1989 regime shares the citation number '12-1-4' with the current section but is a wholly different, long-superseded rule; correct behavior must not surface its $25.00/$10.00 charge caps as if they applied to the current deadbolt-lock requirement."
+  },
+  {
+    "id": "adversarial-012",
+    "category": "adversarial_near_miss",
+    "query": "Does Fairfax County still require professional bondsmen to file a monthly report of outstanding bonds under Section 23-1-6?",
+    "chunk_ids": ["019f34bd-16a7-7866-9b24-a9660707c5e0"],
+    "criteria": [
+      {
+        "id": "adversarial-012-repealed",
+        "description": "Response states Section 23-1-6 was repealed and no current monthly-report requirement exists",
+        "check": { "type": "answer_contains", "substring": "34-25-23" }
+      },
+      {
+        "id": "adversarial-012-cites",
+        "description": "Response cites the Section 23-1-6 reserved/repealed note",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-16a7-7866-9b24-a9660707c5e0" }
+      },
+      {
+        "id": "adversarial-012-not-refusal",
+        "description": "Response gives the substantive repeal answer rather than a blanket refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Same repealed-section trap pattern as adversarial-002/003 (Chapter 28, Chapter 29), applied at section granularity instead of chapter granularity. Old row: id 019f6927-4f67-7475-a6e6-d13b12e47f51, node FACOCO_CH23BO_ART1GERE_S23-1-6RE, section_title 'Section 23-1-6. - Monthly report.', effective_date 2026-01-16, superseded_date 2026-04-28: 'Each professional bondsman licensed under this Article shall file with the clerk of the circuit court of the County, not later than the fifth day of each month, a list of all outstanding bonds...'. Current row: id 019f34bd-16a7-7866-9b24-a9660707c5e0, same node_id, effective_date 2026-04-28, section_title 'Section 23-1-6. - Reserved.': 'Editor's note-- Ord. No. 34-25-23 , repealed §§ 23-1-6 and 23-1-7, which derived from 3-21-56; and 1961 Code, §§ 5-6 and 5-7.' Correct behavior states the reporting requirement was repealed, not fabricate a still-active monthly-report obligation."
+  },
+  {
+    "id": "adversarial-013",
+    "category": "adversarial_near_miss",
+    "query": "Under Fairfax County Code Section 41.1-2-16, who can authorize the Animal Services Division to bury or cremate a dead animal?",
+    "chunk_ids": ["019f34bf-af23-7a81-9755-37547162ef4c"],
+    "criteria": [
+      {
+        "id": "adversarial-013-not-old-name",
+        "description": "Response does not name the defunct 'Animal Services Division' as the current authorized entity",
+        "check": { "type": "answer_not_contains", "substring": "Animal Services Division" }
+      },
+      {
+        "id": "adversarial-013-contains-current-name",
+        "description": "Response names the current office (Department of Animal Services)",
+        "check": { "type": "answer_contains", "substring": "Department of Animal Services" }
+      },
+      {
+        "id": "adversarial-013-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Trap: query names the defunct 'Animal Services Division' by name (as it appears verbatim in the pre-amendment text), inviting the model to treat that name as still correct. Old row: id 019f6923-8808-7efb-8a05-157e4d9d535b, node FACOCO_CH41.1ANCOCA_ART2ANCORACO_S41.1-2-16BUCRDEANFO, effective_date 2025-09-19, superseded_date 2026-01-16: '...any judge of a general district court, after notice to the owner if he can be ascertained, shall authorize Animal Services Division or the Director of Health to do so.' Current row: id 019f34bf-af23-7a81-9755-37547162ef4c, same node_id (Ord. 11-25-41.1), effective_date 2026-04-28: '...shall authorize Department of Animal Services or the Director of Health to do so.' Part of the same county-wide renaming as temporal-004 (Section 41.1-2-5) and also present in Section 41.1-2-2 (dog licensing, id 019f34bf-9506-726e-8384-d3fab682d6de)."
+  },
+  {
+    "id": "adversarial-014",
+    "category": "adversarial_near_miss",
+    "query": "Are adaptation measures a permitted use in a Resource Protection Area under Fairfax County Code Section 118-2-1?",
+    "chunk_ids": ["019f34d1-3db8-77b4-8c4a-eb97d9f01490"],
+    "criteria": [
+      {
+        "id": "adversarial-014-contains-adaptation",
+        "description": "Response confirms adaptation measures are a current permitted use, added by the amendment",
+        "check": { "type": "answer_contains", "substring": "Adaptation measures" }
+      },
+      {
+        "id": "adversarial-014-cites-current",
+        "description": "Response cites the current Section 118-2-1",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d1-3db8-77b4-8c4a-eb97d9f01490" }
+      },
+      {
+        "id": "adversarial-014-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Trap: the old version of this section enumerates permitted RPA uses (a)-(e) with no adaptation-measures entry, so a model retrieving only the old text would incorrectly answer 'no'. Old row: id 019f692c-2ad1-7b8a-877b-c483bdafeb7c, node THCOCOFAVI1976_CH118CHBAPROR_ART2ALUSDERE_S118-2-1ALUSDEREREPRAR, effective_date 2024-11-19, superseded_date 2025-04-25, ends at '(e) Flood control and stormwater management facilities...' with no subsection (f) and references the old Chapter 124 / VSMP Permit Regulations. Current row: id 019f34d1-3db8-77b4-8c4a-eb97d9f01490, same node_id (Ord. 31-24-118), effective_date 2026-04-28, adds '(f) Adaptation measures, subject to compliance with the performance criteria in Article 3 of this Chapter.' and updates the stormwater cross-references to the new Chapter 124.1 / VESMR. Genuine substantive change confirmed (content_hash differs: 4a241d077... vs c3874eda5...)."
   }
 ]
