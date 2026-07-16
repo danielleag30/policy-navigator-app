@@ -110,8 +110,11 @@ import {
   buildCurrentIdentityIndex,
   classifyOrphanRecovery,
   type CurrentIdentityIndex,
+  type CurrentIdentityRow,
   DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
   DEFAULT_HISTORICAL_SUPPLEMENTS,
+  EXTENDED_HISTORICAL_CHAPTER_TARGETS,
+  EXTENDED_HISTORICAL_SUPPLEMENTS,
   headingMatchesHistoricalChapter,
   type MunicodeJobSummary,
   normalizeOnlineDate,
@@ -392,6 +395,7 @@ async function upsertHistoricalProvision(
     content: plainContent,
     currentNodeIds: ctx.identityIndex.currentNodeIds,
     citationToCurrentNodeId: ctx.identityIndex.citationToCurrentNodeId,
+    citationToCurrentContent: ctx.identityIndex.citationToCurrentContent,
   });
 
   const { data: existing, error: lookupErr } = await db
@@ -836,23 +840,47 @@ function prioritizeHistoricalJobs(
   });
 }
 
+/** PostgREST's default page size; a single unbounded select() silently caps at this many rows. */
+const IDENTITY_INDEX_PAGE_SIZE = 1000;
+
+/**
+ * Loads every is_current=true row for citation-based identity resolution.
+ * Must paginate: PostgREST silently caps an unbounded select() at
+ * IDENTITY_INDEX_PAGE_SIZE rows. The corpus passed 1000 current rows (it's
+ * 3400+ as of this fix), which made a single-page query WITHOUT .range()
+ * non-deterministically drop rows from citationToCurrentNodeId depending on
+ * which page's rows the DB happened to return first — a real citation match
+ * would go missing whenever its current row landed outside that first page,
+ * silently degrading resolveHistoricalIdentity() to the historical-node
+ * fallback instead of the intended citation-current-node match.
+ */
 async function loadCurrentIdentityIndex(): Promise<CurrentIdentityIndex> {
-  const { data: rows, error } = await db
-    .from("ordinance_provisions")
-    .select("municode_node_id, section_title, content")
-    .eq("is_current", true);
-  if (error) {
-    throw new Error(
-      `Current Municode identity index lookup failed: ${error.message}`,
+  const rows: CurrentIdentityRow[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await db
+      .from("ordinance_provisions")
+      .select("municode_node_id, section_title, content")
+      .eq("is_current", true)
+      .order("id")
+      .range(from, from + IDENTITY_INDEX_PAGE_SIZE - 1);
+    if (error) {
+      throw new Error(
+        `Current Municode identity index lookup failed: ${error.message}`,
+      );
+    }
+    if (!data || data.length === 0) break;
+    rows.push(
+      ...data.map((row) => ({
+        municode_node_id: row.municode_node_id as string,
+        section_title: row.section_title as string | null,
+        content: row.content as string | null,
+      })),
     );
+    if (data.length < IDENTITY_INDEX_PAGE_SIZE) break;
+    from += IDENTITY_INDEX_PAGE_SIZE;
   }
-  return buildCurrentIdentityIndex(
-    (rows ?? []).map((row) => ({
-      municode_node_id: row.municode_node_id as string,
-      section_title: row.section_title as string | null,
-      content: row.content as string | null,
-    })),
-  );
+  return buildCurrentIdentityIndex(rows);
 }
 
 async function alignCurrentDocumentDate(
@@ -1355,11 +1383,65 @@ function isArticle6UtilityTax(heading: string | null | undefined): boolean {
     (normalized.includes("utility") || normalized.includes("ut"));
 }
 
+/**
+ * Walk the extended per-supplement chapter/article targets (see
+ * _municode-helpers.ts EXTENDED_HISTORICAL_CHAPTER_TARGETS) for the given supplement,
+ * pushing each matched chapter or article node onto `roots`. Unlike the fixed
+ * Chapter 4 Article 6 / Chapter 9.1 / Chapter 9.2 scope above, these targets are
+ * only checked for the one supplement they were found in, not every historical job.
+ */
+async function selectExtendedHistoricalRootNodes(
+  baseUrl: string,
+  userAgent: string,
+  jobId: string,
+  chapterNodes: TocNode[],
+  supplementNumber: number,
+  roots: TocNode[],
+): Promise<void> {
+  const targets = EXTENDED_HISTORICAL_CHAPTER_TARGETS.get(supplementNumber);
+  if (!targets) return;
+
+  for (const target of targets) {
+    const chapterNode = chapterNodes.find((node) =>
+      headingMatchesHistoricalChapter(node.Heading, [target.chapterPrefix])
+    );
+    if (!chapterNode) {
+      console.warn(
+        `[municode-history] extended target chapter not found: "${target.chapterPrefix}" (Supp ${supplementNumber})`,
+      );
+      continue;
+    }
+    if (!target.articlePrefix) {
+      roots.push(chapterNode);
+      continue;
+    }
+
+    await sleep(SUBSECTION_DELAY_MS);
+    const children = await fetchNodeChildren(
+      baseUrl,
+      jobId,
+      chapterNode.Id,
+      userAgent,
+    );
+    const articleNode = children.find((child) =>
+      headingMatchesHistoricalChapter(child.Heading, [target.articlePrefix!])
+    );
+    if (!articleNode) {
+      console.warn(
+        `[municode-history] extended target article not found: "${target.chapterPrefix}" "${target.articlePrefix}" (Supp ${supplementNumber})`,
+      );
+      continue;
+    }
+    roots.push(articleNode);
+  }
+}
+
 async function selectHistoricalRootNodes(
   baseUrl: string,
   userAgent: string,
   jobId: string,
   chapterNodes: TocNode[],
+  supplementNumber: number,
 ): Promise<TocNode[]> {
   const roots: TocNode[] = [];
   for (const node of chapterNodes) {
@@ -1385,6 +1467,14 @@ async function selectHistoricalRootNodes(
       roots.push(node);
     }
   }
+  await selectExtendedHistoricalRootNodes(
+    baseUrl,
+    userAgent,
+    jobId,
+    chapterNodes,
+    supplementNumber,
+    roots,
+  );
   return roots;
 }
 
@@ -1413,11 +1503,28 @@ export async function handleMunicodeHistoricalBackfill(
 
   const productJobs = await fetchProductJobs(baseUrl, userAgent);
   const latestJob = latestJobFromProductJobs(productJobs);
+  const allHistoricalSupplements = [
+    ...DEFAULT_HISTORICAL_SUPPLEMENTS,
+    ...EXTENDED_HISTORICAL_SUPPLEMENTS,
+  ];
+  const allChapterPrefixes = [
+    ...DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
+    ...new Set(
+      Array.from(EXTENDED_HISTORICAL_CHAPTER_TARGETS.values()).flatMap(
+        (targets) =>
+          targets.map((target) =>
+            target.articlePrefix
+              ? `${target.chapterPrefix} ${target.articlePrefix}`
+              : target.chapterPrefix
+          ),
+      ),
+    ),
+  ];
   const selectedJobs = prioritizeHistoricalJobs(
     selectHistoricalJobs(
       productJobs,
       latestJob.jobId,
-      DEFAULT_HISTORICAL_SUPPLEMENTS,
+      allHistoricalSupplements,
     ),
   );
   await alignCurrentDocumentDate(baseUrl, latestJob);
@@ -1431,7 +1538,7 @@ export async function handleMunicodeHistoricalBackfill(
     return {
       complete: false,
       selectedSupplements,
-      selectedChapterPrefixes: DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
+      selectedChapterPrefixes: allChapterPrefixes,
       processedJobs,
       reason: `historical resume lease held for ${resumable.documentId}`,
     };
@@ -1465,7 +1572,7 @@ export async function handleMunicodeHistoricalBackfill(
       return {
         complete: false,
         selectedSupplements,
-        selectedChapterPrefixes: DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
+        selectedChapterPrefixes: allChapterPrefixes,
         processedJobs,
         reason: `resumed ${job.name} hit soft deadline`,
       };
@@ -1487,7 +1594,7 @@ export async function handleMunicodeHistoricalBackfill(
       return {
         complete: false,
         selectedSupplements,
-        selectedChapterPrefixes: DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
+        selectedChapterPrefixes: allChapterPrefixes,
         processedJobs,
         reason: "soft deadline reached before next historical job",
       };
@@ -1500,6 +1607,7 @@ export async function handleMunicodeHistoricalBackfill(
       userAgent,
       job.jobId,
       tocPayload.Children!,
+      job.supplementNumber,
     );
     if (roots.length === 0) {
       continue;
@@ -1520,7 +1628,7 @@ export async function handleMunicodeHistoricalBackfill(
       return {
         complete: false,
         selectedSupplements,
-        selectedChapterPrefixes: DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
+        selectedChapterPrefixes: allChapterPrefixes,
         processedJobs,
         reason: `historical document lease held for ${job.name}`,
       };
@@ -1535,7 +1643,7 @@ export async function handleMunicodeHistoricalBackfill(
         return {
           complete: false,
           selectedSupplements,
-          selectedChapterPrefixes: DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
+          selectedChapterPrefixes: allChapterPrefixes,
           processedJobs,
           reason:
             `historical embedding backlog for ${job.name} hit soft deadline after ${embedResult.processed} row(s)`,
@@ -1570,7 +1678,7 @@ export async function handleMunicodeHistoricalBackfill(
       return {
         complete: false,
         selectedSupplements,
-        selectedChapterPrefixes: DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
+        selectedChapterPrefixes: allChapterPrefixes,
         processedJobs,
         reason: `${job.name} hit soft deadline`,
       };
@@ -1588,7 +1696,7 @@ export async function handleMunicodeHistoricalBackfill(
   return {
     complete: true,
     selectedSupplements,
-    selectedChapterPrefixes: DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
+    selectedChapterPrefixes: allChapterPrefixes,
     processedJobs,
   };
 }
