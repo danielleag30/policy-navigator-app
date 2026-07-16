@@ -55,9 +55,7 @@ function fakeFetchPage(pages: Record<string, string>) {
   return (url: string) => {
     const html = pages[url];
     return Promise.resolve(
-      html !== undefined
-        ? { ok: true, status: 200, html }
-        : { ok: false, status: 404, html: "" },
+      html !== undefined ? { ok: true, status: 200, html } : { ok: false, status: 404, html: "" },
     );
   };
 }

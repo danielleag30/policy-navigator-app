@@ -31,11 +31,7 @@
  */
 
 import { generate as uuidv7 } from "@std/uuid/v7";
-import {
-  type AlertDetails,
-  type AlertsDb,
-  writeDedupedPendingAlert,
-} from "../_shared/alerts.ts";
+import { type AlertDetails, type AlertsDb, writeDedupedPendingAlert } from "../_shared/alerts.ts";
 import { createPendingIngestionIfAbsent } from "../_shared/pending-ingestion.ts";
 import {
   claimSource,
@@ -170,18 +166,14 @@ function toAbsoluteUrl(baseUrl: string, pattern: string): string {
 }
 
 function municodeSource(config: SeedConfig): ApiSource {
-  const source = apiSourcesOf(config).find((s) =>
-    s.doc_type === "municode_api"
-  );
+  const source = apiSourcesOf(config).find((s) => s.doc_type === "municode_api");
   if (!source) throw new Error("seed-sources.json missing municode_api source");
   return source;
 }
 
 function municodeLatestJobUrl(config: SeedConfig): string {
   const source = municodeSource(config);
-  const latestPattern = source.url_patterns.find((p) =>
-    p.includes("/Jobs/latest/")
-  );
+  const latestPattern = source.url_patterns.find((p) => p.includes("/Jobs/latest/"));
   if (!latestPattern || isPlaceholderPattern(latestPattern)) {
     throw new Error("seed-sources.json missing Municode /Jobs/latest seed URL");
   }
@@ -200,9 +192,7 @@ function extractMunicodeJobId(payload: unknown): string {
 }
 
 function encodeZoningSource(config: SeedConfig): ApiSource {
-  const source = apiSourcesOf(config).find((s) =>
-    s.doc_type === "encode_zoning"
-  );
+  const source = apiSourcesOf(config).find((s) => s.doc_type === "encode_zoning");
   if (!source) {
     throw new Error("seed-sources.json missing encode_zoning source");
   }
@@ -277,9 +267,7 @@ async function checkMunicodeSupplement(
       docType: "municode_api",
       nowIso: options.nowIso(),
     });
-    const triggered = pendingId
-      ? await deps.triggerReconciliation(jobId, pendingId)
-      : false;
+    const triggered = pendingId ? await deps.triggerReconciliation(jobId, pendingId) : false;
 
     await persistCrawlState(deps.db, "municode_api", {
       claim_expires_at: null,
@@ -595,9 +583,7 @@ export async function runChangeDetectionCycle(
         );
       } catch (alertErr) {
         errors.push(
-          `${row.source_id}: failed to record source error alert: ${
-            (alertErr as Error).message
-          }`,
+          `${row.source_id}: failed to record source error alert: ${(alertErr as Error).message}`,
         );
       }
     }
@@ -662,8 +648,7 @@ export async function runChangeDetectionCycle(
   return {
     discovery: {
       sources_attempted: sourceSummaries.length,
-      sources_leased:
-        sourceSummaries.filter((s) => s.outcome === "leased").length,
+      sources_leased: sourceSummaries.filter((s) => s.outcome === "leased").length,
       sources: sourceSummaries,
     },
     municode,

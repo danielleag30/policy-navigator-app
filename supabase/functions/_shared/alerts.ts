@@ -101,7 +101,9 @@ export async function writeDedupedPendingAlert(
   const nowMs = options.nowMs ?? (() => Date.now());
   const nowIso = options.nowIso ?? (() => new Date().toISOString());
   const newId = options.newId;
-  if (!newId) throw new Error("writeDedupedPendingAlert requires options.newId");
+  if (!newId) {
+    throw new Error("writeDedupedPendingAlert requires options.newId");
+  }
 
   const lastTriggeredAt = await mostRecentAlertTriggeredAt(
     db,

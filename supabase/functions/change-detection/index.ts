@@ -31,17 +31,9 @@ import { contentHash } from "../_shared/hash.ts";
 import { error, success } from "../_shared/response.ts";
 import { elapsed, logError, logInfo, logWarn } from "../_shared/logger.ts";
 import seedConfig from "../../config/seed-sources.json" with { type: "json" };
-import {
-  type PageFetchResult,
-  type SeedConfig,
-  validateSeedConfig,
-} from "./_discovery.ts";
+import { type PageFetchResult, type SeedConfig, validateSeedConfig } from "./_discovery.ts";
 import type { HeadFetchResult } from "./_crawl_state.ts";
-import {
-  type OrchestrateDb,
-  runChangeDetectionCycle,
-  UnknownSourceError,
-} from "./_orchestrate.ts";
+import { type OrchestrateDb, runChangeDetectionCycle, UnknownSourceError } from "./_orchestrate.ts";
 
 const FN_NAME = "change-detection";
 
@@ -75,9 +67,7 @@ class FairfaxRateLimiter {
 
     const shouldDelay = this.#anyRequestStarted;
     this.#anyRequestStarted = true;
-    this.#chain = this.#chain.then(() =>
-      shouldDelay ? sleep(FAIRFAX_REQUEST_DELAY_MS) : undefined
-    );
+    this.#chain = this.#chain.then(() => shouldDelay ? sleep(FAIRFAX_REQUEST_DELAY_MS) : undefined);
     return this.#chain;
   }
 }

@@ -54,8 +54,7 @@ Deno.test("extractLinks resolves relative hrefs against the page URL", () => {
 });
 
 Deno.test("extractLinks passes through absolute hrefs unchanged", () => {
-  const html =
-    `<a href='https://www.fairfaxcounty.gov/budget/adopted/Overview.pdf'>Overview</a>`;
+  const html = `<a href='https://www.fairfaxcounty.gov/budget/adopted/Overview.pdf'>Overview</a>`;
   const links = extractLinks(
     html,
     "https://www.fairfaxcounty.gov/budget/adopted",
@@ -112,10 +111,8 @@ Deno.test("extractLinks ignores malformed hrefs without failing the page", () =>
 
 // ── shouldFollowLink: depth ───────────────────────────────────────────────────
 
-const ROOT =
-  "https://www.fairfaxcounty.gov/boardofsupervisors/board-meeting-information";
-const MEETING_PAGE =
-  "https://www.fairfaxcounty.gov/boardofsupervisors/meetings/march-10-2026";
+const ROOT = "https://www.fairfaxcounty.gov/boardofsupervisors/board-meeting-information";
+const MEETING_PAGE = "https://www.fairfaxcounty.gov/boardofsupervisors/meetings/march-10-2026";
 const COMMITTEE_PDF =
   "https://www.fairfaxcounty.gov/boardofsupervisors/sites/boardofsupervisors/files/Assets/Documents/PDF/Legislative-Committee-Agenda.pdf";
 
@@ -184,8 +181,7 @@ Deno.test("shouldFollowLink stops once the visited set reaches maxPages", () => 
 
 // ── shouldFollowLink: discovery_link_prefix scoping ───────────────────────────
 
-const BUDGET_ROOT =
-  "https://www.fairfaxcounty.gov/budget/budget-committee-meetings";
+const BUDGET_ROOT = "https://www.fairfaxcounty.gov/budget/budget-committee-meetings";
 const BUDGET_MEETING_PAGE =
   "https://www.fairfaxcounty.gov/budget/board-supervisors-budget-committee-meeting-march-10-2026";
 const GLOBAL_NAV_LINK = "https://www.fairfaxcounty.gov/elections/";
@@ -241,8 +237,7 @@ Deno.test("shouldFollowLink without discovery_link_prefix follows every same-hos
 
 const OLD_MEETING_PAGE =
   "https://www.fairfaxcounty.gov/budget/board-supervisors-budget-committee-meeting-march-8-2008";
-const UNDATED_SECTION_LINK =
-  "https://www.fairfaxcounty.gov/budget/budget-archives";
+const UNDATED_SECTION_LINK = "https://www.fairfaxcounty.gov/budget/budget-archives";
 
 Deno.test("trailingYearOf extracts a trailing 4-digit year from the path", () => {
   assertEquals(trailingYearOf(BUDGET_MEETING_PAGE), 2026);

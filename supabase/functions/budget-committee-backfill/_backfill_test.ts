@@ -1,9 +1,5 @@
 import type { DiscoverySource } from "../change-detection/_discovery.ts";
-import {
-  type BackfillDb,
-  type BackfillRunRow,
-  runBudgetCommitteeBackfill,
-} from "./_backfill.ts";
+import { type BackfillDb, type BackfillRunRow, runBudgetCommitteeBackfill } from "./_backfill.ts";
 
 function assertEquals(
   actual: unknown,

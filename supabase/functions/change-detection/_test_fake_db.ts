@@ -42,9 +42,7 @@ interface DbError {
 }
 
 function parseOrThreshold(condition: string): string | null {
-  const part = condition.split(",").find((p) =>
-    p.startsWith("claim_expires_at.lt.")
-  );
+  const part = condition.split(",").find((p) => p.startsWith("claim_expires_at.lt."));
   return part ? part.slice("claim_expires_at.lt.".length) : null;
 }
 
@@ -289,9 +287,7 @@ class ReconciliationLogsChain {
       Date.parse(b.created_at) - Date.parse(a.created_at)
     );
     return Promise.resolve({
-      data: sorted[0]
-        ? { supplement_job_id: sorted[0].supplement_job_id }
-        : null,
+      data: sorted[0] ? { supplement_job_id: sorted[0].supplement_job_id } : null,
       error: null,
     });
   }
@@ -347,13 +343,11 @@ export class FakeOrchestrateDb {
               payload,
               this.failNextUpdateFor,
             ),
-          select: (_columns: string) =>
-            new CrawlStateListChain(this.crawlState),
+          select: (_columns: string) => new CrawlStateListChain(this.crawlState),
         };
       case "documents":
         return {
-          select: (_columns: string) =>
-            new DocumentsSelectChain(this.documents),
+          select: (_columns: string) => new DocumentsSelectChain(this.documents),
           update: (payload: Record<string, unknown>) =>
             new DocumentsUpdateChain(this.documents, payload),
         };
@@ -366,8 +360,7 @@ export class FakeOrchestrateDb {
         return new PendingAlertsTable(this.alerts);
       case "code_reconciliation_logs":
         return {
-          select: (_columns: string) =>
-            new ReconciliationLogsChain(this.reconciliationLogs),
+          select: (_columns: string) => new ReconciliationLogsChain(this.reconciliationLogs),
         };
       default:
         throw new Error(`fake: unhandled table ${table}`);
