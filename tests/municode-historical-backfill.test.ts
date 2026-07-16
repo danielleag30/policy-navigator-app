@@ -1,6 +1,8 @@
 import {
   buildCurrentIdentityIndex,
   DEFAULT_HISTORICAL_SUPPLEMENTS,
+  EXTENDED_HISTORICAL_CHAPTER_TARGETS,
+  EXTENDED_HISTORICAL_SUPPLEMENTS,
   extractCitationKey,
   headingMatchesHistoricalChapter,
   historicalEmbeddingRetryDelayMinutes,
@@ -143,6 +145,123 @@ Deno.test("headingMatchesHistoricalChapter limits the initial backfill to the sc
   );
 });
 
+// --- DAN-119 follow-up: 18 additional real amendments outside the original
+// Chapter 4 Article 6 / Chapter 9.1 / Chapter 9.2 scope. ---
+
+Deno.test("EXTENDED_HISTORICAL_SUPPLEMENTS adds only the two supplements not already covered by the default set", () => {
+  assertEquals(EXTENDED_HISTORICAL_SUPPLEMENTS, [174, 175]);
+  for (const supplement of EXTENDED_HISTORICAL_SUPPLEMENTS) {
+    assert(
+      !(DEFAULT_HISTORICAL_SUPPLEMENTS as readonly number[]).includes(
+        supplement,
+      ),
+      `Supp ${supplement} should not duplicate an entry already in DEFAULT_HISTORICAL_SUPPLEMENTS`,
+    );
+  }
+});
+
+Deno.test("EXTENDED_HISTORICAL_CHAPTER_TARGETS covers every DAN-119 candidate's confirmed supplement", () => {
+  const expected: Record<number, number> = { 178: 7, 177: 3, 175: 1, 174: 3 };
+  for (const [supplement, count] of Object.entries(expected)) {
+    const targets = EXTENDED_HISTORICAL_CHAPTER_TARGETS.get(Number(supplement));
+    assert(
+      targets !== undefined,
+      `Supp ${supplement} must have extended targets`,
+    );
+    assertEquals(
+      targets!.length,
+      count,
+      `Supp ${supplement} should have ${count} target root(s)`,
+    );
+  }
+  assertEquals(
+    EXTENDED_HISTORICAL_CHAPTER_TARGETS.get(178)!.map((t) => t.chapterPrefix),
+    [
+      "Chapter 101",
+      "Chapter 21",
+      "Chapter 23",
+      "Chapter 124.1",
+      "Chapter 124.1",
+      "Chapter 124.1",
+      "Appendix R",
+    ],
+  );
+  assert(
+    EXTENDED_HISTORICAL_CHAPTER_TARGETS.get(178)!.find((t) =>
+      t.chapterPrefix === "Appendix R"
+    )!.articlePrefix === undefined,
+    "Appendix R is a top-level root with no article to descend into",
+  );
+});
+
+Deno.test("headingMatchesHistoricalChapter matches the new extended chapter prefixes without cross-matching similarly-numbered chapters", () => {
+  assert(
+    headingMatchesHistoricalChapter("CHAPTER 101. - Subdivision Provisions.", [
+      "Chapter 101",
+    ]),
+    "Chapter 101 should match its own prefix",
+  );
+  assert(
+    headingMatchesHistoricalChapter(
+      "CHAPTER 124.1 - Erosion and Stormwater Management Ordinance.",
+      ["Chapter 124.1"],
+    ),
+    "Chapter 124.1 should match its own prefix",
+  );
+  assert(
+    !headingMatchesHistoricalChapter(
+      "CHAPTER 12. - Tenant—Landlord Relations.",
+      [
+        "Chapter 124.1",
+      ],
+    ),
+    "Chapter 12 must not match the Chapter 124.1 prefix",
+  );
+  assert(
+    headingMatchesHistoricalChapter(
+      "APPENDIX R. - Ordinance Designating Long Term Parking Restrictions.",
+      [
+        "Appendix R",
+      ],
+    ),
+    "Appendix R should match as a standalone top-level root",
+  );
+  assert(
+    headingMatchesHistoricalChapter(
+      "ARTICLE 2. - Requirements for Land Disturbing Activity.",
+      [
+        "Article 2",
+      ],
+    ),
+    "article-level prefixes should match the same way chapter-level ones do",
+  );
+});
+
+Deno.test("resolveHistoricalIdentity maps a renumbered section (Ch. 23 Sec. 23-1-5) back to its current node via citation fallback", () => {
+  // Mirrors the real DAN-119 case: Supp 178's node for "23-1-5" held unrelated
+  // content ("Limitation on amount of bonds to be issued") under a different
+  // generated node id than the current "23-1-5" node ("Compliance with law").
+  const index = buildCurrentIdentityIndex([
+    {
+      municode_node_id: "FACOCO_CH23BO_ART1GERE_S23-1-5COLA",
+      section_title: "Section 23-1-5. - Compliance with law.",
+      content: "Any person that is licensed under this Article...",
+    },
+  ]);
+
+  const identity = resolveHistoricalIdentity({
+    rawNodeId: "FACOCO_CH23BO_ART1GERE_S23-1-5LIAMBOBEIS",
+    heading: "Section 23-1-5. - Limitation on amount of bonds to be issued.",
+    content: "No professional bondsman shall enter into any such bond...",
+    currentNodeIds: index.currentNodeIds,
+    citationToCurrentNodeId: index.citationToCurrentNodeId,
+  });
+
+  assertEquals(identity.strategy, "citation-current-node");
+  assertEquals(identity.nodeId, "FACOCO_CH23BO_ART1GERE_S23-1-5COLA");
+  assertEquals(identity.citationKey, "section:23-1-5");
+});
+
 const MUNICODE_SRC = new URL(
   "../supabase/functions/ingest-orchestrator/municode.ts",
   import.meta.url,
@@ -186,6 +305,28 @@ Deno.test("wiring: drainQueue accepts the resume-state flag used by historical c
     src.includes("drainQueue(resumable.state.queue, ctx, deadlineMs, true)") &&
       src.includes("drainQueue(queue, ctx, deadlineMs, false)"),
     "historical callers must pass the resume-state flag explicitly",
+  );
+});
+
+Deno.test("wiring: historical root selection consults the extended per-supplement chapter targets", async () => {
+  const src = await Deno.readTextFile(MUNICODE_SRC);
+  assert(
+    src.includes("selectExtendedHistoricalRootNodes("),
+    "selectHistoricalRootNodes must delegate to the extended-target walker",
+  );
+  assert(
+    src.includes("EXTENDED_HISTORICAL_CHAPTER_TARGETS.get(supplementNumber)"),
+    "extended targets must be looked up by the job's own supplement number",
+  );
+  assert(
+    src.includes(
+      "const roots = await selectHistoricalRootNodes(\n      baseUrl,\n      userAgent,\n      job.jobId,\n      tocPayload.Children!,\n      job.supplementNumber,\n    );",
+    ),
+    "the historical job loop must pass job.supplementNumber into selectHistoricalRootNodes",
+  );
+  assert(
+    src.includes("...EXTENDED_HISTORICAL_SUPPLEMENTS,"),
+    "the selected historical supplement list must include the extended supplements",
   );
 });
 
