@@ -93,6 +93,6 @@
         "check": { "type": "temporal_flag" }
       }
     ],
-    "notes": "Real: Chapter 9.1 (Communications) is_current=false, 52 real sections dated 2019-09-11; fully repealed with zero is_current=true rows for FACOCO_CH9.1CO (verified). Replaced by Chapter 9.2 (Cable Television), current, effective Jan 1 2020 per editor's note on the current chapter-level row. Trap: 'before 2020' framing invites retrieval of genuine old Chapter 9.1 text (e.g. Section 9.1-3-1 'Requirement of a Franchise', chunk 019f4c15-1571-7623-b778-e09762462260) as if it answers a present-tense question; correct handling should surface the historical Chapter 9.1 content while clearly flagging that it was superseded by Chapter 9.2."
+    "notes": "Real: Chapter 9.1 (Communications) is_current=false, 52 real sections dated 2019-09-11; fully repealed with zero active regulatory sections in the current corpus (its only is_current=true row, FACOCO_CH9.1CORE35-19-9.2 / chunk 019f34bb-4793-71c6-be30-1194495faa43, is a repealed-chapter marker containing only the editor's note, not regulatory text; verified). Replaced by Chapter 9.2 (Cable Television), current, effective Jan 1 2020 per editor's note on the current chapter-level row. Trap: 'before 2020' framing invites retrieval of genuine old Chapter 9.1 text (e.g. Section 9.1-3-1 'Requirement of a Franchise', chunk 019f4c15-1571-7623-b778-e09762462260) as if it answers a present-tense question; correct handling should surface the historical Chapter 9.1 content while clearly flagging that it was superseded by Chapter 9.2."
   }
 ]
