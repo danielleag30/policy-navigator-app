@@ -48,8 +48,8 @@ import {
   runDiscoverySourceCycle,
 } from "./_crawl_state.ts";
 import {
-  apiSourcesOf,
   type ApiSource,
+  apiSourcesOf,
   discoverySourcesOf,
   type PageFetcher,
   type SeedConfig,
@@ -170,14 +170,18 @@ function toAbsoluteUrl(baseUrl: string, pattern: string): string {
 }
 
 function municodeSource(config: SeedConfig): ApiSource {
-  const source = apiSourcesOf(config).find((s) => s.doc_type === "municode_api");
+  const source = apiSourcesOf(config).find((s) =>
+    s.doc_type === "municode_api"
+  );
   if (!source) throw new Error("seed-sources.json missing municode_api source");
   return source;
 }
 
 function municodeLatestJobUrl(config: SeedConfig): string {
   const source = municodeSource(config);
-  const latestPattern = source.url_patterns.find((p) => p.includes("/Jobs/latest/"));
+  const latestPattern = source.url_patterns.find((p) =>
+    p.includes("/Jobs/latest/")
+  );
   if (!latestPattern || isPlaceholderPattern(latestPattern)) {
     throw new Error("seed-sources.json missing Municode /Jobs/latest seed URL");
   }
@@ -196,8 +200,12 @@ function extractMunicodeJobId(payload: unknown): string {
 }
 
 function encodeZoningSource(config: SeedConfig): ApiSource {
-  const source = apiSourcesOf(config).find((s) => s.doc_type === "encode_zoning");
-  if (!source) throw new Error("seed-sources.json missing encode_zoning source");
+  const source = apiSourcesOf(config).find((s) =>
+    s.doc_type === "encode_zoning"
+  );
+  if (!source) {
+    throw new Error("seed-sources.json missing encode_zoning source");
+  }
   return source;
 }
 
@@ -212,7 +220,9 @@ async function latestReconciledMunicodeJobId(
     .maybeSingle();
 
   if (lookupErr) {
-    throw new Error(`CodeReconciliationLog lookup failed: ${lookupErr.message}`);
+    throw new Error(
+      `CodeReconciliationLog lookup failed: ${lookupErr.message}`,
+    );
   }
   return data?.supplement_job_id ? String(data.supplement_job_id) : null;
 }
@@ -322,20 +332,35 @@ async function checkEncodeZoning(
   options: CommonOptions & { encodeZoningMinIntervalMs: number },
 ): Promise<EncodeZoningCheckSummary> {
   if (!deps.isEncodeZoningEnabled()) {
-    return { checked: false, skipped_reason: "disabled", pending_ingestion_id: null };
+    return {
+      checked: false,
+      skipped_reason: "disabled",
+      pending_ingestion_id: null,
+    };
   }
 
   const claimed = await claimSource(deps.db, "encode_zoning", options);
   if (!claimed) {
-    return { checked: false, skipped_reason: "leased", pending_ingestion_id: null };
+    return {
+      checked: false,
+      skipped_reason: "leased",
+      pending_ingestion_id: null,
+    };
   }
 
   if (
     claimed.last_checked_at &&
-    options.nowMs() - Date.parse(claimed.last_checked_at) < options.encodeZoningMinIntervalMs
+    options.nowMs() - Date.parse(claimed.last_checked_at) <
+      options.encodeZoningMinIntervalMs
   ) {
-    await persistCrawlState(deps.db, "encode_zoning", { claim_expires_at: null });
-    return { checked: false, skipped_reason: "min_interval", pending_ingestion_id: null };
+    await persistCrawlState(deps.db, "encode_zoning", {
+      claim_expires_at: null,
+    });
+    return {
+      checked: false,
+      skipped_reason: "min_interval",
+      pending_ingestion_id: null,
+    };
   }
 
   try {
@@ -353,7 +378,11 @@ async function checkEncodeZoning(
       last_checked_at: options.nowIso(),
     });
 
-    return { checked: true, skipped_reason: null, pending_ingestion_id: pendingId };
+    return {
+      checked: true,
+      skipped_reason: null,
+      pending_ingestion_id: pendingId,
+    };
   } catch (e) {
     await persistCrawlState(deps.db, "encode_zoning", {
       claim_expires_at: null,
@@ -375,7 +404,10 @@ async function writeStalenessAlerts(
     .from("documents")
     .select("id, url, doc_type, last_checked_at")
     .eq("status", "current");
-  const { data, error: staleErr } = await staleChain.lt("last_checked_at", threshold);
+  const { data, error: staleErr } = await staleChain.lt(
+    "last_checked_at",
+    threshold,
+  );
 
   if (staleErr) {
     throw new Error(`Stale document lookup failed: ${staleErr.message}`);
@@ -395,7 +427,12 @@ async function writeStalenessAlerts(
         last_checked_at: doc.last_checked_at,
         stale_after_days: staleDocumentDays,
       },
-      { cooldownMs: options.alertCooldownMs, nowMs: options.nowMs, nowIso: options.nowIso, newId: options.newId },
+      {
+        cooldownMs: options.alertCooldownMs,
+        nowMs: options.nowMs,
+        nowIso: options.nowIso,
+        newId: options.newId,
+      },
     );
     if (wasWritten) written += 1;
   }
@@ -431,9 +468,16 @@ export async function runChangeDetectionCycle(
   const reservedTailMs = options.reservedTailMs ?? DEFAULT_RESERVED_TAIL_MS;
   const encodeZoningMinIntervalMs = options.encodeZoningMinIntervalMs ??
     DEFAULT_ENCODE_ZONING_MIN_INTERVAL_MS;
-  const staleDocumentDays = options.staleDocumentDays ?? DEFAULT_STALE_DOCUMENT_DAYS;
+  const staleDocumentDays = options.staleDocumentDays ??
+    DEFAULT_STALE_DOCUMENT_DAYS;
   const alertCooldownMs = options.alertCooldownMs;
-  const commonOptions: CommonOptions = { leaseMinutes, alertCooldownMs, nowMs, nowIso, newId };
+  const commonOptions: CommonOptions = {
+    leaseMinutes,
+    alertCooldownMs,
+    nowMs,
+    nowIso,
+    newId,
+  };
 
   const runStart = nowMs();
   const discoveryDeadline = runStart +
@@ -471,9 +515,17 @@ export async function runChangeDetectionCycle(
     // _orchestrate_test.ts's starvation-regression test.
     let claimed: Awaited<ReturnType<typeof claimSource>> = null;
     try {
-      claimed = await claimSource(deps.db, row.source_id, { leaseMinutes, nowMs, nowIso });
+      claimed = await claimSource(deps.db, row.source_id, {
+        leaseMinutes,
+        nowMs,
+        nowIso,
+      });
       if (!claimed) {
-        sourceSummaries.push({ sourceId: row.source_id, outcome: "leased", result: null });
+        sourceSummaries.push({
+          sourceId: row.source_id,
+          outcome: "leased",
+          result: null,
+        });
         continue;
       }
 
@@ -502,7 +554,11 @@ export async function runChangeDetectionCycle(
           deps.db,
           "change_detection_source_error",
           err.url,
-          { doc_type: source.doc_type, source_id: source.id, message: err.message },
+          {
+            doc_type: source.doc_type,
+            source_id: source.id,
+            message: err.message,
+          },
           commonOptions,
         );
       }
@@ -523,7 +579,9 @@ export async function runChangeDetectionCycle(
           });
         } catch (persistErr) {
           errors.push(
-            `${row.source_id}: failed to release lease after error: ${(persistErr as Error).message}`,
+            `${row.source_id}: failed to release lease after error: ${
+              (persistErr as Error).message
+            }`,
           );
         }
       }
@@ -537,7 +595,9 @@ export async function runChangeDetectionCycle(
         );
       } catch (alertErr) {
         errors.push(
-          `${row.source_id}: failed to record source error alert: ${(alertErr as Error).message}`,
+          `${row.source_id}: failed to record source error alert: ${
+            (alertErr as Error).message
+          }`,
         );
       }
     }
@@ -572,7 +632,10 @@ export async function runChangeDetectionCycle(
     pending_ingestion_id: null,
   };
   try {
-    encodeZoning = await checkEncodeZoning(deps, { ...commonOptions, encodeZoningMinIntervalMs });
+    encodeZoning = await checkEncodeZoning(deps, {
+      ...commonOptions,
+      encodeZoningMinIntervalMs,
+    });
   } catch (e) {
     const message = (e as Error).message;
     errors.push(`encode_zoning: ${message}`);
@@ -587,7 +650,11 @@ export async function runChangeDetectionCycle(
 
   let staleness = { found: 0, written: 0 };
   try {
-    staleness = await writeStalenessAlerts(deps.db, staleDocumentDays, commonOptions);
+    staleness = await writeStalenessAlerts(
+      deps.db,
+      staleDocumentDays,
+      commonOptions,
+    );
   } catch (e) {
     errors.push(`staleness_sweep: ${(e as Error).message}`);
   }
@@ -595,7 +662,8 @@ export async function runChangeDetectionCycle(
   return {
     discovery: {
       sources_attempted: sourceSummaries.length,
-      sources_leased: sourceSummaries.filter((s) => s.outcome === "leased").length,
+      sources_leased:
+        sourceSummaries.filter((s) => s.outcome === "leased").length,
       sources: sourceSummaries,
     },
     municode,

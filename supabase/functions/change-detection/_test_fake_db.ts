@@ -42,7 +42,9 @@ interface DbError {
 }
 
 function parseOrThreshold(condition: string): string | null {
-  const part = condition.split(",").find((p) => p.startsWith("claim_expires_at.lt."));
+  const part = condition.split(",").find((p) =>
+    p.startsWith("claim_expires_at.lt.")
+  );
   return part ? part.slice("claim_expires_at.lt.".length) : null;
 }
 
@@ -69,13 +71,18 @@ class CrawlStateUpdateChain {
 
   select(_columns: string) {
     return {
-      maybeSingle: (): Promise<{ data: CrawlStateRow | null; error: DbError | null }> => {
+      maybeSingle: (): Promise<
+        { data: CrawlStateRow | null; error: DbError | null }
+      > => {
         if (!this.#sourceId) throw new Error("fake: missing .eq(source_id)");
 
         const injectedMessage = this.failNextUpdateFor.get(this.#sourceId);
         if (injectedMessage !== undefined) {
           this.failNextUpdateFor.delete(this.#sourceId);
-          return Promise.resolve({ data: null, error: { message: injectedMessage } });
+          return Promise.resolve({
+            data: null,
+            error: { message: injectedMessage },
+          });
         }
 
         const row = this.table.get(this.#sourceId);
@@ -83,7 +90,8 @@ class CrawlStateUpdateChain {
 
         if (this.#requireUnclaimedBefore !== null) {
           const leased = row.claim_expires_at !== null &&
-            Date.parse(row.claim_expires_at) >= Date.parse(this.#requireUnclaimedBefore);
+            Date.parse(row.claim_expires_at) >=
+              Date.parse(this.#requireUnclaimedBefore);
           if (leased) return Promise.resolve({ data: null, error: null });
         }
 
@@ -139,7 +147,9 @@ class DocumentsSelectChain {
     return Promise.resolve({ data: rows, error: null });
   }
 
-  maybeSingle(): Promise<{ data: FakeDocumentRow | null; error: DbError | null }> {
+  maybeSingle(): Promise<
+    { data: FakeDocumentRow | null; error: DbError | null }
+  > {
     return Promise.resolve({ data: this.#matching()[0] ?? null, error: null });
   }
 }
@@ -169,7 +179,10 @@ class PendingIngestionsTable {
     const key = `${payload.url}::${payload.doc_type}`;
     if (this.activeKeys.has(key)) {
       return Promise.resolve({
-        error: { code: "23505", message: "duplicate key value violates unique constraint" },
+        error: {
+          code: "23505",
+          message: "duplicate key value violates unique constraint",
+        },
       });
     }
     this.activeKeys.add(key);
@@ -178,7 +191,10 @@ class PendingIngestionsTable {
   }
 }
 
-class AlertsSelectQuery implements PromiseLike<{ data: { triggered_at: string } | null; error: DbError | null }> {
+class AlertsSelectQuery implements
+  PromiseLike<
+    { data: { triggered_at: string } | null; error: DbError | null }
+  > {
   #filters: Record<string, string> = {};
 
   constructor(private alerts: FakeAlertRow[]) {}
@@ -196,7 +212,9 @@ class AlertsSelectQuery implements PromiseLike<{ data: { triggered_at: string } 
     return this;
   }
 
-  maybeSingle(): Promise<{ data: { triggered_at: string } | null; error: DbError | null }> {
+  maybeSingle(): Promise<
+    { data: { triggered_at: string } | null; error: DbError | null }
+  > {
     const matches = this.alerts
       .filter((a) =>
         (this.#filters["details->>reason"] === undefined ||
@@ -211,10 +229,16 @@ class AlertsSelectQuery implements PromiseLike<{ data: { triggered_at: string } 
     });
   }
 
-  // deno-lint-ignore no-explicit-any
-  then<TResult1 = { data: { triggered_at: string } | null; error: DbError | null }, TResult2 = never>(
-    onfulfilled?: ((value: { data: { triggered_at: string } | null; error: DbError | null }) => TResult1 | PromiseLike<TResult1>) | null,
-    onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null,
+  then<
+    TResult1 = { data: { triggered_at: string } | null; error: DbError | null },
+    TResult2 = never,
+  >(
+    onfulfilled?:
+      | ((
+        value: { data: { triggered_at: string } | null; error: DbError | null },
+      ) => TResult1 | PromiseLike<TResult1>)
+      | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
   ): PromiseLike<TResult1 | TResult2> {
     return this.maybeSingle().then(onfulfilled, onrejected);
   }
@@ -228,7 +252,11 @@ class PendingAlertsTable {
   }
 
   insert(
-    payload: { id: string; details: { reason: string; alert_key: string }; triggered_at: string },
+    payload: {
+      id: string;
+      details: { reason: string; alert_key: string };
+      triggered_at: string;
+    },
   ): Promise<{ error: DbError | null }> {
     this.alerts.push({
       id: payload.id,
@@ -252,13 +280,18 @@ class ReconciliationLogsChain {
   }
 
   maybeSingle(): Promise<
-    { data: { supplement_job_id: string | number | null } | null; error: DbError | null }
+    {
+      data: { supplement_job_id: string | number | null } | null;
+      error: DbError | null;
+    }
   > {
     const sorted = [...this.rows].sort((a, b) =>
       Date.parse(b.created_at) - Date.parse(a.created_at)
     );
     return Promise.resolve({
-      data: sorted[0] ? { supplement_job_id: sorted[0].supplement_job_id } : null,
+      data: sorted[0]
+        ? { supplement_job_id: sorted[0].supplement_job_id }
+        : null,
       error: null,
     });
   }
@@ -309,27 +342,45 @@ export class FakeOrchestrateDb {
       case "discovery_crawl_state":
         return {
           update: (payload: Record<string, unknown>) =>
-            new CrawlStateUpdateChain(this.crawlState, payload, this.failNextUpdateFor),
-          select: (_columns: string) => new CrawlStateListChain(this.crawlState),
+            new CrawlStateUpdateChain(
+              this.crawlState,
+              payload,
+              this.failNextUpdateFor,
+            ),
+          select: (_columns: string) =>
+            new CrawlStateListChain(this.crawlState),
         };
       case "documents":
         return {
-          select: (_columns: string) => new DocumentsSelectChain(this.documents),
-          update: (payload: Record<string, unknown>) => new DocumentsUpdateChain(this.documents, payload),
+          select: (_columns: string) =>
+            new DocumentsSelectChain(this.documents),
+          update: (payload: Record<string, unknown>) =>
+            new DocumentsUpdateChain(this.documents, payload),
         };
       case "pending_ingestions":
-        return new PendingIngestionsTable(this.pendingIngestions, this.#activePendingIngestionKeys);
+        return new PendingIngestionsTable(
+          this.pendingIngestions,
+          this.#activePendingIngestionKeys,
+        );
       case "pending_alerts":
         return new PendingAlertsTable(this.alerts);
       case "code_reconciliation_logs":
-        return { select: (_columns: string) => new ReconciliationLogsChain(this.reconciliationLogs) };
+        return {
+          select: (_columns: string) =>
+            new ReconciliationLogsChain(this.reconciliationLogs),
+        };
       default:
         throw new Error(`fake: unhandled table ${table}`);
     }
   }
 }
 
-export function crawlStateRow(overrides: Partial<CrawlStateRow> & { source_id: string; doc_type: CrawlStateRow["doc_type"] }): CrawlStateRow {
+export function crawlStateRow(
+  overrides: Partial<CrawlStateRow> & {
+    source_id: string;
+    doc_type: CrawlStateRow["doc_type"];
+  },
+): CrawlStateRow {
   return {
     status: "idle",
     resume_state: {},

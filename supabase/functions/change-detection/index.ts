@@ -24,7 +24,7 @@
  * it can be exercised directly by _orchestrate_test.ts with fake dependencies.
  */
 
-// deno-lint-ignore no-unversioned-import
+// deno-lint-ignore no-import-prefix no-unversioned-import
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import db from "../_shared/db-client.ts";
 import { contentHash } from "../_shared/hash.ts";

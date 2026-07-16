@@ -22,10 +22,15 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
-function assertEquals(actual: unknown, expected: unknown, message?: string): void {
+function assertEquals(
+  actual: unknown,
+  expected: unknown,
+  message?: string,
+): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(
-      message ?? `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+      message ??
+        `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
     );
   }
 }
@@ -50,13 +55,20 @@ function fakeFetchPage(pages: Record<string, string>) {
   return (url: string) => {
     const html = pages[url];
     return Promise.resolve(
-      html !== undefined ? { ok: true, status: 200, html } : { ok: false, status: 404, html: "" },
+      html !== undefined
+        ? { ok: true, status: 200, html }
+        : { ok: false, status: 404, html: "" },
     );
   };
 }
 
 function fakeFetchHead(): Promise<HeadFetchResult> {
-  return Promise.resolve({ ok: true, status: 200, etag: null, lastModified: null });
+  return Promise.resolve({
+    ok: true,
+    status: 200,
+    etag: null,
+    lastModified: null,
+  });
 }
 
 function fakeFetchHash(url: string): Promise<string> {
@@ -83,7 +95,11 @@ Deno.test("claimSource refuses to claim a row whose lease has not yet expired", 
     nowMs: () => Date.parse("2026-01-01T00:00:00.000Z"),
   });
 
-  assertEquals(claimed, null, "a still-leased row must not be claimable by a second invocation");
+  assertEquals(
+    claimed,
+    null,
+    "a still-leased row must not be claimable by a second invocation",
+  );
 });
 
 Deno.test("claimSource claims a row whose lease has expired", async () => {
@@ -157,7 +173,11 @@ Deno.test("runDiscoverySourceCycle checkpoints mid-cycle when the deadline hits,
 
   assertEquals(result.cycleCompleted, false);
   assertEquals(result.reason, "deadline");
-  assertEquals(result.pagesFetchedThisRun, 1, "the root page was fetched before the deadline hit");
+  assertEquals(
+    result.pagesFetchedThisRun,
+    1,
+    "the root page was fetched before the deadline hit",
+  );
   assertEquals(
     result.pendingIngestionsCreatedThisRun,
     0,
@@ -167,15 +187,27 @@ Deno.test("runDiscoverySourceCycle checkpoints mid-cycle when the deadline hits,
   const row = db.crawlState.get("bos_summary");
   assert(row !== undefined, "row must still exist");
   assertEquals(row.status, "in_progress");
-  assertEquals(row.claim_expires_at, null, "the lease must be released so a later invocation can resume");
-  const resumeState = row.resume_state as { phase: string; crawl_queue: unknown[]; scan_queue: string[] };
+  assertEquals(
+    row.claim_expires_at,
+    null,
+    "the lease must be released so a later invocation can resume",
+  );
+  const resumeState = row.resume_state as {
+    phase: string;
+    crawl_queue: unknown[];
+    scan_queue: string[];
+  };
   // The deadline is checked at the top of every loop iteration, before the
   // crawl_queue-drained -> phase="scan" transition runs -- so the checkpoint
   // lands with phase still "crawl" but an empty crawl_queue and both
   // candidates already moved into scan_queue. The next invocation's first
   // loop iteration makes the phase="scan" transition for free.
   assertEquals(resumeState.phase, "crawl");
-  assertEquals(resumeState.crawl_queue, [], "the root page's crawl_queue entry was drained by the one completed batch");
+  assertEquals(
+    resumeState.crawl_queue,
+    [],
+    "the root page's crawl_queue entry was drained by the one completed batch",
+  );
   assertEquals(
     [...resumeState.scan_queue].sort(),
     [DOC1, DOC2],
@@ -209,7 +241,11 @@ Deno.test("a later invocation resumes an interrupted cycle from its checkpoint a
   // source and must pick up exactly at the scan phase, not restart the crawl.
   const secondClaim = await claimSource(asCrawlStateDb(db), "bos_summary");
   assert(secondClaim !== null, "the released lease must be claimable again");
-  assertEquals(secondClaim.status, "in_progress", "resuming an interrupted cycle, not starting a fresh one");
+  assertEquals(
+    secondClaim.status,
+    "in_progress",
+    "resuming an interrupted cycle, not starting a fresh one",
+  );
 
   let pageFetchesInRun2 = 0;
   const countingFetchPage = (url: string) => {
@@ -230,13 +266,25 @@ Deno.test("a later invocation resumes an interrupted cycle from its checkpoint a
     { deadlineMs: Date.now() + 60_000 },
   );
 
-  assertEquals(pageFetchesInRun2, 0, "resuming at the scan phase must not re-crawl the already-visited root page");
+  assertEquals(
+    pageFetchesInRun2,
+    0,
+    "resuming at the scan phase must not re-crawl the already-visited root page",
+  );
   assertEquals(result.cycleCompleted, true);
   assertEquals(result.reason, "queue_drained");
-  assertEquals(result.pendingIngestionsCreatedThisRun, 2, "both checkpointed candidates must be scanned and ingested");
+  assertEquals(
+    result.pendingIngestionsCreatedThisRun,
+    2,
+    "both checkpointed candidates must be scanned and ingested",
+  );
 
   const row = db.crawlState.get("bos_summary");
-  assertEquals(row?.status, "idle", "a completed cycle returns to idle, ready for the next one -- never a terminal state");
+  assertEquals(
+    row?.status,
+    "idle",
+    "a completed cycle returns to idle, ready for the next one -- never a terminal state",
+  );
   assertEquals(row?.cycles_completed, 1);
   assertEquals(db.pendingIngestions.size, 2);
 });
@@ -282,7 +330,11 @@ Deno.test("runDiscoverySourceCycle skips creating a pending_ingestion when one i
     doc_type: "bos_summary",
     status: "pending",
   });
-  assertEquals(seeded.error, null, "setup: seeding the active ingestion must not itself collide");
+  assertEquals(
+    seeded.error,
+    null,
+    "setup: seeding the active ingestion must not itself collide",
+  );
 
   const claimed = await claimSource(asCrawlStateDb(db), "bos_summary");
   assert(claimed !== null, "setup: claim must succeed");
@@ -300,6 +352,14 @@ Deno.test("runDiscoverySourceCycle skips creating a pending_ingestion when one i
     { deadlineMs: Date.now() + 60_000 },
   );
 
-  assertEquals(result.pendingIngestionsCreatedThisRun, 1, "only DOC2 should create a fresh pending_ingestion");
-  assertEquals(result.activeIngestionsSkippedThisRun, 1, "DOC1 already has an active pending_ingestion");
+  assertEquals(
+    result.pendingIngestionsCreatedThisRun,
+    1,
+    "only DOC2 should create a fresh pending_ingestion",
+  );
+  assertEquals(
+    result.activeIngestionsSkippedThisRun,
+    1,
+    "DOC1 already has an active pending_ingestion",
+  );
 });

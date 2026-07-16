@@ -54,7 +54,8 @@ Deno.test("extractLinks resolves relative hrefs against the page URL", () => {
 });
 
 Deno.test("extractLinks passes through absolute hrefs unchanged", () => {
-  const html = `<a href='https://www.fairfaxcounty.gov/budget/adopted/Overview.pdf'>Overview</a>`;
+  const html =
+    `<a href='https://www.fairfaxcounty.gov/budget/adopted/Overview.pdf'>Overview</a>`;
   const links = extractLinks(
     html,
     "https://www.fairfaxcounty.gov/budget/adopted",
@@ -213,7 +214,14 @@ Deno.test("shouldFollowLink does not follow a same-hostname link outside discove
 Deno.test("shouldFollowLink still follows a link inside discovery_link_prefix", () => {
   const source = budgetCommitteeMeetingSource();
   assert(
-    shouldFollowLink(BUDGET_MEETING_PAGE, BUDGET_ROOT, 1, source, new Set(), 500),
+    shouldFollowLink(
+      BUDGET_MEETING_PAGE,
+      BUDGET_ROOT,
+      1,
+      source,
+      new Set(),
+      500,
+    ),
     "expected the in-scope meeting page to be followed",
   );
 });
@@ -233,7 +241,8 @@ Deno.test("shouldFollowLink without discovery_link_prefix follows every same-hos
 
 const OLD_MEETING_PAGE =
   "https://www.fairfaxcounty.gov/budget/board-supervisors-budget-committee-meeting-march-8-2008";
-const UNDATED_SECTION_LINK = "https://www.fairfaxcounty.gov/budget/budget-archives";
+const UNDATED_SECTION_LINK =
+  "https://www.fairfaxcounty.gov/budget/budget-archives";
 
 Deno.test("trailingYearOf extracts a trailing 4-digit year from the path", () => {
   assertEquals(trailingYearOf(BUDGET_MEETING_PAGE), 2026);
@@ -258,7 +267,14 @@ Deno.test("shouldFollowLink still follows a dated meeting page at or after disco
     discovery_follow_min_year: 2024,
   };
   assert(
-    shouldFollowLink(BUDGET_MEETING_PAGE, BUDGET_ROOT, 1, source, new Set(), 500),
+    shouldFollowLink(
+      BUDGET_MEETING_PAGE,
+      BUDGET_ROOT,
+      1,
+      source,
+      new Set(),
+      500,
+    ),
     "expected the 2026-dated meeting page to still be followed",
   );
 });
@@ -269,7 +285,14 @@ Deno.test("shouldFollowLink still follows undated section links regardless of di
     discovery_follow_min_year: 2024,
   };
   assert(
-    shouldFollowLink(UNDATED_SECTION_LINK, BUDGET_ROOT, 1, source, new Set(), 500),
+    shouldFollowLink(
+      UNDATED_SECTION_LINK,
+      BUDGET_ROOT,
+      1,
+      source,
+      new Set(),
+      500,
+    ),
     "a link with no trailing year is unaffected by discovery_follow_min_year",
   );
 });
@@ -369,8 +392,11 @@ Deno.test("resolveOwnerSourceId lets an explicit match_priority beat a source wi
 
 Deno.test("mapWithConcurrency preserves input order regardless of completion order", async () => {
   const items = [30, 10, 20];
-  const results = await mapWithConcurrency(items, 3, (ms) =>
-    new Promise<number>((resolve) => setTimeout(() => resolve(ms), ms)));
+  const results = await mapWithConcurrency(
+    items,
+    3,
+    (ms) => new Promise<number>((resolve) => setTimeout(() => resolve(ms), ms)),
+  );
 
   assertEquals(results, [30, 10, 20]);
 });

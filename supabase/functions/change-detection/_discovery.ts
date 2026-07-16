@@ -260,7 +260,10 @@ export function trailingYearOf(url: string): number | null {
   }
 }
 
-export function meetsFollowRecency(url: string, source: DiscoverySource): boolean {
+export function meetsFollowRecency(
+  url: string,
+  source: DiscoverySource,
+): boolean {
   if (source.discovery_follow_min_year === undefined) return true;
   const year = trailingYearOf(url);
   return year === null || year >= source.discovery_follow_min_year;

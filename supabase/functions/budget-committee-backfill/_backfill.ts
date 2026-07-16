@@ -6,6 +6,10 @@ import {
   matchesAllowPattern,
   type PageFetchResult,
 } from "../change-detection/_discovery.ts";
+import {
+  createPendingIngestionIfAbsent,
+  type PendingIngestionInsert,
+} from "../_shared/pending-ingestion.ts";
 
 export interface BackfillQueueItem {
   url: string;
@@ -62,6 +66,7 @@ export interface BackfillResult {
 export type PageFetcher = (url: string) => Promise<PageFetchResult>;
 
 interface DbError {
+  code?: string;
   message: string;
 }
 
@@ -118,8 +123,8 @@ interface CountTable {
   select(columns: string, opts: { count: "exact"; head: true }): CountQuery;
 }
 
-interface PendingIngestionsTable extends CountTable {
-  insert(payload: Record<string, unknown>): PromiseLike<DbMutationResult>;
+interface PendingIngestionsTable {
+  insert(payload: PendingIngestionInsert): PromiseLike<DbMutationResult>;
 }
 
 export interface BackfillDb {
@@ -323,48 +328,6 @@ async function hasCurrentDocument(
   return (count ?? 0) > 0;
 }
 
-async function hasActivePendingIngestion(
-  db: BackfillDb,
-  url: string,
-  docType: DocType,
-): Promise<boolean> {
-  const { count, error } = await db
-    .from("pending_ingestions")
-    .select("id", { count: "exact", head: true })
-    .eq("url", url)
-    .eq("doc_type", docType)
-    .in("status", ["pending", "processing"]);
-
-  if (error) {
-    throw new Error(
-      `PendingIngestion lookup failed for ${url}: ${error.message}`,
-    );
-  }
-  return (count ?? 0) > 0;
-}
-
-async function createPendingIngestion(
-  db: BackfillDb,
-  id: string,
-  url: string,
-  docType: DocType,
-  nowIso: string,
-): Promise<void> {
-  const { error } = await db.from("pending_ingestions").insert({
-    id,
-    url,
-    doc_type: docType,
-    detected_at: nowIso,
-    status: "pending",
-  });
-
-  if (error) {
-    throw new Error(
-      `PendingIngestion insert failed for ${url}: ${error.message}`,
-    );
-  }
-}
-
 function summarize(
   run: BackfillRunRow,
   status: "in_progress" | "complete",
@@ -490,21 +453,21 @@ export async function runBudgetCommitteeBackfill(
         if (await hasCurrentDocument(deps.db, link, deps.source.doc_type)) {
           run.current_documents_skipped += 1;
           perRun.currentSkipped += 1;
-        } else if (
-          await hasActivePendingIngestion(deps.db, link, deps.source.doc_type)
-        ) {
-          run.active_ingestions_skipped += 1;
-          perRun.activeSkipped += 1;
         } else {
-          await createPendingIngestion(
-            deps.db,
-            newId(),
-            link,
-            deps.source.doc_type,
-            nowIso(),
-          );
-          run.pending_ingestions_created += 1;
-          perRun.created += 1;
+          const pendingId = await createPendingIngestionIfAbsent(deps.db, {
+            id: newId(),
+            url: link,
+            docType: deps.source.doc_type,
+            nowIso: nowIso(),
+          });
+
+          if (pendingId) {
+            run.pending_ingestions_created += 1;
+            perRun.created += 1;
+          } else {
+            run.active_ingestions_skipped += 1;
+            perRun.activeSkipped += 1;
+          }
         }
 
         continue;

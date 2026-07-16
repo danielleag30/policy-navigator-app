@@ -375,7 +375,11 @@ async function scanCandidateUrl(
     nowIso: deps.nowIso(),
   });
   if (!pendingId) return { url, action: "active_ingestion_exists" };
-  return { url, action: "pending_ingestion_created", pendingIngestionId: pendingId };
+  return {
+    url,
+    action: "pending_ingestion_created",
+    pendingIngestionId: pendingId,
+  };
 }
 
 export interface CrawlStateDeps {
@@ -455,7 +459,13 @@ export async function runDiscoverySourceCycle(
 
   const visited = new Set(state.visited_urls);
   const seenCandidates = new Set(state.seen_candidate_urls);
-  const perRun = { pages: 0, candidates: 0, created: 0, activeSkipped: 0, lastCheckedUpdates: 0 };
+  const perRun = {
+    pages: 0,
+    candidates: 0,
+    created: 0,
+    activeSkipped: 0,
+    lastCheckedUpdates: 0,
+  };
   const errorsThisRun: CrawlErrorEntry[] = [];
 
   function buildResult(
@@ -526,7 +536,11 @@ export async function runDiscoverySourceCycle(
         crawlBatchSize,
         async (item: CrawlQueueItem) => {
           try {
-            return { item, page: await deps.fetchPage(item.url), fetchErr: null as string | null };
+            return {
+              item,
+              page: await deps.fetchPage(item.url),
+              fetchErr: null as string | null,
+            };
           } catch (e) {
             return { item, page: null, fetchErr: (e as Error).message };
           }
@@ -539,7 +553,10 @@ export async function runDiscoverySourceCycle(
           continue;
         }
         if (!page!.ok) {
-          errorsThisRun.push({ url: item.url, message: `HTTP ${page!.status}` });
+          errorsThisRun.push({
+            url: item.url,
+            message: `HTTP ${page!.status}`,
+          });
           continue;
         }
         perRun.pages += 1;
@@ -551,14 +568,23 @@ export async function runDiscoverySourceCycle(
           if (isTerminal) {
             if (seenCandidates.has(link)) continue;
             seenCandidates.add(link);
-            if (resolveOwnerSourceId(link, deps.allSources) === deps.source.id) {
+            if (
+              resolveOwnerSourceId(link, deps.allSources) === deps.source.id
+            ) {
               state.scan_queue.push(link);
             }
             continue;
           }
 
           if (
-            shouldFollowLink(link, item.url, item.depth, deps.source, visited, maxPages)
+            shouldFollowLink(
+              link,
+              item.url,
+              item.depth,
+              deps.source,
+              visited,
+              maxPages,
+            )
           ) {
             visited.add(link);
             state.crawl_queue.push({ url: link, depth: item.depth + 1 });
@@ -597,11 +623,15 @@ export async function runDiscoverySourceCycle(
     for (const result of scanResults) {
       perRun.candidates += 1;
       if (result.action === "pending_ingestion_created") perRun.created += 1;
-      else if (result.action === "active_ingestion_exists") perRun.activeSkipped += 1;
-      else if (result.action === "last_checked_updated") {
+      else if (result.action === "active_ingestion_exists") {
+        perRun.activeSkipped += 1;
+      } else if (result.action === "last_checked_updated") {
         perRun.lastCheckedUpdates += 1;
       } else if (result.action === "error") {
-        errorsThisRun.push({ url: result.url, message: result.message ?? "unknown error" });
+        errorsThisRun.push({
+          url: result.url,
+          message: result.message ?? "unknown error",
+        });
       }
     }
 

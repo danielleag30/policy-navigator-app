@@ -27,10 +27,15 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
-function assertEquals(actual: unknown, expected: unknown, message?: string): void {
+function assertEquals(
+  actual: unknown,
+  expected: unknown,
+  message?: string,
+): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(
-      message ?? `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+      message ??
+        `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
     );
   }
 }
@@ -72,12 +77,21 @@ function seedAllCrawlState(db: FakeOrchestrateDb): FakeOrchestrateDb {
   ]);
 }
 
-function baseDeps(db: FakeOrchestrateDb, overrides: Partial<OrchestrateDeps> = {}): OrchestrateDeps {
+function baseDeps(
+  db: FakeOrchestrateDb,
+  overrides: Partial<OrchestrateDeps> = {},
+): OrchestrateDeps {
   return {
     db: asOrchestrateDb(db),
     config: CONFIG,
     fetchPage: () => Promise.resolve({ ok: true, status: 200, html: "" }),
-    fetchHead: () => Promise.resolve({ ok: true, status: 200, etag: null, lastModified: null }),
+    fetchHead: () =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        etag: null,
+        lastModified: null,
+      }),
     fetchHash: (url: string) => Promise.resolve(`hash:${url}`),
     fetchJson: () => Promise.resolve({ jobId: "job-1" }),
     triggerReconciliation: () => Promise.resolve(true),
@@ -99,11 +113,18 @@ Deno.test("claimSource() throwing for a discovery source does not skip Municode/
 
   assertEquals(result.errors.length, 1);
   assert(
-    result.errors[0].includes("bos_summary") && result.errors[0].includes("simulated transient DB error"),
+    result.errors[0].includes("bos_summary") &&
+      result.errors[0].includes("simulated transient DB error"),
     `expected the claim failure to be recorded, got: ${result.errors[0]}`,
   );
-  assert(result.municode.checked, "Municode must still be checked despite the discovery claim failure");
-  assert(result.encode_zoning.checked, "EnCode zoning must still be checked despite the discovery claim failure");
+  assert(
+    result.municode.checked,
+    "Municode must still be checked despite the discovery claim failure",
+  );
+  assert(
+    result.encode_zoning.checked,
+    "EnCode zoning must still be checked despite the discovery claim failure",
+  );
 });
 
 Deno.test("the discovery deadline already having passed does not skip Municode/EnCode/staleness this invocation", async () => {
@@ -138,9 +159,18 @@ Deno.test("the discovery deadline already having passed does not skip Municode/E
   );
 
   assertEquals(result.discovery.sources_attempted, 0);
-  assert(!discoveryFetchCalled, "no discovery page fetch should happen once the deadline has already passed");
-  assert(result.municode.checked, "Municode must still run when the discovery phase gets zero time");
-  assert(result.encode_zoning.checked, "EnCode zoning must still run when the discovery phase gets zero time");
+  assert(
+    !discoveryFetchCalled,
+    "no discovery page fetch should happen once the deadline has already passed",
+  );
+  assert(
+    result.municode.checked,
+    "Municode must still run when the discovery phase gets zero time",
+  );
+  assert(
+    result.encode_zoning.checked,
+    "EnCode zoning must still run when the discovery phase gets zero time",
+  );
   assertEquals(result.stale_documents_found, 1);
   assertEquals(result.stale_alerts_created, 1);
 });
@@ -159,7 +189,10 @@ Deno.test("Municode check throwing does not skip EnCode zoning or the staleness 
     result.errors.some((e) => e.includes("municode API unreachable")),
     "expected the Municode failure to be recorded in errors",
   );
-  assert(result.encode_zoning.checked, "EnCode zoning must still run after Municode throws");
+  assert(
+    result.encode_zoning.checked,
+    "EnCode zoning must still run after Municode throws",
+  );
 });
 
 // ── EnCode zoning's independent cadence guardrail ─────────────────────────────
@@ -244,12 +277,18 @@ Deno.test("a discovery source already leased by a concurrent invocation is skipp
 
   const result = await runChangeDetectionCycle(
     baseDeps(db),
-    { nowMs: () => Date.parse("2026-01-01T00:00:00.000Z"), nowIso: () => "2026-01-01T00:00:00.000Z" },
+    {
+      nowMs: () => Date.parse("2026-01-01T00:00:00.000Z"),
+      nowIso: () => "2026-01-01T00:00:00.000Z",
+    },
   );
 
   assertEquals(result.discovery.sources_leased, 1);
   assertEquals(result.discovery.sources[0].outcome, "leased");
-  assert(result.municode.checked, "Municode must still run even though the only discovery source was leased");
+  assert(
+    result.municode.checked,
+    "Municode must still run even though the only discovery source was leased",
+  );
 });
 
 // ── Alert dedupe across invocations ────────────────────────────────────────────
@@ -286,7 +325,11 @@ Deno.test("a repeated staleness condition within the cooldown window does not wr
     nowIso: () => "2026-07-15T00:10:00.000Z",
   });
   assertEquals(second.stale_documents_found, 1, "the document is still stale");
-  assertEquals(second.stale_alerts_created, 0, "but no new alert should be written inside the cooldown");
+  assertEquals(
+    second.stale_alerts_created,
+    0,
+    "but no new alert should be written inside the cooldown",
+  );
   assertEquals(db.alerts.length, 1);
 });
 
@@ -297,7 +340,9 @@ Deno.test("an unknown requestedSourceId throws UnknownSourceError before touchin
 
   let threw: unknown;
   try {
-    await runChangeDetectionCycle(baseDeps(db), { requestedSourceId: "not_a_real_source" });
+    await runChangeDetectionCycle(baseDeps(db), {
+      requestedSourceId: "not_a_real_source",
+    });
   } catch (e) {
     threw = e;
   }
