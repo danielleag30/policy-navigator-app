@@ -1,16 +1,31 @@
 /**
- * Discovery-based seed crawling for change-detection.
+ * Discovery seed config + pure crawl primitives for change-detection.
  *
  * Split out from index.ts (which has a top-level Deno.serve() and so isn't
- * safe to import from a test) so the crawl/depth/allow-pattern/match-priority
+ * safe to import from a test) so the depth/allow-pattern/match-priority
  * logic can be unit tested against fixture HTML without a live network or
  * database.
  *
  * seed-sources.json mixes two source shapes:
  *   - discovery sources: { discovery_urls, discovery_depth, allow_patterns, ... }
- *     crawled here to find candidate document URLs (board minutes, budget PDFs).
- *   - legacy/API sources: { base_url, url_patterns } (municode_api) — not
- *     crawled, handled directly by index.ts as before.
+ *     crawled via _crawl_state.ts's resumable per-source cycle to find
+ *     candidate document URLs (board minutes, budget PDFs).
+ *   - legacy/API sources: { base_url, url_patterns } (municode_api,
+ *     encode_zoning) -- not crawled, checked directly via one fetch.
+ *
+ * This module previously also owned the whole-source, non-resumable BFS
+ * crawl (crawlDiscoverySource/discoverAllCandidates/resolveCandidates): a
+ * single invocation would fetch every page of every source's tree in one
+ * unbounded pass. That shape has no natural place to checkpoint mid-crawl,
+ * which was the root cause of change-detection losing all progress every
+ * IDLE_TIMEOUT tick. _crawl_state.ts replaces it with a per-source,
+ * per-batch-checkpointed loop built from the same primitives kept here
+ * (extractLinks, matchesAllowPattern, sameHostname, meetsFollowRecency) plus
+ * resolveOwnerSourceId below -- a per-URL version of the old
+ * resolveCandidates' cross-source match_priority resolution, since which
+ * source owns a URL is a pure function of the URL and the static source
+ * configs, not of crawl order, and so can be resolved the moment a URL is
+ * discovered rather than only after every source's crawl fully completes.
  */
 
 export type DocType =
@@ -102,7 +117,7 @@ export interface DiscoveryError extends CrawlError {
 // single large listing page (budget-committee-meetings, 15+ years of history)
 // alone yields 300+ unique same-host non-document links to follow at depth 2.
 // 200 silently truncated the queue before reaching most real meeting pages.
-const DEFAULT_MAX_PAGES = 500;
+export const DEFAULT_MAX_PAGES = 500;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -208,7 +223,7 @@ export function extractLinks(html: string, pageUrl: string): string[] {
   return links;
 }
 
-function sameHostname(a: string, b: string): boolean {
+export function sameHostname(a: string, b: string): boolean {
   try {
     return new URL(a).hostname === new URL(b).hostname;
   } catch {
@@ -226,7 +241,7 @@ export function matchesAllowPattern(
 const DOCUMENT_EXTENSIONS = [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".zip"];
 
 /** True for links that are clearly a document, not an HTML navigation page. */
-function looksLikeDocumentUrl(url: string): boolean {
+export function looksLikeDocumentUrl(url: string): boolean {
   try {
     const pathname = new URL(url).pathname.toLowerCase();
     return DOCUMENT_EXTENSIONS.some((ext) => pathname.endsWith(ext));
@@ -236,7 +251,7 @@ function looksLikeDocumentUrl(url: string): boolean {
 }
 
 /** Extracts a trailing "-YYYY" year from a URL's path, e.g. ".../meeting-march-10-2026" → 2026. */
-function trailingYearOf(url: string): number | null {
+export function trailingYearOf(url: string): number | null {
   try {
     const match = new URL(url).pathname.match(/-(\d{4})$/);
     return match ? Number(match[1]) : null;
@@ -245,165 +260,78 @@ function trailingYearOf(url: string): number | null {
   }
 }
 
-function meetsFollowRecency(url: string, source: DiscoverySource): boolean {
+export function meetsFollowRecency(
+  url: string,
+  source: DiscoverySource,
+): boolean {
   if (source.discovery_follow_min_year === undefined) return true;
   const year = trailingYearOf(url);
   return year === null || year >= source.discovery_follow_min_year;
 }
 
-// ── Crawl ─────────────────────────────────────────────────────────────────────
-
-const DEFAULT_CRAWL_CONCURRENCY = 8;
-
 /**
- * Crawls a single discovery source starting from its discovery_urls, following
- * same-hostname links up to discovery_depth hops (depth 1 = the discovery_urls
- * page itself; depth 2 = one hop past it, etc.). Returns every link seen on any
- * visited page — allow_pattern filtering happens separately in resolveCandidates
- * so match_priority can be resolved across sources that share a crawl root.
- *
- * A bounded pool of workers drains a shared queue (fetchPage is expected to
- * additionally serialize actual request *starts* via a shared rate limiter).
- * This overlaps each request's network round-trip with the others' instead of
- * stacking them end to end — but caps how many pages are ever in flight and
- * held in memory at once, which matters once a source's fan-out reaches
- * hundreds of pages (a real county listing page going back 15+ years produced
- * 300+ unique same-host links to follow — firing them all via one unbounded
- * Promise.all tripped this platform's edge-function resource limit).
- *
- * discovery_link_prefix (optional) further restricts which of those
- * same-hostname links get queued for the next depth to ones under a given
- * origin+section, e.g. keeping a source's crawl inside "/budget/" instead of
- * following every shared site-nav link the county's page template repeats on
- * every page (confirmed live: 265 of 381 links found on the
- * budget-committee-meetings listing page are global nav unrelated to any
- * budget content). Cutting those out reduces both the page-fetch count and
- * the queue noise that competes with real meeting pages for maxPages room.
- *
- * discovery_follow_min_year (optional) additionally skips recursing into
- * per-item pages older than a given year, for sources whose listing page
- * covers many more years of dated archive pages than change detection needs
- * to re-verify every run. Cutting those out shrinks not just this crawl but
- * the downstream candidate-scan phase (a HEAD+GET per discovered document,
- * serialized through the shared Fairfax rate limiter) enough to fit the
- * whole invocation inside the edge function's wall-clock budget — confirmed
- * live against budget_committee_meetings: without it, the candidate scan
- * alone for all 89 archived meetings back to 2008 pushed a single invocation
- * past the platform's 150s idle timeout even after discovery_link_prefix
- * removed the earlier WORKER_RESOURCE_LIMIT failure.
+ * True for a link the crawler should recurse into at the next depth: not
+ * already visited, not itself a terminal candidate, same hostname as the
+ * page it was found on, inside discovery_link_prefix (if set), meeting
+ * discovery_follow_min_year (if set), and under the maxPages visited cap.
  */
-export async function crawlDiscoverySource(
+export function shouldFollowLink(
+  link: string,
+  pageUrl: string,
+  depth: number,
   source: DiscoverySource,
-  fetchPage: PageFetcher,
-  maxPages: number = DEFAULT_MAX_PAGES,
-  concurrency: number = DEFAULT_CRAWL_CONCURRENCY,
-): Promise<{ discoveredLinks: Set<string>; errors: CrawlError[] }> {
-  const visited = new Set<string>(source.discovery_urls);
-  const discoveredLinks = new Set<string>();
-  const errors: CrawlError[] = [];
-  const queue: { url: string; depth: number }[] = source.discovery_urls.map((
-    url,
-  ) => ({
-    url,
-    depth: 1,
-  }));
-
-  async function worker(): Promise<void> {
-    for (;;) {
-      const next = queue.shift();
-      if (!next) return;
-      const { url, depth } = next;
-
-      let page: PageFetchResult;
-      try {
-        page = await fetchPage(url);
-      } catch (e) {
-        errors.push({ url, message: (e as Error).message });
-        continue;
-      }
-
-      if (!page.ok) {
-        errors.push({ url, message: `HTTP ${page.status}` });
-        continue;
-      }
-
-      for (const link of extractLinks(page.html, url)) {
-        discoveredLinks.add(link);
-
-        const isTerminalCandidate = matchesAllowPattern(link, source) ||
-          looksLikeDocumentUrl(link);
-        const inCrawlScope = source.discovery_link_prefix === undefined ||
-          link.startsWith(source.discovery_link_prefix);
-        if (
-          depth < source.discovery_depth &&
-          !visited.has(link) &&
-          !isTerminalCandidate &&
-          sameHostname(link, url) &&
-          inCrawlScope &&
-          meetsFollowRecency(link, source) &&
-          visited.size < maxPages
-        ) {
-          visited.add(link);
-          queue.push({ url: link, depth: depth + 1 });
-        }
-      }
-    }
+  visited: ReadonlySet<string>,
+  maxPages: number,
+): boolean {
+  if (depth >= source.discovery_depth) return false;
+  if (visited.has(link)) return false;
+  if (visited.size >= maxPages) return false;
+  if (matchesAllowPattern(link, source) || looksLikeDocumentUrl(link)) {
+    return false;
   }
-
-  await Promise.all(
-    Array.from({ length: concurrency }, () => worker()),
-  );
-
-  return { discoveredLinks, errors };
+  if (!sameHostname(link, pageUrl)) return false;
+  if (
+    source.discovery_link_prefix !== undefined &&
+    !link.startsWith(source.discovery_link_prefix)
+  ) {
+    return false;
+  }
+  return meetsFollowRecency(link, source);
 }
 
 /**
- * Resolves final URL → source ownership across all discovery sources' raw
- * crawl results. A URL only becomes a candidate if it matches at least one of
- * its source's allow_patterns; when the same URL matches multiple sources'
- * patterns, the source with the lowest match_priority wins (missing
- * match_priority sorts last). Ties keep the first source in config order.
+ * Resolves which discovery source "owns" a URL that matched at least one
+ * source's allow_patterns: the source with the lowest match_priority wins
+ * (missing match_priority sorts last); ties keep the first source in
+ * sources' order. Returns null if the URL matches no source's allow_patterns
+ * at all — a per-URL version of the old resolveCandidates(), evaluable the
+ * moment a URL is discovered rather than only after every source's crawl has
+ * finished, since ownership is a pure function of the URL and the static
+ * source configs, not of crawl order or timing.
  */
-export function resolveCandidates(
-  perSourceLinks: Map<string, Set<string>>,
-  sources: DiscoverySource[],
-): DiscoveredUrl[] {
-  const winners = new Map<
-    string,
-    { source: DiscoverySource; priority: number }
-  >();
+export function resolveOwnerSourceId(
+  url: string,
+  sources: readonly DiscoverySource[],
+): string | null {
+  let winner: { sourceId: string; priority: number } | null = null;
 
   for (const source of sources) {
-    const links = perSourceLinks.get(source.id);
-    if (!links) continue;
-
+    if (!matchesAllowPattern(url, source)) continue;
     const priority = source.match_priority ?? Number.POSITIVE_INFINITY;
-
-    for (const link of links) {
-      if (!matchesAllowPattern(link, source)) continue;
-
-      const existing = winners.get(link);
-      if (!existing || priority < existing.priority) {
-        winners.set(link, { source, priority });
-      }
+    if (!winner || priority < winner.priority) {
+      winner = { sourceId: source.id, priority };
     }
   }
 
-  return Array.from(winners.entries()).map(([url, { source }]) => ({
-    url,
-    docType: source.doc_type,
-    sourceId: source.id,
-    label: source.label ?? source.doc_type,
-  }));
+  return winner?.sourceId ?? null;
 }
 
 /**
  * Runs fn over items with at most `concurrency` calls in flight at once.
- * Same bounded worker-pool shape as crawlDiscoverySource's page fetching —
- * shared here so callers processing a large candidate list (e.g. the
- * change-detection HEAD/GET scan of every discovered URL) get the same
- * protection against unbounded fan-out spiking the edge function's resource
- * usage. Results are returned in the same order as items.
+ * Used by _crawl_state.ts to fetch/scan one checkpoint batch's worth of URLs
+ * concurrently (bounded so a large batch can't spike the edge function's
+ * resource limit) while still checkpointing between batches. Results are
+ * returned in the same order as items.
  */
 export async function mapWithConcurrency<T, R>(
   items: T[],
@@ -426,35 +354,4 @@ export async function mapWithConcurrency<T, R>(
   );
 
   return results;
-}
-
-/**
- * Crawls every discovery source and resolves the final candidate list.
- * fetchPage is expected to already apply rate limiting and caching — this
- * function calls it once per (source, page) pair it visits, and relies on
- * fetchPage-level memoization to avoid refetching pages shared across sources.
- */
-export async function discoverAllCandidates(
-  sources: DiscoverySource[],
-  fetchPage: PageFetcher,
-): Promise<{ candidates: DiscoveredUrl[]; errors: DiscoveryError[] }> {
-  const perSourceLinks = new Map<string, Set<string>>();
-  const errors: DiscoveryError[] = [];
-
-  await Promise.all(sources.map(async (source) => {
-    const { discoveredLinks, errors: sourceErrors } = await crawlDiscoverySource(
-      source,
-      fetchPage,
-    );
-    perSourceLinks.set(source.id, discoveredLinks);
-    errors.push(
-      ...sourceErrors.map((e) => ({
-        ...e,
-        sourceId: source.id,
-        docType: source.doc_type,
-      })),
-    );
-  }));
-
-  return { candidates: resolveCandidates(perSourceLinks, sources), errors };
 }

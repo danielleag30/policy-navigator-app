@@ -356,8 +356,8 @@ Deno.test("wiring: the encode_zoning branch embeds via the external HTTP path (e
 // tests like the rest of this file, not behavioral db-mocked tests.
 // ---------------------------------------------------------------------------
 
-const CHANGE_DETECTION_SRC = new URL(
-  "../supabase/functions/change-detection/index.ts",
+const CHANGE_DETECTION_ORCHESTRATE_SRC = new URL(
+  "../supabase/functions/change-detection/_orchestrate.ts",
   import.meta.url,
 ).pathname;
 
@@ -374,39 +374,37 @@ function extractBetween(
 }
 
 Deno.test("gate: checkEncodeZoning (change-detection) checks ENCODE_ZONING_ENABLED before creating a pending_ingestion row", async () => {
-  const src = await Deno.readTextFile(CHANGE_DETECTION_SRC);
+  const src = await Deno.readTextFile(CHANGE_DETECTION_ORCHESTRATE_SRC);
   const fnBody = extractBetween(
     src,
     "async function checkEncodeZoning(",
-    "\nasync function writePendingAlert",
+    "\nasync function writeStalenessAlerts",
   );
 
-  const gateIdx = fnBody.indexOf(
-    'Deno.env.get("ENCODE_ZONING_ENABLED") !== "true"',
-  );
-  const createIdx = fnBody.indexOf("await createPendingIngestion(");
+  const gateIdx = fnBody.indexOf("!deps.isEncodeZoningEnabled()");
+  const createIdx = fnBody.indexOf("await createPendingIngestionIfAbsent(");
 
   assert(gateIdx !== -1, "checkEncodeZoning must check ENCODE_ZONING_ENABLED");
   assert(
     createIdx !== -1,
-    "checkEncodeZoning must still call createPendingIngestion on the enabled path",
+    "checkEncodeZoning must still call createPendingIngestionIfAbsent on the enabled path",
   );
   assert(
     gateIdx < createIdx,
-    "the ENCODE_ZONING_ENABLED check must appear before createPendingIngestion is called",
+    "the ENCODE_ZONING_ENABLED check must appear before createPendingIngestionIfAbsent is called",
   );
 });
 
 Deno.test("gate: checkEncodeZoning returns without a pending_ingestion_id when the gate is off", async () => {
-  const src = await Deno.readTextFile(CHANGE_DETECTION_SRC);
+  const src = await Deno.readTextFile(CHANGE_DETECTION_ORCHESTRATE_SRC);
   const fnBody = extractBetween(
     src,
     "async function checkEncodeZoning(",
-    "\nasync function writePendingAlert",
+    "\nasync function writeStalenessAlerts",
   );
   const gateBlock = extractBetween(
     fnBody,
-    'Deno.env.get("ENCODE_ZONING_ENABLED") !== "true") {',
+    "if (!deps.isEncodeZoningEnabled()) {",
     "}",
   );
   assert(

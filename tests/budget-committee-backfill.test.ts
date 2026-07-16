@@ -53,7 +53,7 @@ interface PendingRow {
 interface FakeResult {
   data?: unknown;
   count?: number | null;
-  error: { message: string } | null;
+  error: { code?: string; message: string } | null;
 }
 
 class FakeDb {
@@ -167,6 +167,28 @@ class FakeTable {
 
     if (this.mode === "insert" && this.table === "pending_ingestions") {
       if (!this.insertPayload) throw new Error("Missing insert payload");
+      const activeStatuses = new Set(["pending", "processing"]);
+      const url = String(this.insertPayload.url);
+      const docType = String(this.insertPayload.doc_type);
+      const status = String(this.insertPayload.status);
+      const isActiveInsert = activeStatuses.has(status);
+      const hasActiveDuplicate = this.db.pendingRows.some((row) =>
+        row.url === url &&
+        row.doc_type === docType &&
+        activeStatuses.has(row.status)
+      );
+
+      if (isActiveInsert && hasActiveDuplicate) {
+        resolve({
+          error: {
+            code: "23505",
+            message:
+              'duplicate key value violates unique constraint "pending_ingestions_active_url_doc_type_idx"',
+          },
+        });
+        return;
+      }
+
       this.db.pendingRows.push(
         structuredClone(this.insertPayload) as unknown as PendingRow,
       );
@@ -183,9 +205,7 @@ function fetcher(pages: Record<string, string>, onFetch?: () => void) {
     onFetch?.();
     const html = pages[url];
     return Promise.resolve(
-      html === undefined
-        ? { ok: false, status: 404, html: "" }
-        : { ok: true, status: 200, html },
+      html === undefined ? { ok: false, status: 404, html: "" } : { ok: true, status: 200, html },
     );
   };
 }
@@ -228,8 +248,7 @@ Deno.test("budget committee backfill pauses on deadline and resumes from saved q
       requestDelayMs: 0,
       nowMs: () => ms,
       nowIso: () => "2026-07-08T00:00:00.000Z",
-      newId: () =>
-        `00000000-0000-7000-8000-${(++id).toString().padStart(12, "0")}`,
+      newId: () => `00000000-0000-7000-8000-${(++id).toString().padStart(12, "0")}`,
     },
   );
 
@@ -270,8 +289,7 @@ Deno.test("budget committee backfill pauses on deadline and resumes from saved q
       requestDelayMs: 0,
       nowMs: () => ms,
       nowIso: () => "2026-07-08T00:01:00.000Z",
-      newId: () =>
-        `00000000-0000-7000-8000-${(++id).toString().padStart(12, "0")}`,
+      newId: () => `00000000-0000-7000-8000-${(++id).toString().padStart(12, "0")}`,
     },
   );
 
@@ -303,12 +321,10 @@ Deno.test("budget committee backfill is idempotent against active pending and cu
       <a href="/budget/board-supervisors-budget-committee-meeting-may-01-2023">2023</a>
       <a href="/budget/board-supervisors-budget-committee-meeting-may-01-2022">2022</a>
     `,
-    "https://www.fairfaxcounty.gov/budget/board-supervisors-budget-committee-meeting-may-01-2023":
-      `
+    "https://www.fairfaxcounty.gov/budget/board-supervisors-budget-committee-meeting-may-01-2023": `
       <a href="/budget/sites/budget/files/Assets/documents/budget%20committee%20meeting/2023/may-01/Current.pdf">Current</a>
     `,
-    "https://www.fairfaxcounty.gov/budget/board-supervisors-budget-committee-meeting-may-01-2022":
-      `
+    "https://www.fairfaxcounty.gov/budget/board-supervisors-budget-committee-meeting-may-01-2022": `
       <a href="/budget/sites/budget/files/Assets/Documents/budget%20committee%20meeting/2022/may-01/Pending.pdf">Pending</a>
       <a href="/budget/sites/budget/files/Assets/documents/budget%20committee%20meeting/2022/may-01/New.pdf">New</a>
     `,
