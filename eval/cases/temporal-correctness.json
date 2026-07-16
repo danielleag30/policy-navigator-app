@@ -22,5 +22,281 @@
       }
     ],
     "notes": "Real amendment, verified against live is_current=false/true rows: Chapter 9.1 (Communications) is_current=false, 52 real sections dated 2019-09-11, was repealed and replaced by Chapter 9.2 (Cable Television) via Ord. 35-19-9.2, effective January 1, 2020. Confirmed Chapter 9.1 has zero active regulatory sections in the current corpus (its only is_current=true row, FACOCO_CH9.1CORE35-19-9.2 / chunk 019f34bb-4793-71c6-be30-1194495faa43, is a repealed-chapter marker containing only the editor's note, not regulatory text) and Chapter 9.2's content differs genuinely from Chapter 9.1 (distinct section numbering/structure), not a byte-identical duplicate. Wrong-version trap: retrieving Section 9.1-3-1 'Requirement of a Franchise' (chunk 019f4c15-1571-7623-b778-e09762462260, is_current=false, real 2019-09-11 text) or other pre-2020 Chapter 9.1 text as if it were still governing law."
+  },
+  {
+    "id": "temporal-002",
+    "category": "temporal_correctness",
+    "query": "How many dwelling units in a building trigger the deadbolt lock and peephole requirement under Fairfax County Code Section 12-1-4?",
+    "chunk_ids": ["019f34bc-a37a-7a38-9c7d-a98060fca273"],
+    "criteria": [
+      {
+        "id": "temporal-002-cites",
+        "description": "Response cites the current Section 12-1-4 (Locks and peepholes)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bc-a37a-7a38-9c7d-a98060fca273" }
+      },
+      {
+        "id": "temporal-002-contains-current",
+        "description": "Answer uses the current 'multifamily building' framing, not the superseded 'any one building' framing",
+        "check": { "type": "answer_contains", "substring": "multifamily building" }
+      },
+      {
+        "id": "temporal-002-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Real amendment (Ord. 05-25-12), verified live. Historical row: id 019f692e-d67a-7f2f-8a4b-e3e6f7f8dfbe, node FACOCO_CH12TEANRE_ART1INGE_S12-1-4LOPE, effective_date 2025-04-25, superseded_date 2025-07-11: '(a) Any landlord who rents five (5) or more dwelling units in any one building shall install: (1) Deadbolt locks which meet the requirements of the Uniform Statewide Building Code for new multifamily construction...'. Current row: id 019f34bc-a37a-7a38-9c7d-a98060fca273, same node_id, effective_date 2026-04-28: '(a) Any landlord who rents five (5) or more dwelling units in any one (1) multifamily building shall install: (1) Deadbolt locks that meet the requirements of the Uniform Statewide Building Code, Va. Code §§ 36-97 through -119.1, as amended...'. Genuine substantive change confirmed (content_hash differs: 13f5d1cc... vs 1a4258004...): the trigger clause narrows from 'any one building' to 'any one (1) multifamily building', and every subsection adds a new Va. Code §§ 36-97 through -119.1 cross-reference absent from the old text. Note: this is one of the 4 sections PR #97/#98 explicitly named (§12-1-4), and its historical row shares its node_id with the current row post-PR #98 correction."
+  },
+  {
+    "id": "temporal-003",
+    "category": "temporal_correctness",
+    "query": "Does the Fairfax County Tenant-Landlord Commission still exist under Chapter 12 of the County Code?",
+    "chunk_ids": ["019f34bc-9eaa-77a8-8ccc-26a31fea9b01"],
+    "criteria": [
+      {
+        "id": "temporal-003-cites",
+        "description": "Response cites the current Section 12-1-1 (Definitions)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bc-9eaa-77a8-8ccc-26a31fea9b01" }
+      },
+      {
+        "id": "temporal-003-contains-current-office",
+        "description": "Answer names the current office (Department of Cable and Consumer Services), not the defunct Commission",
+        "check": {
+          "type": "answer_contains",
+          "substring": "Department of Cable and Consumer Services"
+        }
+      },
+      {
+        "id": "temporal-003-temporal-flag",
+        "description": "Response flags that the Tenant-Landlord Commission definition was removed",
+        "check": { "type": "temporal_flag" }
+      }
+    ],
+    "notes": "Real amendment (Ord. 05-25-12), verified live. Historical row: id 019f692e-cf91-7ef8-b3fe-3f2b58bce33a, node FACOCO_CH12TEANRE_ART1INGE_S12-1-1DE, effective_date 2025-04-25, superseded_date 2025-07-11, defines '(5) The Commission shall mean the Fairfax County Tenant-Landlord Commission.' and cites old Title 55 provisions (Code of Virginia, Chapter 13.2 of Title 55; Section 55-248.4(k)). Current row: id 019f34bc-9eaa-77a8-8ccc-26a31fea9b01, same node_id, effective_date 2026-04-28: '(5) Reserved.' -- the Commission definition is deleted -- and the statute cites are modernized to the Virginia Residential Landlord and Tenant Act, Va. Code §§ 55.1-1200 through -1262. Also renames Director/Department from 'Department of Consumer Affairs' to 'Department of Cable and Consumer Services'. Genuine substantive change confirmed (content_hash differs: 99968420... vs 37ea1de9...)."
+  },
+  {
+    "id": "temporal-004",
+    "category": "temporal_correctness",
+    "query": "Who has authority to waive impoundment or boarding fees at the Fairfax County Animal Shelter?",
+    "chunk_ids": ["019f34bf-99e4-7ed2-b335-653e345879bb"],
+    "criteria": [
+      {
+        "id": "temporal-004-cites",
+        "description": "Response cites the current Section 41.1-2-5 (County animal shelter fees)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bf-99e4-7ed2-b335-653e345879bb" }
+      },
+      {
+        "id": "temporal-004-contains-current-title",
+        "description": "Answer uses the current title 'Director of Animal Services', not the superseded 'Animal Shelter Director'",
+        "check": { "type": "answer_contains", "substring": "Director of Animal Services" }
+      },
+      {
+        "id": "temporal-004-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Real amendment (Ord. 11-25-41.1), verified live. Historical row: id 019f6923-770e-751d-96aa-24cb957ba891, node FACOCO_CH41.1ANCOCA_ART2ANCORACO_S41.1-2-5COANSHCODISTANIMBOFEADFE, effective_date 2025-09-19, superseded_date 2026-01-16: 'The Animal Shelter Director may waive or reduce the adoption, impoundment or boarding fees...'. Current row: id 019f34bf-99e4-7ed2-b335-653e345879bb, same node_id, effective_date 2026-04-28: 'The Director of Animal Services may waive or reduce the adoption, impoundment or boarding fees...'. Also renames 'Director of the Animal Shelter' to 'Director of Animal Services' elsewhere in the same section. Genuine substantive (title/authority) change confirmed (content_hash differs: 3602a5bce... vs ded88e510...). Part of a county-wide 'Animal Services Division' -> 'Department of Animal Services' renaming under this ordinance."
+  },
+  {
+    "id": "temporal-005",
+    "category": "temporal_correctness",
+    "query": "What is the current penalty for drinking alcohol on Fairfax County public school grounds?",
+    "chunk_ids": ["019f34ba-9207-7156-9105-8ca308feed9c"],
+    "criteria": [
+      {
+        "id": "temporal-005-cites",
+        "description": "Response cites the current Section 5-1-26",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34ba-9207-7156-9105-8ca308feed9c" }
+      },
+      {
+        "id": "temporal-005-contains-current-penalty",
+        "description": "Answer states the current Class 2 misdemeanor penalty, not the superseded confinement/fine language",
+        "check": { "type": "answer_contains", "substring": "Class 2 misdemeanor" }
+      },
+      {
+        "id": "temporal-005-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Real amendment (Ord. 17-25-5), verified live. Historical row: id 019f6923-cad3-7fcd-a957-0decfd75219b, node FACOCO_CH5OF_ART1OFAGPUPESA_S5-1-26DRPOALBEPUSCGR, effective_date 2025-09-19, superseded_date 2026-01-16, single-sentence rule: 'shall be guilty of a misdemeanor punishable by confinement in jail for not more than six (6) months and a fine of not more than Five Hundred Dollars ($500.00), either or both.' Current row: id 019f34ba-9207-7156-9105-8ca308feed9c, same node_id, effective_date 2026-04-28: fully rewritten into lettered subsections (a)-(d), adds a sacramental-wine exception for religious congregations after school hours and a performing-arts-facility exception, and reclassifies the penalty as '(d) Any person convicted of a violation of this section shall be guilty of a Class 2 misdemeanor.' Genuine substantive change confirmed (content_hash differs: 233fd5f0... vs 75d8d5ca...)."
+  },
+  {
+    "id": "temporal-006",
+    "category": "temporal_correctness",
+    "query": "What election precincts make up the Mount Vernon District in Fairfax County?",
+    "chunk_ids": ["019f34ba-fd3b-7978-80ac-069b4a8bff67"],
+    "criteria": [
+      {
+        "id": "temporal-006-cites",
+        "description": "Response cites the current Section 7-2-9 (Mount Vernon District)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34ba-fd3b-7978-80ac-069b4a8bff67" }
+      },
+      {
+        "id": "temporal-006-contains-montebello",
+        "description": "Answer includes the Montebello precinct, added by the current amendment",
+        "check": { "type": "answer_contains", "substring": "Montebello" }
+      },
+      {
+        "id": "temporal-006-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Real amendment (Ord. 13-25-7), verified live. Historical row: id 019f6923-9e18-70a8-a6ee-b5a7cdac6ccb, node FACOCO_CH7EL_ART2ELDIBOSU_S7-2-9MOVEDI, effective_date 2025-09-19, superseded_date 2026-01-16, precinct list: '...Lorton, Lorton Station, Marlan, Newington No. 1...' (no Montebello). Current row: id 019f34ba-fd3b-7978-80ac-069b4a8bff67, same node_id, effective_date 2026-04-28: '...Lorton, Lorton Station, Marlan, Montebello, Newington No. 1...' -- Montebello inserted as a new precinct. Genuine substantive change confirmed (content_hash differs: ecefb7853... vs c5368e187...)."
+  },
+  {
+    "id": "temporal-007",
+    "category": "temporal_correctness",
+    "query": "Who issues automobile graveyard licenses in Fairfax County and what is the late-renewal penalty?",
+    "chunk_ids": ["019f34bc-faee-728f-a166-48fa3cd76ea3"],
+    "criteria": [
+      {
+        "id": "temporal-007-cites",
+        "description": "Response cites the current Section 21-1-2 (License required; fee)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bc-faee-728f-a166-48fa3cd76ea3" }
+      },
+      {
+        "id": "temporal-007-contains-current-office",
+        "description": "Answer names the current issuing office (Director of the Department of Tax Administration)",
+        "check": {
+          "type": "answer_contains",
+          "substring": "Director of the Department of Tax Administration"
+        }
+      },
+      {
+        "id": "temporal-007-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Real amendment (Ord. 33-25-21), verified live. Historical row: id 019f6927-4218-7d51-95ca-1616604e6de9, node FACOCO_CH21AUGR_ART1_S21-1-2LIREFE, effective_date 2026-01-16, superseded_date 2026-04-28: license issued by 'the Supervisor of Assessments of the County'; renewal deadline 'January 31 of each year'; penalty 'ten per cent (10%) of the license tax or Two Dollars ($2.00), whichever is greater'. Current row: id 019f34bc-faee-728f-a166-48fa3cd76ea3, same node_id, effective_date 2026-04-28: issuing office renamed to 'the Director of the Department of Tax Administration'; renewal deadline moved to 'March 1 of each year'; penalty flat-rated to 'Ten Dollars ($10.00)'. Genuine substantive change confirmed (content_hash differs: c9c6fd772... vs 7bd012e03...) -- office renaming, deadline shift, and penalty-formula change are all real and independently verified from live content."
+  },
+  {
+    "id": "temporal-008",
+    "category": "temporal_correctness",
+    "query": "What does a bondsman need to obtain a bondsman's license in Fairfax County today?",
+    "chunk_ids": ["019f34bd-0802-7369-a931-880c429fba35"],
+    "criteria": [
+      {
+        "id": "temporal-008-cites",
+        "description": "Response cites the current Section 23-1-2 (Application for license)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-0802-7369-a931-880c429fba35" }
+      },
+      {
+        "id": "temporal-008-contains-dcjs",
+        "description": "Answer states the current requirement of a state DCJS bail bondsman license",
+        "check": {
+          "type": "answer_contains",
+          "substring": "Virginia Department of Criminal Justice Services"
+        }
+      },
+      {
+        "id": "temporal-008-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Real amendment (Ord. 34-25-23), verified live. Historical row: id 019f6927-49b2-7e6d-ac01-787ae2e73be9, node FACOCO_CH23BO_ART1GERE_S23-1-2APLIFECECH, effective_date 2026-01-16, superseded_date 2026-04-28: license issued only if applicant 'obtained a certificate from the judge of the circuit court that he is a person of good moral character'; applications made to 'the Supervisor of Assessments of the County'. Current row: id 019f34bd-0802-7369-a931-880c429fba35, same node_id, effective_date 2026-04-28: moral-character-certificate requirement replaced entirely with 'unless and until the applicant has received a bail bondsman license from the Virginia Department of Criminal Justice Services'; applications now made to 'the Director of Tax Administration'. Genuine substantive change confirmed (content_hash differs: f9524ad52... vs bb5360841...) -- licensing authority shifted from a county moral-character certificate to a state DCJS bail-bondsman license."
+  },
+  {
+    "id": "temporal-009",
+    "category": "temporal_correctness",
+    "query": "How many days does Fairfax County have to act on an initial subdivision construction plan submission under Section 101-2-4?",
+    "chunk_ids": ["019f34cd-cdc9-7344-9d3c-f964fec11fd3"],
+    "criteria": [
+      {
+        "id": "temporal-009-cites",
+        "description": "Response cites the current Section 101-2-4 (Construction plan)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34cd-cdc9-7344-9d3c-f964fec11fd3" }
+      },
+      {
+        "id": "temporal-009-contains-current-timeline",
+        "description": "Answer states the current 40-day initial review window, not the superseded 60-day window",
+        "check": { "type": "answer_contains", "substring": "40 days" }
+      },
+      {
+        "id": "temporal-009-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Real amendment (Ord. 29-25-101), verified live. Historical row: id 019f6927-32de-73e0-9ce0-8e7fbe32d037, node THCOCOFAVI1976_CH101SUPR_ART2SUAPPRAPPR_S101-2-4COPL, effective_date 2026-01-16, superseded_date 2026-04-28: '(d) Approval. The Construction Plan must be acted upon within 60 days, except under abnormal circumstances...'. Current row: id 019f34cd-cdc9-7344-9d3c-f964fec11fd3, same node_id, effective_date 2026-04-28: '...must be acted upon within 40 days, except under abnormal circumstances...'. The current text also adds an entirely new tiered process for third-or-subsequent resubmissions (14-day initial triage, then either administrative approval within 7 days for minor deficiencies or disapproval), which the old text did not have. Genuine substantive change confirmed (content_hash differs: 01c282c5d... vs a6e30180d...). Note: an earlier internal read of this section mis-stated the old number as '45 days' -- that 45-day figure is actually the OLD resubmission-review timeline (see adversarial-009 for that specific numeric trap), not the initial-review timeline used here; both numbers were re-verified directly against live content before use."
+  },
+  {
+    "id": "temporal-010",
+    "category": "temporal_correctness",
+    "query": "How must Fairfax County publish notice of a public hearing for a Local Agricultural and Forestal District under Chapter 115?",
+    "chunk_ids": ["019f34d0-d6d7-7036-b533-f6c399abc27a"],
+    "criteria": [
+      {
+        "id": "temporal-010-cites",
+        "description": "Response cites the current Section 115-4-7 (Public hearing procedures)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d0-d6d7-7036-b533-f6c399abc27a" }
+      },
+      {
+        "id": "temporal-010-contains-state-cite",
+        "description": "Answer defers to the current state-law publication standard (Va. Code Sect. 15.2-4405)",
+        "check": { "type": "answer_contains", "substring": "15.2-4405" }
+      },
+      {
+        "id": "temporal-010-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Real amendment (Ord. 39-24-115), verified live. Historical row: id 019f692c-3fa9-784e-b144-731d72eed6bd, node THCOCOFAVI1976_CH115LOAGFODI_ART4.1PRREAP_S115-4-7PUHEPR, effective_date 2024-11-19, superseded_date 2025-04-25, self-contained local rule: 'published once a week for two (2) successive weeks in a local newspaper having general circulation in the County... not less than six (6) days nor more than twenty-one (21) days before the date of the hearing...'. Current row: id 019f34d0-d6d7-7036-b533-f6c399abc27a, same node_id, effective_date 2026-04-28: that entire local rule is deleted and replaced with '(d) Public notice of any hearing held shall be published as required by Virginia Code Sect. 15.2-4405.' Genuine substantive change confirmed (content_hash differs: f154004cf... vs 3ee0d1d59...) -- the County deferred its own detailed publication rule to state law."
+  },
+  {
+    "id": "temporal-011",
+    "category": "temporal_correctness",
+    "query": "Does Chapter 118 of the Fairfax County Code define 'adaptation measure'?",
+    "chunk_ids": ["019f34d1-3113-7e95-bc34-feed63ad7d19"],
+    "criteria": [
+      {
+        "id": "temporal-011-cites",
+        "description": "Response cites the current Section 118-1-6 (Definitions)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d1-3113-7e95-bc34-feed63ad7d19" }
+      },
+      {
+        "id": "temporal-011-contains-definition",
+        "description": "Answer quotes or paraphrases the new 'Adaptation measure' definition",
+        "check": {
+          "type": "answer_contains",
+          "substring": "Adaptation measure means a project, practice, or approach"
+        }
+      },
+      {
+        "id": "temporal-011-temporal-flag",
+        "description": "Response flags that this definition is new (not present in the prior version of the section)",
+        "check": { "type": "temporal_flag" }
+      }
+    ],
+    "notes": "Real amendment (Ord. 31-24-118), verified live. Historical row: id 019f692c-0e1e-77dc-a196-fb2191f786f6, node THCOCOFAVI1976_CH118CHBAPROR_ART1GEPRDE_S118-1-6DE, effective_date 2024-11-19, superseded_date 2025-04-25, has no 'Adaptation measure' or 'Canopy tree' entries (definitions run (a) Agricultural land ... (gg) Wetlands). Current row: id 019f34d1-3113-7e95-bc34-feed63ad7d19, same node_id, effective_date 2026-04-28, inserts '(a) Adaptation measure means a project, practice, or approach to mitigate or address an impact of climate change, including sea-level rise, storm surge, and flooding, including increased or recurrent flooding.' and '(g) Canopy tree means a tree that typically reaches 35 feet in height or taller when mature.', relettering the rest of the list and also adding a new 'Mature tree' and 'Nature-based solution' definition and an 'Understory tree' definition. Genuine substantive change confirmed (content_hash differs: ffae37a73... vs 2bb9f368f...)."
+  },
+  {
+    "id": "temporal-012",
+    "category": "temporal_correctness",
+    "query": "What does Section 124.1-2-4 of the Fairfax County Code currently regulate, and what is it called?",
+    "chunk_ids": ["019f34d2-440d-7b49-ac14-041cc75c7665"],
+    "criteria": [
+      {
+        "id": "temporal-012-cites",
+        "description": "Response cites the current Section 124.1-2-4 (Land-Disturbing Activity in Chesapeake Bay Preservation Areas)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d2-440d-7b49-ac14-041cc75c7665" }
+      },
+      {
+        "id": "temporal-012-contains-current-scope",
+        "description": "Answer reflects the current common-plan-of-development scope test, not the superseded DEQ/exclusion framing",
+        "check": { "type": "answer_contains", "substring": "common plan of development or sale" }
+      },
+      {
+        "id": "temporal-012-temporal-flag",
+        "description": "Response flags that both the section title and its applicability text changed",
+        "check": { "type": "temporal_flag" }
+      }
+    ],
+    "notes": "Real amendment (Ord. 36-25-124.1), verified live -- this is one of the 4 sections explicitly named in PR #97/#98 (§124.1-2-4), node-id-corrected by PR #98 to share the current row's node_id. Historical row: id 019f6927-6a78-7fb9-8c9c-c79c1e7eb1dc, node S124.1-2-4LASTACCHBAPRAR, effective_date 2026-01-16, superseded_date 2026-04-28, titled 'Chesapeake Bay Preservation Act Land-Disturbing Activity', subsection (B) reads 'Unless excluded by Section 124.1-1-7 , land disturbing activities with state permits issued after June 30, 2014, do not require completion of a registration statement...'. Current row: id 019f34d2-440d-7b49-ac14-041cc75c7665, same node_id (post-PR #98), effective_date 2026-04-28, retitled 'Land-Disturbing Activity in Chesapeake Bay Preservation Areas', subsection (B) rewritten to 'Unless part of a common plan of development or sale that disturbs one or more acre, land-disturbing activities in Chesapeake Bay Preservation Areas that are equal to or greater than 2,500 square feet but less than one acre do not require completion of a registration statement...'. Genuine substantive scope-of-applicability change confirmed (content_hash differs: 68352fe06... vs f0d83fd67...), not just a title change."
   }
 ]
