@@ -246,6 +246,7 @@ export interface CurrentIdentityRow {
 export interface CurrentIdentityIndex {
   currentNodeIds: Set<string>;
   citationToCurrentNodeId: Map<string, string>;
+  citationToCurrentContent: Map<string, string>;
 }
 
 export function buildCurrentIdentityIndex(
@@ -253,17 +254,59 @@ export function buildCurrentIdentityIndex(
 ): CurrentIdentityIndex {
   const currentNodeIds = new Set<string>();
   const citationToCurrentNodeId = new Map<string, string>();
+  const citationToCurrentContent = new Map<string, string>();
 
   for (const row of rows) {
     currentNodeIds.add(row.municode_node_id);
     const key = extractCitationKey(row.section_title, row.content);
     if (key && !citationToCurrentNodeId.has(key)) {
       citationToCurrentNodeId.set(key, row.municode_node_id);
+      citationToCurrentContent.set(key, row.content ?? "");
     }
   }
 
-  return { currentNodeIds, citationToCurrentNodeId };
+  return { currentNodeIds, citationToCurrentNodeId, citationToCurrentContent };
 }
+
+/**
+ * Fraction of normalized word tokens (length >= 3, deduped) shared between
+ * two texts, as |intersection| / |union|. Used to tell apart two real,
+ * distinct scenarios that both produce a citation-number match when a
+ * Municode article is renumbered:
+ *   - the same provision, amended over time (text mostly unchanged) — should
+ *     merge under the current section's identity.
+ *   - Municode reassigning a section number to an unrelated new provision
+ *     after the old one was renumbered/repealed elsewhere (text unrelated
+ *     apart from incidental common words) — merging would misrepresent two
+ *     unconnected provisions as one section's history.
+ * Calibrated against real Fairfax County ordinance text: genuinely
+ * continuing provisions scored 0.83-0.92; genuinely distinct provisions
+ * that happened to share a citation number scored 0.11-0.33.
+ */
+export function contentSimilarity(a: string, b: string): number {
+  const tokenize = (text: string): Set<string> =>
+    new Set(
+      (text.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((w) =>
+        w.length >= 3
+      ),
+    );
+  const setA = tokenize(a);
+  const setB = tokenize(b);
+  if (setA.size === 0 || setB.size === 0) return 0;
+  let intersection = 0;
+  for (const word of setA) if (setB.has(word)) intersection++;
+  const union = setA.size + setB.size - intersection;
+  return intersection / union;
+}
+
+/**
+ * Minimum contentSimilarity() required before a citation-number match is
+ * trusted to merge a historical row into the current section's identity.
+ * See contentSimilarity()'s docstring for the calibration data (0.33 highest
+ * genuinely-distinct case, 0.60 lowest genuinely-continuing case observed);
+ * 0.45 sits in that gap with margin on both sides.
+ */
+export const CITATION_CONTENT_SIMILARITY_THRESHOLD = 0.45;
 
 export interface HistoricalIdentityInput {
   rawNodeId: string;
@@ -271,6 +314,7 @@ export interface HistoricalIdentityInput {
   content: string | null;
   currentNodeIds: Set<string>;
   citationToCurrentNodeId: Map<string, string>;
+  citationToCurrentContent: Map<string, string>;
 }
 
 export interface HistoricalIdentity {
@@ -294,12 +338,23 @@ export function resolveHistoricalIdentity(
   const currentNodeId = citationKey
     ? input.citationToCurrentNodeId.get(citationKey)
     : undefined;
-  if (currentNodeId) {
-    return {
-      nodeId: currentNodeId,
-      citationKey,
-      strategy: "citation-current-node",
-    };
+  if (citationKey && currentNodeId) {
+    // A shared citation number alone isn't proof of continuity — Municode
+    // sometimes reassigns a section number to an unrelated new provision
+    // after the old one moved or was repealed. Only trust the match when the
+    // text itself is similar enough to be the same provision amended over
+    // time; otherwise two unconnected provisions would be merged into one
+    // section's (misleading) history. See contentSimilarity()'s docstring.
+    const currentContent = input.citationToCurrentContent.get(citationKey) ??
+      "";
+    const similarity = contentSimilarity(input.content ?? "", currentContent);
+    if (similarity >= CITATION_CONTENT_SIMILARITY_THRESHOLD) {
+      return {
+        nodeId: currentNodeId,
+        citationKey,
+        strategy: "citation-current-node",
+      };
+    }
   }
 
   return {

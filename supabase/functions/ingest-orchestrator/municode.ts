@@ -110,6 +110,7 @@ import {
   buildCurrentIdentityIndex,
   classifyOrphanRecovery,
   type CurrentIdentityIndex,
+  type CurrentIdentityRow,
   DEFAULT_HISTORICAL_CHAPTER_PREFIXES,
   DEFAULT_HISTORICAL_SUPPLEMENTS,
   EXTENDED_HISTORICAL_CHAPTER_TARGETS,
@@ -394,6 +395,7 @@ async function upsertHistoricalProvision(
     content: plainContent,
     currentNodeIds: ctx.identityIndex.currentNodeIds,
     citationToCurrentNodeId: ctx.identityIndex.citationToCurrentNodeId,
+    citationToCurrentContent: ctx.identityIndex.citationToCurrentContent,
   });
 
   const { data: existing, error: lookupErr } = await db
@@ -838,23 +840,47 @@ function prioritizeHistoricalJobs(
   });
 }
 
+/** PostgREST's default page size; a single unbounded select() silently caps at this many rows. */
+const IDENTITY_INDEX_PAGE_SIZE = 1000;
+
+/**
+ * Loads every is_current=true row for citation-based identity resolution.
+ * Must paginate: PostgREST silently caps an unbounded select() at
+ * IDENTITY_INDEX_PAGE_SIZE rows. The corpus passed 1000 current rows (it's
+ * 3400+ as of this fix), which made a single-page query WITHOUT .range()
+ * non-deterministically drop rows from citationToCurrentNodeId depending on
+ * which page's rows the DB happened to return first — a real citation match
+ * would go missing whenever its current row landed outside that first page,
+ * silently degrading resolveHistoricalIdentity() to the historical-node
+ * fallback instead of the intended citation-current-node match.
+ */
 async function loadCurrentIdentityIndex(): Promise<CurrentIdentityIndex> {
-  const { data: rows, error } = await db
-    .from("ordinance_provisions")
-    .select("municode_node_id, section_title, content")
-    .eq("is_current", true);
-  if (error) {
-    throw new Error(
-      `Current Municode identity index lookup failed: ${error.message}`,
+  const rows: CurrentIdentityRow[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await db
+      .from("ordinance_provisions")
+      .select("municode_node_id, section_title, content")
+      .eq("is_current", true)
+      .order("id")
+      .range(from, from + IDENTITY_INDEX_PAGE_SIZE - 1);
+    if (error) {
+      throw new Error(
+        `Current Municode identity index lookup failed: ${error.message}`,
+      );
+    }
+    if (!data || data.length === 0) break;
+    rows.push(
+      ...data.map((row) => ({
+        municode_node_id: row.municode_node_id as string,
+        section_title: row.section_title as string | null,
+        content: row.content as string | null,
+      })),
     );
+    if (data.length < IDENTITY_INDEX_PAGE_SIZE) break;
+    from += IDENTITY_INDEX_PAGE_SIZE;
   }
-  return buildCurrentIdentityIndex(
-    (rows ?? []).map((row) => ({
-      municode_node_id: row.municode_node_id as string,
-      section_title: row.section_title as string | null,
-      content: row.content as string | null,
-    })),
-  );
+  return buildCurrentIdentityIndex(rows);
 }
 
 async function alignCurrentDocumentDate(
