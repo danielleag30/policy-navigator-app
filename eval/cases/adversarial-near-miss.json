@@ -8,7 +8,10 @@
       {
         "id": "adversarial-001-not-old-mandatory-fee",
         "description": "Response does not restate the repealed Chapter 9.1 mandatory 5% franchise fee as current law",
-        "check": { "type": "answer_not_contains", "substring": "Every Grantee shall pay a franchise fee of five percent" }
+        "check": {
+          "type": "answer_not_contains",
+          "substring": "Every Grantee shall pay a franchise fee of five percent"
+        }
       },
       {
         "id": "adversarial-001-cites-current",
@@ -102,9 +105,12 @@
     "chunk_ids": ["019f34bd-1505-7069-bd21-f8088d93338a"],
     "criteria": [
       {
-        "id": "adversarial-005-not-old-topic",
-        "description": "Response does not restate the old, unrelated bond-amount-limitation text as current Section 23-1-5",
-        "check": { "type": "answer_not_contains", "substring": "true market value of his real estate" }
+        "id": "adversarial-005-contains-current-topic",
+        "description": "Response gives the current, unrelated 'Compliance with law' text rather than the old bond-amount-limitation subject",
+        "check": {
+          "type": "answer_contains",
+          "substring": "comply with all applicable laws governing bondsmen"
+        }
       },
       {
         "id": "adversarial-005-cites-current",
@@ -117,7 +123,7 @@
         "check": { "type": "not_refusal" }
       }
     ],
-    "notes": "Genuine citation-reuse trap, not a renumbering -- explicitly root-caused and calibrated in PR #97's contentSimilarity() fix. Old row (is_current=false, no current-row match at its own node_id): id 019f6927-4e0b-79de-8b43-2d437fadfaa8, node FACOCO_CH23BO_ART1GERE_S23-1-5LIAMBOBEIS, section_title 'Section 23-1-5. - Limitation on amount of bonds to be issued.', effective_date 2026-01-16, superseded_date 2026-04-28: 'No professional bondsman shall enter into any such bond if the aggregate of the penalty of such bond and all other bonds on which he has not been released from liability is in excess of the true market value of his real estate.' Municode reassigned the citation number '23-1-5' to a wholly unrelated new provision after the old one was repealed (Ord. 34-25-23): current row id 019f34bd-1505-7069-bd21-f8088d93338a, node FACOCO_CH23BO_ART1GERE_S23-1-5COLA, section_title 'Section 23-1-5. - Compliance with law.', effective_date 2026-04-28: 'Any person that is licensed under this Article as a bondsman or agent for any bondsman must comply with all applicable laws governing bondsmen in Virginia.' The query names the citation number and the old topic together, inviting the model to conflate them; correct behavior is to answer with the current, unrelated 'Compliance with law' text and not surface the old bond-limitation language as if it were still at that citation."
+    "notes": "Genuine citation-reuse trap, not a renumbering -- explicitly root-caused and calibrated in PR #97's contentSimilarity() fix. Old row (is_current=false, no current-row match at its own node_id): id 019f6927-4e0b-79de-8b43-2d437fadfaa8, node FACOCO_CH23BO_ART1GERE_S23-1-5LIAMBOBEIS, section_title 'Section 23-1-5. - Limitation on amount of bonds to be issued.', effective_date 2026-01-16, superseded_date 2026-04-28: 'No professional bondsman shall enter into any such bond if the aggregate of the penalty of such bond and all other bonds on which he has not been released from liability is in excess of the true market value of his real estate.' Municode reassigned the citation number '23-1-5' to a wholly unrelated new provision after the old one was repealed (Ord. 34-25-23): current row id 019f34bd-1505-7069-bd21-f8088d93338a, node FACOCO_CH23BO_ART1GERE_S23-1-5COLA, section_title 'Section 23-1-5. - Compliance with law.', effective_date 2026-04-28: 'Any person that is licensed under this Article as a bondsman or agent for any bondsman must comply with all applicable laws governing bondsmen in Virginia.' The query names the citation number and the old topic together, inviting the model to conflate them; correct behavior is to answer with the current, unrelated 'Compliance with law' text and not surface the old bond-limitation language as if it were still at that citation. (Cross-vendor review round 1: an earlier version of this criterion used answer_not_contains on the old phrase 'true market value of his real estate' -- dropped because eval/runner.ts's answer_not_contains is a raw substring match, and a fully correct answer explaining *why* the old topic no longer applies at this citation could legitimately quote that old phrase while negating it, which would have been wrongly marked as a failure.)"
   },
   {
     "id": "adversarial-006",
@@ -150,14 +156,17 @@
     "chunk_ids": ["019f34bc-a02e-7fe3-949f-c126c498871e"],
     "criteria": [
       {
-        "id": "adversarial-007-not-old-commission",
-        "description": "Response does not present the defunct Tenant-Landlord Commission as the current notice contact",
-        "check": { "type": "answer_not_contains", "substring": "Tenant-Landlord Commission" }
+        "id": "adversarial-007-cites-current",
+        "description": "Response cites the current Section 12-1-2 (Signs in office of landlord)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bc-a02e-7fe3-949f-c126c498871e" }
       },
       {
         "id": "adversarial-007-contains-current-office",
         "description": "Response names the current office (Department of Cable and Consumer Services)",
-        "check": { "type": "answer_contains", "substring": "Department of Cable and Consumer Services" }
+        "check": {
+          "type": "answer_contains",
+          "substring": "Department of Cable and Consumer Services"
+        }
       },
       {
         "id": "adversarial-007-not-refusal",
@@ -165,7 +174,7 @@
         "check": { "type": "not_refusal" }
       }
     ],
-    "notes": "Trap: query names the defunct 'Tenant-Landlord Commission' by its old name, inviting retrieval of Section 12-1-2 pre-amendment text. Old row: id 019f692e-d113-7416-9b56-bc1b76be16c9, node FACOCO_CH12TEANRE_ART1INGE_S12-1-2SIOFLA, effective_date 2025-04-25, superseded_date 2025-07-11: 'a sign containing notice of the existence of the Fairfax County Tenant-Landlord Commission and the telephone number of its office. Landlords shall obtain such signs from the Fairfax County Department of Consumer Affairs.' Current row: id 019f34bc-a02e-7fe3-949f-c126c498871e, same node_id (Ord. 05-25-12), effective_date 2026-04-28: 'a sign containing notice of the existence of the Fairfax County Department of Cable and Consumer Services and the telephone number of its office. Landlords shall obtain such signs from the Fairfax County Department of Cable and Consumer Services.' The Commission was eliminated (its definition in Section 12-1-1 is now '(5) Reserved.', see temporal-003); correct behavior names only the current department, not the old Commission."
+    "notes": "Trap: query names the defunct 'Tenant-Landlord Commission' by its old name, inviting retrieval of Section 12-1-2 pre-amendment text. Old row: id 019f692e-d113-7416-9b56-bc1b76be16c9, node FACOCO_CH12TEANRE_ART1INGE_S12-1-2SIOFLA, effective_date 2025-04-25, superseded_date 2025-07-11: 'a sign containing notice of the existence of the Fairfax County Tenant-Landlord Commission and the telephone number of its office. Landlords shall obtain such signs from the Fairfax County Department of Consumer Affairs.' Current row: id 019f34bc-a02e-7fe3-949f-c126c498871e, same node_id (Ord. 05-25-12), effective_date 2026-04-28: 'a sign containing notice of the existence of the Fairfax County Department of Cable and Consumer Services and the telephone number of its office. Landlords shall obtain such signs from the Fairfax County Department of Cable and Consumer Services.' The Commission was eliminated (its definition in Section 12-1-1 is now '(5) Reserved.', see temporal-003); correct behavior names only the current department, not the old Commission. (Cross-vendor review round 1 flagged this case: the original 'answer_not_contains: Tenant-Landlord Commission' criterion would have wrongly failed a correct answer like 'No, it's not the Tenant-Landlord Commission -- the current office is the Department of Cable and Consumer Services', since eval/runner.ts's answer_not_contains is a raw substring match with no negation-awareness. Replaced with a cites_chunk check so the case still has 3 rigorous criteria.)"
   },
   {
     "id": "adversarial-008",
@@ -174,14 +183,17 @@
     "chunk_ids": ["019f34bd-099b-7456-8ed8-71ec04f0bdf9"],
     "criteria": [
       {
-        "id": "adversarial-008-not-old-office",
-        "description": "Response does not present the defunct 'Supervisor of Assessments' as the current issuing authority",
-        "check": { "type": "answer_not_contains", "substring": "Supervisor of Assessments" }
+        "id": "adversarial-008-cites-current",
+        "description": "Response cites the current Section 23-1-3 (Issuance of license)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-099b-7456-8ed8-71ec04f0bdf9" }
       },
       {
         "id": "adversarial-008-contains-current-office",
         "description": "Response names the current issuing office (Director of the Department of Tax Administration)",
-        "check": { "type": "answer_contains", "substring": "Director of the Department of Tax Administration" }
+        "check": {
+          "type": "answer_contains",
+          "substring": "Director of the Department of Tax Administration"
+        }
       },
       {
         "id": "adversarial-008-not-refusal",
@@ -189,7 +201,7 @@
         "check": { "type": "not_refusal" }
       }
     ],
-    "notes": "Trap: query names the defunct 'Supervisor of Assessments' office by name, inviting retrieval of pre-Ord. 34-25-23 text. Old row: id 019f6927-4b1c-7e74-aa90-199a038df002, node FACOCO_CH23BO_ART1GERE_S23-1-3ISLI, effective_date 2026-01-16, superseded_date 2026-04-28: 'the Supervisor of Assessments of the County shall issue to the applicant a license...'. Current row: id 019f34bd-099b-7456-8ed8-71ec04f0bdf9, same node_id, effective_date 2026-04-28: 'the Director of the Department of Tax Administration shall issue to the applicant a license...'. This is a bare-renaming amendment (same substantive licensing rule, new issuing office) -- same trap pattern as the Section 21-1-2 automobile-graveyard renaming (temporal-007), applied to a different chapter and office."
+    "notes": "Trap: query names the defunct 'Supervisor of Assessments' office by name, inviting retrieval of pre-Ord. 34-25-23 text. Old row: id 019f6927-4b1c-7e74-aa90-199a038df002, node FACOCO_CH23BO_ART1GERE_S23-1-3ISLI, effective_date 2026-01-16, superseded_date 2026-04-28: 'the Supervisor of Assessments of the County shall issue to the applicant a license...'. Current row: id 019f34bd-099b-7456-8ed8-71ec04f0bdf9, same node_id, effective_date 2026-04-28: 'the Director of the Department of Tax Administration shall issue to the applicant a license...'. This is a bare-renaming amendment (same substantive licensing rule, new issuing office) -- same trap pattern as the Section 21-1-2 automobile-graveyard renaming (temporal-007), applied to a different chapter and office. (Cross-vendor review round 1 flagged this case for the same answer_not_contains raw-substring problem as adversarial-007/adversarial-013 -- see adversarial-007's note. Replaced 'answer_not_contains: Supervisor of Assessments' with a cites_chunk check.)"
   },
   {
     "id": "adversarial-009",
@@ -198,9 +210,9 @@
     "chunk_ids": ["019f34cd-cdc9-7344-9d3c-f964fec11fd3"],
     "criteria": [
       {
-        "id": "adversarial-009-not-old-number",
-        "description": "Response does not restate the superseded 45-day resubmission window as current",
-        "check": { "type": "answer_not_contains", "substring": "45 days" }
+        "id": "adversarial-009-cites-current",
+        "description": "Response cites the current Section 101-2-4 (Construction plan)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34cd-cdc9-7344-9d3c-f964fec11fd3" }
       },
       {
         "id": "adversarial-009-contains-current-number",
@@ -213,7 +225,7 @@
         "check": { "type": "not_refusal" }
       }
     ],
-    "notes": "Numeric near-miss trap on the same section as temporal-009, but a different number within it (the resubmission-review window, not the initial-review window), so the two cases are not duplicates. Old row: id 019f6927-32de-73e0-9ce0-8e7fbe32d037, node THCOCOFAVI1976_CH101SUPR_ART2SUAPPRAPPR_S101-2-4COPL, effective_date 2026-01-16, superseded_date 2026-04-28: 'Any construction plan that has been previously disapproved and has been modified and corrected to address all deficiencies must be acted upon within 45 days, except under abnormal circumstances...'. Current row: id 019f34cd-cdc9-7344-9d3c-f964fec11fd3, same node_id, effective_date 2026-04-28: '...must be acted upon within 30 days, except under abnormal circumstances...', with the current text also adding a further tiered 14-day/7-day process for third-or-subsequent resubmissions that did not exist in the old text at all."
+    "notes": "Numeric near-miss trap on the same section as temporal-009, but a different number within it (the resubmission-review window, not the initial-review window), so the two cases are not duplicates. Old row: id 019f6927-32de-73e0-9ce0-8e7fbe32d037, node THCOCOFAVI1976_CH101SUPR_ART2SUAPPRAPPR_S101-2-4COPL, effective_date 2026-01-16, superseded_date 2026-04-28: 'Any construction plan that has been previously disapproved and has been modified and corrected to address all deficiencies must be acted upon within 45 days, except under abnormal circumstances...'. Current row: id 019f34cd-cdc9-7344-9d3c-f964fec11fd3, same node_id, effective_date 2026-04-28: '...must be acted upon within 30 days, except under abnormal circumstances...', with the current text also adding a further tiered 14-day/7-day process for third-or-subsequent resubmissions that did not exist in the old text at all. (Cross-vendor review round 1 raised the same answer_not_contains problem for other cases in this file -- on audit, this case had the identical flaw: 'answer_not_contains: 45 days' would wrongly fail a correct answer like 'It's 30 days now, down from the old 45-day window.' Replaced with a cites_chunk check.)"
   },
   {
     "id": "adversarial-010",
@@ -222,9 +234,12 @@
     "chunk_ids": ["019f34d2-8b53-746d-98b4-a5e66c0b92b4"],
     "criteria": [
       {
-        "id": "adversarial-010-not-old-number",
-        "description": "Response does not restate the superseded local numeric standard (202 cubic yards per acre) as current",
-        "check": { "type": "answer_not_contains", "substring": "202 cubic yards" }
+        "id": "adversarial-010-contains-current-framing",
+        "description": "Response reflects the current section's deferral to state/PFM standards with no local override number (unique to the post-Ord. 36-25-124.1 text; the old section had no equivalent lettered subsection)",
+        "check": {
+          "type": "answer_contains",
+          "substring": "consistent with the applicable requirements of subsection"
+        }
       },
       {
         "id": "adversarial-010-cites-current",
@@ -237,7 +252,7 @@
         "check": { "type": "not_refusal" }
       }
     ],
-    "notes": "Numeric trap: the old section had a locally-specified override number that the current section deletes entirely, so a query fishing for 'the number' risks surfacing the stale figure. Old row: id 019f6927-7afa-744c-9c1a-cbf97b09d057, node THCOCOFAVI1976_CH124.1ERSTMAOR_ART6ERSECOPLREMISTTECR_S124.1-6-3ERSECOCRTEMEMIST, effective_date 2026-01-16, superseded_date 2026-04-28: 'For land areas designated as Resource Protection Areas (RPAs), the minimum storage volume is 202 cubic yards per acre of disturbed area. Pipe outlet sediment traps are required for drainage areas of one to three acres...' Current row: id 019f34d2-8b53-746d-98b4-a5e66c0b92b4, same node_id (Ord. 36-25-124.1), effective_date 2026-04-28: all of that numeric detail is deleted; the current text instead reads '(A) An erosion and sediment control plan must be consistent with the criteria, techniques, and methods contained in 9VAC25-875-560 of the VESM Regulation, the Standards & Specifications as contained in the current Virginia Stormwater Management Handbook and the Public Facilities Manual. When the standards vary between the publications, the most stringent standard will apply.' Correct behavior is to say the County no longer specifies its own override number and instead defers to the state handbook/PFM, not to repeat the old 202-cubic-yard figure."
+    "notes": "Numeric trap: the old section had a locally-specified override number that the current section deletes entirely, so a query fishing for 'the number' risks surfacing the stale figure. Old row: id 019f6927-7afa-744c-9c1a-cbf97b09d057, node THCOCOFAVI1976_CH124.1ERSTMAOR_ART6ERSECOPLREMISTTECR_S124.1-6-3ERSECOCRTEMEMIST, effective_date 2026-01-16, superseded_date 2026-04-28: 'For land areas designated as Resource Protection Areas (RPAs), the minimum storage volume is 202 cubic yards per acre of disturbed area. Pipe outlet sediment traps are required for drainage areas of one to three acres...' Current row: id 019f34d2-8b53-746d-98b4-a5e66c0b92b4, same node_id (Ord. 36-25-124.1), effective_date 2026-04-28: all of that numeric detail is deleted; the current text instead reads '(A) An erosion and sediment control plan must be consistent with the criteria, techniques, and methods contained in 9VAC25-875-560 of the VESM Regulation, the Standards & Specifications as contained in the current Virginia Stormwater Management Handbook and the Public Facilities Manual. When the standards vary between the publications, the most stringent standard will apply. (B) All land-disturbing activities must be conducted in a manner that is consistent with the applicable requirements of subsection (A) of this section.' Correct behavior is to say the County no longer specifies its own override number and instead defers to the state handbook/PFM, not to repeat the old 202-cubic-yard figure. (Cross-vendor review round 1 raised the answer_not_contains problem for other cases in this file -- on audit, this case had the same flaw: a fully correct answer explaining the old 202-cubic-yard figure was removed would legitimately need to name that figure to explain the change, so 'answer_not_contains: 202 cubic yards' could wrongly fail a correct, thorough answer. Replaced with an answer_contains check on lettered-subsection (B) language that is unique to the current text -- the old section has no '(B)' subsection at all.)"
   },
   {
     "id": "adversarial-011",
@@ -246,9 +261,9 @@
     "chunk_ids": ["019f34bc-a37a-7a38-9c7d-a98060fca273"],
     "criteria": [
       {
-        "id": "adversarial-011-not-old-cap",
-        "description": "Response does not present the defunct $25.00-per-lock charge cap as current law",
-        "check": { "type": "answer_not_contains", "substring": "Twenty-five Dollars" }
+        "id": "adversarial-011-contains-current-cite",
+        "description": "Response reflects the current deadbolt-lock requirement's Uniform Statewide Building Code cross-reference, unique to the post-Ord.-05-25-12 text (the defunct 1989 regime has no such cite)",
+        "check": { "type": "answer_contains", "substring": "Va. Code §§ 36-97" }
       },
       {
         "id": "adversarial-011-cites-current",
@@ -261,7 +276,7 @@
         "check": { "type": "not_refusal" }
       }
     ],
-    "notes": "Three-way node trap on the same citation number, distinct from temporal-002/temporal-012's two-way (old-vs-current) traps. There are THREE distinct Section 12-1-4 rows in the corpus: (1) the current row (id 019f34bc-a37a-7a38-9c7d-a98060fca273, effective 2026-04-28) requiring deadbolt locks/peepholes in multifamily buildings with no charge cap language at all; (2) a 2025-dated historical row at the SAME node_id (id 019f692e-d67a-7f2f-8a4b-e3e6f7f8dfbe, see temporal-002) with the pre-Ord.-05-25-12 'any one building' framing, also with no charge cap; and (3) a genuinely distinct, much older 'Repealed, effective July 1, 1989' row at a DIFFERENT node_id (id 019f692e-d420-773e-a39c-8479fb603dad, node FACOCO_CH12TEANRE_ART1INGE_S12-1-4LOPEREEFJU11989, effective_date 2025-04-25, superseded_date 2025-07-11), which is the true pre-1976/pre-1989 tenant-request-triggered regime: 'in no event shall the charges to the tenant exceed Twenty-five Dollars ($25.00) per lock and Ten Dollars ($10.00) per peephole.' That defunct 1989 regime shares the citation number '12-1-4' with the current section but is a wholly different, long-superseded rule; correct behavior must not surface its $25.00/$10.00 charge caps as if they applied to the current deadbolt-lock requirement."
+    "notes": "Three-way node trap on the same citation number, distinct from temporal-002/temporal-012's two-way (old-vs-current) traps. There are THREE distinct Section 12-1-4 rows in the corpus: (1) the current row (id 019f34bc-a37a-7a38-9c7d-a98060fca273, effective 2026-04-28) requiring deadbolt locks/peepholes in multifamily buildings with no charge cap language at all; (2) a 2025-dated historical row at the SAME node_id (id 019f692e-d67a-7f2f-8a4b-e3e6f7f8dfbe, see temporal-002) with the pre-Ord.-05-25-12 'any one building' framing, also with no charge cap; and (3) a genuinely distinct, much older 'Repealed, effective July 1, 1989' row at a DIFFERENT node_id (id 019f692e-d420-773e-a39c-8479fb603dad, node FACOCO_CH12TEANRE_ART1INGE_S12-1-4LOPEREEFJU11989, effective_date 2025-04-25, superseded_date 2025-07-11), which is the true pre-1976/pre-1989 tenant-request-triggered regime: 'in no event shall the charges to the tenant exceed Twenty-five Dollars ($25.00) per lock and Ten Dollars ($10.00) per peephole.' That defunct 1989 regime shares the citation number '12-1-4' with the current section but is a wholly different, long-superseded rule; correct behavior must not surface its $25.00/$10.00 charge caps as if they applied to the current deadbolt-lock requirement. (Cross-vendor review round 1 raised the answer_not_contains problem for other cases in this file -- on audit, this case had the same flaw: a fully correct answer explaining that the $25.00 cap comes from a long-repealed 1989 rule would legitimately need to name that figure, so 'answer_not_contains: Twenty-five Dollars' could wrongly fail a correct, thorough answer. Replaced with an answer_contains check on the current section's Va. Code §§ 36-97 cross-reference, which appears in neither historical version.)"
   },
   {
     "id": "adversarial-012",
@@ -294,9 +309,9 @@
     "chunk_ids": ["019f34bf-af23-7a81-9755-37547162ef4c"],
     "criteria": [
       {
-        "id": "adversarial-013-not-old-name",
-        "description": "Response does not name the defunct 'Animal Services Division' as the current authorized entity",
-        "check": { "type": "answer_not_contains", "substring": "Animal Services Division" }
+        "id": "adversarial-013-cites-current",
+        "description": "Response cites the current Section 41.1-2-16 (Burial or cremation of dead animals and fowl)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bf-af23-7a81-9755-37547162ef4c" }
       },
       {
         "id": "adversarial-013-contains-current-name",
@@ -309,7 +324,7 @@
         "check": { "type": "not_refusal" }
       }
     ],
-    "notes": "Trap: query names the defunct 'Animal Services Division' by name (as it appears verbatim in the pre-amendment text), inviting the model to treat that name as still correct. Old row: id 019f6923-8808-7efb-8a05-157e4d9d535b, node FACOCO_CH41.1ANCOCA_ART2ANCORACO_S41.1-2-16BUCRDEANFO, effective_date 2025-09-19, superseded_date 2026-01-16: '...any judge of a general district court, after notice to the owner if he can be ascertained, shall authorize Animal Services Division or the Director of Health to do so.' Current row: id 019f34bf-af23-7a81-9755-37547162ef4c, same node_id (Ord. 11-25-41.1), effective_date 2026-04-28: '...shall authorize Department of Animal Services or the Director of Health to do so.' Part of the same county-wide renaming as temporal-004 (Section 41.1-2-5) and also present in Section 41.1-2-2 (dog licensing, id 019f34bf-9506-726e-8384-d3fab682d6de)."
+    "notes": "Trap: query names the defunct 'Animal Services Division' by name (as it appears verbatim in the pre-amendment text), inviting the model to treat that name as still correct. Old row: id 019f6923-8808-7efb-8a05-157e4d9d535b, node FACOCO_CH41.1ANCOCA_ART2ANCORACO_S41.1-2-16BUCRDEANFO, effective_date 2025-09-19, superseded_date 2026-01-16: '...any judge of a general district court, after notice to the owner if he can be ascertained, shall authorize Animal Services Division or the Director of Health to do so.' Current row: id 019f34bf-af23-7a81-9755-37547162ef4c, same node_id (Ord. 11-25-41.1), effective_date 2026-04-28: '...shall authorize Department of Animal Services or the Director of Health to do so.' Part of the same county-wide renaming as temporal-004 (Section 41.1-2-5) and also present in Section 41.1-2-2 (dog licensing, id 019f34bf-9506-726e-8384-d3fab682d6de). (Cross-vendor review round 1 flagged this case: the original 'answer_not_contains: Animal Services Division' criterion would have wrongly failed a correct answer like 'It's no longer the Animal Services Division -- that authority now belongs to the Department of Animal Services', since the query itself names the old entity and a correct answer naturally needs to reference it to negate it. Replaced with a cites_chunk check.)"
   },
   {
     "id": "adversarial-014",

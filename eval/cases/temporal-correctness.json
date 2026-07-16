@@ -61,7 +61,10 @@
       {
         "id": "temporal-003-contains-current-office",
         "description": "Answer names the current office (Department of Cable and Consumer Services), not the defunct Commission",
-        "check": { "type": "answer_contains", "substring": "Department of Cable and Consumer Services" }
+        "check": {
+          "type": "answer_contains",
+          "substring": "Department of Cable and Consumer Services"
+        }
       },
       {
         "id": "temporal-003-temporal-flag",
@@ -157,7 +160,10 @@
       {
         "id": "temporal-007-contains-current-office",
         "description": "Answer names the current issuing office (Director of the Department of Tax Administration)",
-        "check": { "type": "answer_contains", "substring": "Director of the Department of Tax Administration" }
+        "check": {
+          "type": "answer_contains",
+          "substring": "Director of the Department of Tax Administration"
+        }
       },
       {
         "id": "temporal-007-not-refusal",
@@ -181,7 +187,10 @@
       {
         "id": "temporal-008-contains-dcjs",
         "description": "Answer states the current requirement of a state DCJS bail bondsman license",
-        "check": { "type": "answer_contains", "substring": "Virginia Department of Criminal Justice Services" }
+        "check": {
+          "type": "answer_contains",
+          "substring": "Virginia Department of Criminal Justice Services"
+        }
       },
       {
         "id": "temporal-008-not-refusal",
@@ -253,7 +262,10 @@
       {
         "id": "temporal-011-contains-definition",
         "description": "Answer quotes or paraphrases the new 'Adaptation measure' definition",
-        "check": { "type": "answer_contains", "substring": "Adaptation measure means a project, practice, or approach" }
+        "check": {
+          "type": "answer_contains",
+          "substring": "Adaptation measure means a project, practice, or approach"
+        }
       },
       {
         "id": "temporal-011-temporal-flag",
