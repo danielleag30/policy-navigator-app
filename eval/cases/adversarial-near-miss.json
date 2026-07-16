@@ -1,0 +1,98 @@
+[
+  {
+    "id": "adversarial-001",
+    "category": "adversarial_near_miss",
+    "query": "What cable TV franchise fee requirements were established under Fairfax County Code Chapter 9.1?",
+    "chunk_ids": ["019f34bb-93d4-7b06-9ff9-c9dc84103b87"],
+    "criteria": [
+      {
+        "id": "adversarial-001-not-old-mandatory-fee",
+        "description": "Response does not restate the repealed Chapter 9.1 mandatory 5% franchise fee as current law",
+        "check": { "type": "answer_not_contains", "substring": "Every Grantee shall pay a franchise fee of five percent" }
+      },
+      {
+        "id": "adversarial-001-cites-current",
+        "description": "Response cites the current Chapter 9.2 payments-by-grantees section",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bb-93d4-7b06-9ff9-c9dc84103b87" }
+      },
+      {
+        "id": "adversarial-001-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Trap: query names the repealed Chapter 9.1 by number, inviting retrieval of Section 9.1-5-8 'Franchise fee' (chunk 019f4c15-8a79-78b1-82e9-02ebb8d84c35, is_current=false, real 2019-09-11 text: 'Every Grantee shall pay a franchise fee of five percent of Gross revenues'). Verified the current answer is not just a renumbering but a substantive change: current Section 9.2-7-1 'Payments by grantees' (real, verified) makes the franchise fee conditional on state law ('If at any time state law allows the imposition of a franchise fee on cable operators in Virginia, the County may... require... a franchise fee of five percent'), reflecting that Virginia's Communications Sales and Use Tax now applies instead of a flat mandatory fee. Correct answer should describe the current conditional structure and note Chapter 9.1 was repealed/replaced, not restate the old mandatory language as if still in force."
+  },
+  {
+    "id": "adversarial-002",
+    "category": "adversarial_near_miss",
+    "query": "Are there any current regulations for massage establishments in Fairfax County Code?",
+    "chunk_ids": ["019f34bd-2f3e-73f4-90c7-80292c14bd2e"],
+    "criteria": [
+      {
+        "id": "adversarial-002-repealed",
+        "description": "Response states Chapter 28 was repealed and no current massage-establishment regulation exists",
+        "check": { "type": "answer_contains", "substring": "08-00-28" }
+      },
+      {
+        "id": "adversarial-002-cites",
+        "description": "Response cites the Chapter 28 reserved/repealed note",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-2f3e-73f4-90c7-80292c14bd2e" }
+      },
+      {
+        "id": "adversarial-002-not-refusal",
+        "description": "Response gives the substantive repeal answer rather than a blanket refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 28 (massage establishments) was repealed by Ord. No. 08-00-28, adopted Feb. 7, 2000; current chapter-level row reads 'CHAPTER 28. - Reserved' with editor's note confirming repeal (real, verified). No distinct pre-repeal Chapter 28 text exists anywhere in the ingested corpus (the repeal predates any ingested supplement), so the trap here is not a wrong-version chunk but the pipeline fabricating or implying active massage-establishment rules where none exist; correct behavior is to state the chapter is repealed."
+  },
+  {
+    "id": "adversarial-003",
+    "category": "adversarial_near_miss",
+    "query": "Does Fairfax County Code still regulate real estate salesmen under Chapter 29?",
+    "chunk_ids": ["019f34bd-772d-7b8b-aef2-36ed40512ce5"],
+    "criteria": [
+      {
+        "id": "adversarial-003-repealed",
+        "description": "Response states Chapter 29 was repealed",
+        "check": { "type": "answer_contains", "substring": "31-77-29" }
+      },
+      {
+        "id": "adversarial-003-cites",
+        "description": "Response cites the Chapter 29 repealed note",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-772d-7b8b-aef2-36ed40512ce5" }
+      },
+      {
+        "id": "adversarial-003-not-refusal",
+        "description": "Response gives the substantive repeal answer rather than a blanket refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Chapter 29 (Real Estate Salesman) was repealed by Ord. 31-77-29; current row reads 'CHAPTER 29. - Real Estate Salesman. Footnotes: Editor's Note—Chap. 29 Repealed (31-77-29).' Real, verified. Trap: query implies the chapter might still be active; correct behavior is to state it was repealed, not fabricate current salesman-licensing rules."
+  },
+  {
+    "id": "adversarial-004",
+    "category": "adversarial_near_miss",
+    "query": "What communications regulations were in Chapter 9 of the Fairfax County Code before 2020?",
+    "chunk_ids": ["019f34bb-4b6f-75a1-a142-749a6cdd7940"],
+    "criteria": [
+      {
+        "id": "adversarial-004-flags-repeal",
+        "description": "Answer notes Chapter 9.1 (Communications) was repealed and replaced by Chapter 9.2 (Cable Television) effective January 1, 2020, rather than presenting pre-2020 Chapter 9.1 text as currently governing",
+        "check": { "type": "answer_contains", "substring": "January 1, 2020" }
+      },
+      {
+        "id": "adversarial-004-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      },
+      {
+        "id": "adversarial-004-temporal-flag",
+        "description": "Response flags the temporal/version distinction",
+        "check": { "type": "temporal_flag" }
+      }
+    ],
+    "notes": "Real: Chapter 9.1 (Communications) is_current=false, 52 real sections dated 2019-09-11; fully repealed with zero is_current=true rows for FACOCO_CH9.1CO (verified). Replaced by Chapter 9.2 (Cable Television), current, effective Jan 1 2020 per editor's note on the current chapter-level row. Trap: 'before 2020' framing invites retrieval of genuine old Chapter 9.1 text (e.g. Section 9.1-3-1 'Requirement of a Franchise', chunk 019f4c15-1571-7623-b778-e09762462260) as if it answers a present-tense question; correct handling should surface the historical Chapter 9.1 content while clearly flagging that it was superseded by Chapter 9.2."
+  }
+]

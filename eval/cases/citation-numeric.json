@@ -531,5 +531,293 @@
       }
     ],
     "notes": "Section (K) 'Repairs and Alterations' (fees for repairs/alterations with no addition or enlargement): 'For residential work (R-3, R-4 and R-5 construction) roof repairs, new roof structures, re-siding: ... 3.00%' — distinct from Section (D) 'New Structure' accessory-structure fee (citation-num-006), which also happens to be 3.00% but is a separate line item on the same fee schedule. Found on re-verification after an initial pass missed this section; query scoped to 'repairs and alterations' language to avoid conflating the two."
+  },
+  {
+    "id": "citation-num-023",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the minimum lot area in square feet for a single-family detached home in an R-1 zoning district in Fairfax County?",
+    "chunk_ids": ["019f4c47-9d9a-7b7b-8558-506930861557"],
+    "criteria": [
+      {
+        "id": "citation-num-023-cites",
+        "description": "Response cites the encode:2232 (2102 Residential Zoning Districts) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c47-9d9a-7b7b-8558-506930861557" }
+      },
+      {
+        "id": "citation-num-023-contains-area",
+        "description": "Answer includes the R-1 conventional minimum lot area",
+        "check": { "type": "answer_contains", "substring": "36,000 square feet" }
+      },
+      {
+        "id": "citation-num-023-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Source: Fairfax County Zoning Ordinance (Chapter 112.2, EnCode ingestion), Table 2102.4: R-1 Lot and Building Standards. Real minimum lot area is 36,000 sq ft (conventional subdivision) / 25,000 sq ft (cluster subdivision) — corrects the 2026-06-25 domain-knowledge doc's unverified guess of ~43,560 sq ft (1 acre)."
+  },
+  {
+    "id": "citation-num-024",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the minimum lot width in feet for an R-2 residential district in Fairfax County?",
+    "chunk_ids": ["019f4c47-9d9a-7b7b-8558-506930861557"],
+    "criteria": [
+      {
+        "id": "citation-num-024-cites",
+        "description": "Response cites the encode:2232 (2102 Residential Zoning Districts) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c47-9d9a-7b7b-8558-506930861557" }
+      },
+      {
+        "id": "citation-num-024-contains-width",
+        "description": "Answer includes the R-2 conventional interior-lot minimum width",
+        "check": { "type": "answer_contains", "substring": "100 feet" }
+      },
+      {
+        "id": "citation-num-024-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Source: Table 2102.5: R-2 Lot and Building Standards. Real minimum lot width is 100 feet (interior, conventional) / 125 feet (corner, conventional)."
+  },
+  {
+    "id": "citation-num-025",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the maximum building height in feet for residential structures in an R-3 district?",
+    "chunk_ids": ["019f4c47-9d9a-7b7b-8558-506930861557"],
+    "criteria": [
+      {
+        "id": "citation-num-025-cites",
+        "description": "Response cites the encode:2232 (2102 Residential Zoning Districts) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c47-9d9a-7b7b-8558-506930861557" }
+      },
+      {
+        "id": "citation-num-025-contains-height",
+        "description": "Answer includes the R-3 single-family maximum building height",
+        "check": { "type": "answer_contains", "substring": "35 feet" }
+      },
+      {
+        "id": "citation-num-025-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Source: Table 2102.7: R-3 Lot and Building Standards. Real maximum building height is 35 feet for single-family dwellings / 60 feet for other principal uses."
+  },
+  {
+    "id": "citation-num-026",
+    "category": "citation_accuracy_numeric",
+    "query": "What minimum front yard setback in feet applies to principal structures in an R-1 district?",
+    "chunk_ids": ["019f4c47-9d9a-7b7b-8558-506930861557"],
+    "criteria": [
+      {
+        "id": "citation-num-026-cites",
+        "description": "Response cites the encode:2232 (2102 Residential Zoning Districts) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c47-9d9a-7b7b-8558-506930861557" }
+      },
+      {
+        "id": "citation-num-026-contains-setback",
+        "description": "Answer includes the R-1 conventional minimum front setback",
+        "check": { "type": "answer_contains", "substring": "40 feet" }
+      },
+      {
+        "id": "citation-num-026-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Source: Table 2102.4: R-1 Lot and Building Standards. Real minimum front setback is 40 feet (single-family, conventional) / 30 feet (cluster)."
+  },
+  {
+    "id": "citation-num-027",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the minimum side yard setback in feet required for a single-family dwelling in an R-1 residential district in Fairfax County?",
+    "chunk_ids": ["019f4c47-9d9a-7b7b-8558-506930861557"],
+    "criteria": [
+      {
+        "id": "citation-num-027-cites",
+        "description": "Response cites the encode:2232 (2102 Residential Zoning Districts) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c47-9d9a-7b7b-8558-506930861557" }
+      },
+      {
+        "id": "citation-num-027-contains-setback",
+        "description": "Answer includes the R-1 conventional minimum side setback",
+        "check": { "type": "answer_contains", "substring": "20 feet" }
+      },
+      {
+        "id": "citation-num-027-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Source: Table 2102.4: R-1 Lot and Building Standards. Real minimum side setback is 20 feet (single-family, conventional). Query narrowed from the original generic 'a residential district' framing to R-1 specifically, since side setback varies by district (R-1: 20 ft; R-2: 15 ft; R-3: 12 ft)."
+  },
+  {
+    "id": "citation-num-028",
+    "category": "citation_accuracy_numeric",
+    "query": "What maximum floor area ratio (FAR) applies to development in a C-2 commercial district in Fairfax County?",
+    "chunk_ids": ["019f4c47-cb78-705c-a3b6-cc3b87cbd73f"],
+    "criteria": [
+      {
+        "id": "citation-num-028-cites",
+        "description": "Response cites the encode:2233 (2103 Commercial Zoning Districts) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c47-cb78-705c-a3b6-cc3b87cbd73f" }
+      },
+      {
+        "id": "citation-num-028-contains-far",
+        "description": "Answer includes the C-2 maximum FAR",
+        "check": { "type": "answer_contains", "substring": "0.50" }
+      },
+      {
+        "id": "citation-num-028-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Source: Table 2103.2: C-2 Lot and Building Standards. Real maximum FAR is 0.50."
+  },
+  {
+    "id": "citation-num-029",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the minimum percentage of open space required in a PDH-2 Planned Development Housing District in Fairfax County?",
+    "chunk_ids": ["019f4c47-fdb3-7a49-8b76-efdd233eb616"],
+    "criteria": [
+      {
+        "id": "citation-num-029-cites",
+        "description": "Response cites the encode:2513 (2105.2 PDH Planned Development Housing District) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c47-fdb3-7a49-8b76-efdd233eb616" }
+      },
+      {
+        "id": "citation-num-029-contains-pct",
+        "description": "Answer includes the PDH-2 minimum open space percentage",
+        "check": { "type": "answer_contains", "substring": "20" }
+      },
+      {
+        "id": "citation-num-029-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Source: Table 2105.2: PDH Minimum Open Space. Corrects the original doc's generic 'planned development' framing: Fairfax's Zoning Ordinance sets open space minimums tiered by PDH subdistrict density (PDH-1: 25%, PDH-2/3/4: 20%, PDH-5: 35%, PDH-8: 25%, PDH-12: 30%, PDH-16/20: 35%, PDH-30: 45%, PDH-40: 35%), not a single flat percentage. PDH-2 (20%) used as the representative, citable value; query narrowed accordingly."
+  },
+  {
+    "id": "citation-num-030",
+    "category": "citation_accuracy_numeric",
+    "query": "How many parking spaces are required per 1,000 square feet of general retail floor area under Fairfax County zoning?",
+    "chunk_ids": ["019f4c4e-2bf7-7c48-baec-97cf8c82a80a"],
+    "criteria": [
+      {
+        "id": "citation-num-030-cites",
+        "description": "Response cites the encode:2257 (6100 Off-Street Parking) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c4e-2bf7-7c48-baec-97cf8c82a80a" }
+      },
+      {
+        "id": "citation-num-030-contains-ratio",
+        "description": "Answer includes the retail parking ratio",
+        "check": { "type": "answer_contains", "substring": "4 spaces per 1,000 square feet" }
+      },
+      {
+        "id": "citation-num-030-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Source: Section 6100 Off-Street Parking, use-specific parking table, 'Retail Sales, General' row: '4 spaces per 1,000 square feet of gross floor area.'"
+  },
+  {
+    "id": "citation-num-031",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the maximum square footage allowed for an accessory living unit in Fairfax County?",
+    "chunk_ids": ["019f4c4c-7e79-7815-a2c0-a64f421fd20d"],
+    "criteria": [
+      {
+        "id": "citation-num-031-cites",
+        "description": "Response cites the encode:2872 (4102.7.B Accessory Living Unit) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c4c-7e79-7815-a2c0-a64f421fd20d" }
+      },
+      {
+        "id": "citation-num-031-contains-size",
+        "description": "Answer includes the interior accessory living unit maximum size",
+        "check": { "type": "answer_contains", "substring": "800 square feet" }
+      },
+      {
+        "id": "citation-num-031-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Source: Subsection 4102.7.B, Accessory Living Unit standards. Real max is 800 sq ft gross floor area or 40% of the principal dwelling's gross floor area (whichever is less) for an interior unit; 1,200 sq ft for a detached unit. Fairfax's Zoning Ordinance uses the term 'Accessory Living Unit,' not 'Accessory Dwelling Unit' — corrects the original doc's ADU terminology."
+  },
+  {
+    "id": "citation-num-032",
+    "category": "citation_accuracy_numeric",
+    "query": "What minimum lot size is required before a detached accessory living unit may be permitted by special permit in Fairfax County?",
+    "chunk_ids": ["019f4c4c-7e79-7815-a2c0-a64f421fd20d"],
+    "criteria": [
+      {
+        "id": "citation-num-032-cites",
+        "description": "Response cites the encode:2872 (4102.7.B Accessory Living Unit) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c4c-7e79-7815-a2c0-a64f421fd20d" }
+      },
+      {
+        "id": "citation-num-032-contains-acreage",
+        "description": "Answer includes the two-acre minimum for a detached accessory living unit",
+        "check": { "type": "answer_contains", "substring": "two acres" }
+      },
+      {
+        "id": "citation-num-032-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Corrects the original doc's framing: there is no general minimum lot size for a standard interior accessory living unit. A 2-acre minimum lot size applies only when the BZA approves a special permit to allow a freestanding/detached accessory living unit (subsection 4102.7.B(15)(a))."
+  },
+  {
+    "id": "citation-num-033",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the maximum height in feet for a freestanding sign in a commercial district in Fairfax County?",
+    "chunk_ids": ["019f4c4e-8d72-7b95-8270-517a8d1fd0be"],
+    "criteria": [
+      {
+        "id": "citation-num-033-cites",
+        "description": "Response cites the encode:2262 (7101 Sign Regulations by Use and District) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c4e-8d72-7b95-8270-517a8d1fd0be" }
+      },
+      {
+        "id": "citation-num-033-contains-height",
+        "description": "Answer includes the general commercial freestanding sign height cap",
+        "check": { "type": "answer_contains", "substring": "20 feet" }
+      },
+      {
+        "id": "citation-num-033-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Source: Subsection 7101.3.A(2)(a): a single freestanding sign for a building with frontage on a major thoroughfare may not exceed 80 sq ft in area or 20 feet in height. Other freestanding-sign caps exist for shopping centers, office/industrial complexes, and Sign Control Overlay Districts; this is the general commercial standard."
+  },
+  {
+    "id": "citation-num-034",
+    "category": "citation_accuracy_numeric",
+    "query": "What is the maximum sign area in square feet for a building-mounted commercial sign under Fairfax County regulations?",
+    "chunk_ids": ["019f4c4e-8d72-7b95-8270-517a8d1fd0be"],
+    "criteria": [
+      {
+        "id": "citation-num-034-cites",
+        "description": "Response cites the encode:2262 (7101 Sign Regulations by Use and District) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c4e-8d72-7b95-8270-517a8d1fd0be" }
+      },
+      {
+        "id": "citation-num-034-contains-area",
+        "description": "Answer includes the single-sign area cap",
+        "check": { "type": "answer_contains", "substring": "200 square feet" }
+      },
+      {
+        "id": "citation-num-034-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Source: Subsection 7101.3.A(1)(a): building-mounted signs in commercial/industrial districts are limited to 1.5 sq ft per linear foot of building frontage; 'No single sign may exceed 200 square feet in area.'"
   }
 ]

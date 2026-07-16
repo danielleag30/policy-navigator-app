@@ -1156,5 +1156,245 @@
       }
     ],
     "notes": "District established to protect the residential area near Madison High School from pollution, noise, and commuter parking impacts."
+  },
+  {
+    "id": "citation-hist-074",
+    "category": "citation_accuracy_textual",
+    "query": "What is the definition of 'principal structure' under the Fairfax County Zoning Ordinance?",
+    "chunk_ids": ["019f4c4f-c4ba-7e9d-a017-7e6a7c5f2d2a"],
+    "criteria": [
+      {
+        "id": "citation-hist-074-cites",
+        "description": "Response cites the encode:2301 (Building, Principal) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c4f-c4ba-7e9d-a017-7e6a7c5f2d2a" }
+      },
+      {
+        "id": "citation-hist-074-contains-def",
+        "description": "Answer includes the substance of the definition",
+        "check": { "type": "answer_contains", "substring": "primary use of the lot is conducted" }
+      },
+      {
+        "id": "citation-hist-074-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Fairfax's Zoning Ordinance (Article 9, Definitions) defines 'Building, Principal' rather than a separate 'Principal Structure' term: 'A building in which the primary use of the lot is conducted.' 'Structure' is defined separately and generically ('That which is built or constructed'). Real, verified against encode_zoning glossary."
+  },
+  {
+    "id": "citation-hist-075",
+    "category": "citation_accuracy_textual",
+    "query": "How does the Fairfax County Code define 'nonconforming use'?",
+    "chunk_ids": ["019f4c50-cee4-742d-a63d-f9f01a4e87e1"],
+    "criteria": [
+      {
+        "id": "citation-hist-075-cites",
+        "description": "Response cites the encode:2365 (Nonconforming Building or Use) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c50-cee4-742d-a63d-f9f01a4e87e1" }
+      },
+      {
+        "id": "citation-hist-075-contains-def",
+        "description": "Answer includes the substance of the definition",
+        "check": { "type": "answer_contains", "substring": "lawfully existing on the effective date" }
+      },
+      {
+        "id": "citation-hist-075-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Article 9 defines 'Nonconforming Building or Use': 'A building or use, lawfully existing on the effective date of this Ordinance or prior ordinances, that does not conform with the regulations of the zoning district in which it is located, except as may be qualified by Section 8104.' Real, verified."
+  },
+  {
+    "id": "citation-hist-076",
+    "category": "citation_accuracy_textual",
+    "query": "What is a 'home occupation' as defined in the Fairfax County Zoning Ordinance?",
+    "chunk_ids": ["019f4c55-e215-76df-9be8-ccabd0a90b9e"],
+    "criteria": [
+      {
+        "id": "citation-hist-076-cites",
+        "description": "Response cites the encode:2746 (Home-Based Business) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c55-e215-76df-9be8-ccabd0a90b9e" }
+      },
+      {
+        "id": "citation-hist-076-contains-def",
+        "description": "Answer includes the substance of the definition",
+        "check": { "type": "answer_contains", "substring": "incidental and subordinate to the residential purpose" }
+      },
+      {
+        "id": "citation-hist-076-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "The current Fairfax Zoning Ordinance uses the term 'Home-Based Business,' not 'Home Occupation': 'An occupation, profession, or trade, that is conducted by a resident of the dwelling unit and is clearly incidental and subordinate to the residential purpose of the dwelling unit.' Real, verified; corrects the original doc's terminology."
+  },
+  {
+    "id": "citation-hist-077",
+    "category": "citation_accuracy_textual",
+    "query": "How does the Fairfax County Zoning Ordinance define 'accessory dwelling unit'?",
+    "chunk_ids": ["019f4c55-bde8-76d8-92b5-6f1c1ab98a72"],
+    "criteria": [
+      {
+        "id": "citation-hist-077-cites",
+        "description": "Response cites the encode:2735 (Accessory Living Unit) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c55-bde8-76d8-92b5-6f1c1ab98a72" }
+      },
+      {
+        "id": "citation-hist-077-contains-def",
+        "description": "Answer includes the substance of the definition",
+        "check": { "type": "answer_contains", "substring": "secondary dwelling unit" }
+      },
+      {
+        "id": "citation-hist-077-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Fairfax's Zoning Ordinance defines 'Accessory Living Unit,' not 'Accessory Dwelling Unit': 'A secondary dwelling unit established in conjunction with and clearly subordinate to a single-family detached dwelling unit.' Real, verified; corrects the original doc's terminology (there is no 'ADU' term in this ordinance)."
+  },
+  {
+    "id": "citation-hist-078",
+    "category": "citation_accuracy_textual",
+    "query": "What is a 'planned development' under the Fairfax County Zoning Ordinance?",
+    "chunk_ids": ["019f4c52-9945-733f-89e4-b49b1b027926"],
+    "criteria": [
+      {
+        "id": "citation-hist-078-cites",
+        "description": "Response cites the encode:2379 (Planned Development) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c52-9945-733f-89e4-b49b1b027926" }
+      },
+      {
+        "id": "citation-hist-078-contains-def",
+        "description": "Answer includes the substance of the definition",
+        "check": { "type": "answer_contains", "substring": "classified as a Planned" }
+      },
+      {
+        "id": "citation-hist-078-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Article 9: 'Planned Development: Any lot under one ownership intended to be developed as a single entity and classified as a Planned (P) district.' Real, verified."
+  },
+  {
+    "id": "citation-hist-079",
+    "category": "citation_accuracy_textual",
+    "query": "What process must a property owner follow to appeal a zoning determination to the Fairfax County Board of Zoning Appeals?",
+    "chunk_ids": ["019f4c4e-e8c0-717d-a2be-d5010ce571d1"],
+    "criteria": [
+      {
+        "id": "citation-hist-079-cites",
+        "description": "Response cites the encode:2589 (8100.10 Appeals) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c4e-e8c0-717d-a2be-d5010ce571d1" }
+      },
+      {
+        "id": "citation-hist-079-contains-term",
+        "description": "Answer references who may bring an appeal",
+        "check": { "type": "answer_contains", "substring": "aggrieved" }
+      },
+      {
+        "id": "citation-hist-079-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Subsection 8100.10.A: an appeal to the BZA may be taken by any person aggrieved, or by any officer/department/board/commission/authority of the County affected by a decision of the Zoning Administrator or other administrative officer, after submitting materials per Section 8101. Real, verified."
+  },
+  {
+    "id": "citation-hist-080",
+    "category": "citation_accuracy_textual",
+    "query": "What are the required contents of a rezoning application in Fairfax County?",
+    "chunk_ids": ["019f4c4e-f2a6-7325-a3a0-32c4132eae63"],
+    "criteria": [
+      {
+        "id": "citation-hist-080-cites",
+        "description": "Response cites the encode:2998 (8101.2 Zoning Map Amendments (Rezonings)) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c4e-f2a6-7325-a3a0-32c4132eae63" }
+      },
+      {
+        "id": "citation-hist-080-contains-term",
+        "description": "Answer references the certified plat requirement",
+        "check": { "type": "answer_contains", "substring": "certified plat" }
+      },
+      {
+        "id": "citation-hist-080-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Subsection 8101.2.A requires a certified plat of the property (boundaries, area, zoning districts, existing structures, roads, etc.) for any rezoning application. Real, verified."
+  },
+  {
+    "id": "citation-hist-081",
+    "category": "citation_accuracy_textual",
+    "query": "What is the variance application procedure before the Fairfax County Board of Zoning Appeals?",
+    "chunk_ids": ["019f4c4e-cba3-7e7f-9891-485996b5a679"],
+    "criteria": [
+      {
+        "id": "citation-hist-081-cites",
+        "description": "Response cites the encode:2585 (8100.6 Variances) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c4e-cba3-7e7f-9891-485996b5a679" }
+      },
+      {
+        "id": "citation-hist-081-contains-term",
+        "description": "Answer references the public hearing requirement",
+        "check": { "type": "answer_contains", "substring": "public hearing" }
+      },
+      {
+        "id": "citation-hist-081-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Subsection 8100.6: a property owner, tenant, government official, or other listed party may apply to the BZA for a variance; a public hearing must be held before one is granted, requiring the concurring vote of four BZA members. Real, verified."
+  },
+  {
+    "id": "citation-hist-082",
+    "category": "citation_accuracy_textual",
+    "query": "What home-based business activities are prohibited under Fairfax County home occupation regulations?",
+    "chunk_ids": ["019f4c4c-a1bf-7680-8c84-b79a23bdbfb1"],
+    "criteria": [
+      {
+        "id": "citation-hist-082-cites",
+        "description": "Response cites the encode:2878 (4102.7.H Home-Based Business) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c4c-a1bf-7680-8c84-b79a23bdbfb1" }
+      },
+      {
+        "id": "citation-hist-082-contains-term",
+        "description": "Answer references the outdoor display/storage prohibition",
+        "check": { "type": "answer_contains", "substring": "Outside display or storage" }
+      },
+      {
+        "id": "citation-hist-082-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Subsection 4102.7.H(4): 'Outside display or storage of goods, equipment, or materials used in connection with the home-based business is not allowed.' Other real restrictions in the same chunk: no exterior evidence of nonresidential use, no signage beyond permitted yard signs, on-site customers barred without a special permit (with narrow exceptions), total area capped at 400 sq ft. Real, verified; uses Fairfax's actual 'Home-Based Business' terminology."
+  },
+  {
+    "id": "citation-hist-083",
+    "category": "citation_accuracy_textual",
+    "query": "What restrictions does Fairfax County Code place on outdoor storage in residential zoning districts?",
+    "chunk_ids": ["019f4c4c-fefc-738e-aed8-d6b6c334c865"],
+    "criteria": [
+      {
+        "id": "citation-hist-083-cites",
+        "description": "Response cites the encode:2945 (4102.8.H Portable Storage Container) chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c4c-fefc-738e-aed8-d6b6c334c865" }
+      },
+      {
+        "id": "citation-hist-083-contains-term",
+        "description": "Answer references the time-limit restriction",
+        "check": { "type": "answer_contains", "substring": "30 consecutive days" }
+      },
+      {
+        "id": "citation-hist-083-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "The closest real match to the original doc's generic 'outdoor storage' framing is the 'Portable Storage Container' accessory-use standard (subsection 4102.8.H): on a lot of 36,000 sq ft or less with a single-family detached dwelling, a portable storage container is limited to 30 consecutive days within a six-month period (60 days on larger lots; 7 days for attached/stacked-townhouse/multifamily lots), max height 8.5 feet, max 130 sq ft gross floor area per dwelling unit. There is no separately named, general-purpose 'outdoor storage of goods' restriction for residential lots beyond this and the home-based-business-specific prohibition (citation-hist-082)."
   }
 ]
