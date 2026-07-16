@@ -1,0 +1,26 @@
+[
+  {
+    "id": "temporal-001",
+    "category": "temporal_correctness",
+    "query": "What regulations govern cable television franchise agreements in Fairfax County?",
+    "chunk_ids": ["019f34bb-569d-7bbd-9876-bfaa630d745c", "019f34bb-93d4-7b06-9ff9-c9dc84103b87"],
+    "criteria": [
+      {
+        "id": "temporal-001-cites",
+        "description": "Response cites the current Chapter 9.2 franchise-requirement section (Sec. 9.2-3-1)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34bb-569d-7bbd-9876-bfaa630d745c" }
+      },
+      {
+        "id": "temporal-001-contains-chapter",
+        "description": "Answer references Chapter 9.2",
+        "check": { "type": "answer_contains", "substring": "Chapter 9.2" }
+      },
+      {
+        "id": "temporal-001-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Real amendment, verified against live is_current=false/true rows: Chapter 9.1 (Communications) is_current=false, 52 real sections dated 2019-09-11, was repealed and replaced by Chapter 9.2 (Cable Television) via Ord. 35-19-9.2, effective January 1, 2020. Confirmed Chapter 9.1 has zero active regulatory sections in the current corpus (its only is_current=true row, FACOCO_CH9.1CORE35-19-9.2 / chunk 019f34bb-4793-71c6-be30-1194495faa43, is a repealed-chapter marker containing only the editor's note, not regulatory text) and Chapter 9.2's content differs genuinely from Chapter 9.1 (distinct section numbering/structure), not a byte-identical duplicate. Wrong-version trap: retrieving Section 9.1-3-1 'Requirement of a Franchise' (chunk 019f4c15-1571-7623-b778-e09762462260, is_current=false, real 2019-09-11 text) or other pre-2020 Chapter 9.1 text as if it were still governing law."
+  }
+]
