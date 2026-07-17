@@ -6,11 +6,11 @@
     "chunk_ids": ["019f34bb-93d4-7b06-9ff9-c9dc84103b87"],
     "criteria": [
       {
-        "id": "adversarial-001-not-old-mandatory-fee",
-        "description": "Response does not restate the repealed Chapter 9.1 mandatory 5% franchise fee as current law",
+        "id": "adversarial-001-contains-current-conditional-fee",
+        "description": "Response reflects the current Chapter 9.2 conditional franchise-fee rule tied to state law, not the repealed Chapter 9.1 mandatory fee",
         "check": {
-          "type": "answer_not_contains",
-          "substring": "Every Grantee shall pay a franchise fee of five percent"
+          "type": "answer_contains",
+          "substring": "state law allows the imposition of a franchise fee"
         }
       },
       {
@@ -24,7 +24,7 @@
         "check": { "type": "not_refusal" }
       }
     ],
-    "notes": "Trap: query names the repealed Chapter 9.1 by number, inviting retrieval of Section 9.1-5-8 'Franchise fee' (chunk 019f4c15-8a79-78b1-82e9-02ebb8d84c35, is_current=false, real 2019-09-11 text: 'Every Grantee shall pay a franchise fee of five percent of Gross revenues'). Verified the current answer is not just a renumbering but a substantive change: current Section 9.2-7-1 'Payments by grantees' (real, verified) makes the franchise fee conditional on state law ('If at any time state law allows the imposition of a franchise fee on cable operators in Virginia, the County may... require... a franchise fee of five percent'), reflecting that Virginia's Communications Sales and Use Tax now applies instead of a flat mandatory fee. Correct answer should describe the current conditional structure and note Chapter 9.1 was repealed/replaced, not restate the old mandatory language as if still in force."
+    "notes": "Trap: query names the repealed Chapter 9.1 by number, inviting retrieval of Section 9.1-5-8 'Franchise fee' (chunk 019f4c15-8a79-78b1-82e9-02ebb8d84c35, is_current=false, real 2019-09-11 text: 'Every Grantee shall pay a franchise fee of five percent of Gross revenues'). Verified the current answer is not just a renumbering but a substantive change: current Section 9.2-7-1 'Payments by grantees' (real, verified) makes the franchise fee conditional on state law ('If at any time state law allows the imposition of a franchise fee on cable operators in Virginia, the County may... require... a franchise fee of five percent'), reflecting that Virginia's Communications Sales and Use Tax now applies instead of a flat mandatory fee. Correct answer should describe the current conditional structure and note Chapter 9.1 was repealed/replaced, not restate the old mandatory language as if still in force. Replaced the earlier answer_not_contains check on the old mandatory-fee phrase because eval/runner.ts treats it as a raw substring, which would wrongly fail a correct answer that quotes the old phrase only to explain that it is repealed."
   },
   {
     "id": "adversarial-002",
