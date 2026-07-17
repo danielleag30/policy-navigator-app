@@ -32,6 +32,9 @@ This file records the canonical runtime/configuration choices for Policy Navigat
   Answer Drafter `0.3`, Verifier and correction passes `0.0`. Judge/Verifier paths
   favor deterministic filtering and citation checking; the drafter allows limited
   prose variation while remaining grounded in provided chunks.
+- `reconciliation` and `amendment-resolution` Ollama temperature: `0.0` -- both are
+  deterministic matching/judging passes over provided candidate text, same
+  rationale as the Temporal Judge and Verifier.
 - UUID v7 generation uses `@std/uuid/v7`.
 - SHA-256 is the canonical `content_hash` algorithm.
 
