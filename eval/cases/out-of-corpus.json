@@ -1,0 +1,142 @@
+[
+  {
+    "id": "out-of-corpus-001",
+    "category": "out_of_corpus",
+    "query": "What does Fairfax County's algorithmic impact assessment ordinance require before a department deploys automated decision software?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "out-of-corpus-001-is-refusal",
+        "description": "Pipeline declines because algorithmic impact assessment requirements are not in the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Verified absence in live DB: indexed search for 'algorithmic impact' OR 'automated decision' returned 0 matches across ordinance_provisions, narrative_chunks, budget_indicators, vote_tallies, and policy_decisions."
+  },
+  {
+    "id": "out-of-corpus-002",
+    "category": "out_of_corpus",
+    "query": "What cryptocurrency mining surcharge does Fairfax County impose on high-electricity-use mining facilities?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "out-of-corpus-002-is-refusal",
+        "description": "Pipeline declines because cryptocurrency mining surcharge rules are not in the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Verified absence in live DB: indexed search for cryptocurrency OR 'crypto mining' OR 'bitcoin mining' returned 0 matches across ordinance_provisions, narrative_chunks, budget_indicators, vote_tallies, and policy_decisions."
+  },
+  {
+    "id": "out-of-corpus-003",
+    "category": "out_of_corpus",
+    "query": "What permit does Fairfax County require for delivery robots operating on sidewalks?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "out-of-corpus-003-is-refusal",
+        "description": "Pipeline declines because sidewalk delivery robot permit rules are not in the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Verified absence in live DB: indexed search for 'delivery robot' OR 'sidewalk robot' OR 'personal delivery device' returned 0 matches across ordinance_provisions, narrative_chunks, budget_indicators, vote_tallies, and policy_decisions."
+  },
+  {
+    "id": "out-of-corpus-004",
+    "category": "out_of_corpus",
+    "query": "What is the Fairfax County e-scooter fleet cap for shared micromobility operators?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "out-of-corpus-004-is-refusal",
+        "description": "Pipeline declines because e-scooter fleet-cap rules are not in the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Verified absence in live DB: indexed search for escooter OR 'e scooter' OR 'electric scooter' OR 'scooter fleet' returned 0 matches across ordinance_provisions, narrative_chunks, budget_indicators, vote_tallies, and policy_decisions."
+  },
+  {
+    "id": "out-of-corpus-005",
+    "category": "out_of_corpus",
+    "query": "How much is the Fairfax County rebate for installing a residential electric vehicle charger?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "out-of-corpus-005-is-refusal",
+        "description": "Pipeline declines because EV charger rebate information is not in the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Verified absence in live DB: indexed search for 'electric vehicle charger rebate' OR 'ev charger rebate' returned 0 matches across ordinance_provisions, narrative_chunks, budget_indicators, vote_tallies, and policy_decisions."
+  },
+  {
+    "id": "out-of-corpus-006",
+    "category": "out_of_corpus",
+    "query": "What facial recognition policy limits apply to Fairfax County public safety camera systems?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "out-of-corpus-006-is-refusal",
+        "description": "Pipeline declines because facial recognition policy limits are not in the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Verified absence in live DB: indexed search for 'facial recognition' OR 'biometric surveillance' returned 0 matches across ordinance_provisions, narrative_chunks, budget_indicators, vote_tallies, and policy_decisions."
+  },
+  {
+    "id": "out-of-corpus-007",
+    "category": "out_of_corpus",
+    "query": "What Fairfax County heat pump rebate is available for low-income homeowners?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "out-of-corpus-007-is-refusal",
+        "description": "Pipeline declines because heat pump rebate information is not in the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Verified absence in live DB: indexed search for 'heat pump rebate' returned 0 matches across ordinance_provisions, narrative_chunks, budget_indicators, vote_tallies, and policy_decisions."
+  },
+  {
+    "id": "out-of-corpus-008",
+    "category": "out_of_corpus",
+    "query": "What permit standards apply to tiny home villages in Fairfax County?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "out-of-corpus-008-is-refusal",
+        "description": "Pipeline declines because tiny home village permit standards are not in the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Verified absence in live DB: indexed search for 'tiny home' OR 'tiny house village' returned 0 matches across ordinance_provisions, narrative_chunks, budget_indicators, vote_tallies, and policy_decisions."
+  },
+  {
+    "id": "out-of-corpus-009",
+    "category": "out_of_corpus",
+    "query": "What Fairfax County rain barrel rebate can residents claim, and what is the maximum reimbursement?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "out-of-corpus-009-is-refusal",
+        "description": "Pipeline declines because rain barrel rebate information is not in the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Verified absence in live DB: indexed search for 'rain barrel rebate' OR 'rain barrels' returned 0 matches across ordinance_provisions, narrative_chunks, budget_indicators, vote_tallies, and policy_decisions."
+  },
+  {
+    "id": "out-of-corpus-010",
+    "category": "out_of_corpus",
+    "query": "What is Fairfax County's current data center moratorium policy?",
+    "chunk_ids": [],
+    "criteria": [
+      {
+        "id": "out-of-corpus-010-is-refusal",
+        "description": "Pipeline declines because a data center moratorium policy is not in the corpus",
+        "check": { "type": "is_refusal" }
+      }
+    ],
+    "notes": "Verified absence in live DB: indexed search for 'data center moratorium' returned 0 matches across ordinance_provisions, narrative_chunks, budget_indicators, vote_tallies, and policy_decisions."
+  }
+]

@@ -1,0 +1,362 @@
+[
+  {
+    "id": "retrieval-001",
+    "category": "retrieval",
+    "query": "Under Section 82-8-5, how quickly must an investigating police officer forward a written motor vehicle accident report?",
+    "chunk_ids": ["019f34cc-7827-7691-a5ee-13b506ecf41d"],
+    "criteria": [
+      {
+        "id": "retrieval-001-cites",
+        "description": "Response cites the Section 82-8-5 accident-report chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34cc-7827-7691-a5ee-13b506ecf41d" }
+      },
+      {
+        "id": "retrieval-001-contains-deadline",
+        "description": "Answer gives the twenty-four-hour deadline",
+        "check": { "type": "answer_contains", "substring": "twenty-four" }
+      },
+      {
+        "id": "retrieval-001-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Live DB evidence from ordinance_provisions id 019f34cc-7827-7691-a5ee-13b506ecf41d: 'within twenty-four (24) hours after completing the investigation, forward a written report of the accident to the Police Department.'"
+  },
+  {
+    "id": "retrieval-002",
+    "category": "retrieval",
+    "query": "How many members are on Fairfax County's Exception Review Committee, and how are they distributed?",
+    "chunk_ids": ["019f34d1-7797-7271-84f8-d9245a788d1f"],
+    "criteria": [
+      {
+        "id": "retrieval-002-cites",
+        "description": "Response cites the Section 118-7-3 membership chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d1-7797-7271-84f8-d9245a788d1f" }
+      },
+      {
+        "id": "retrieval-002-contains-members",
+        "description": "Answer states the committee has 11 members",
+        "check": { "type": "answer_contains", "substring": "11 members" }
+      },
+      {
+        "id": "retrieval-002-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Live DB evidence from ordinance_provisions id 019f34d1-7797-7271-84f8-d9245a788d1f: 'composed of 11 members' with one member from each Magisterial District and two at-large members."
+  },
+  {
+    "id": "retrieval-003",
+    "category": "retrieval",
+    "query": "Does a precious metal or gem dealer need a Fairfax County permit even if they already have a permit from another locality?",
+    "chunk_ids": ["019f34be-077f-70bc-a77a-237f63a8f031"],
+    "criteria": [
+      {
+        "id": "retrieval-003-cites",
+        "description": "Response cites the Section 33-1-2 permit-required chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34be-077f-70bc-a77a-237f63a8f031" }
+      },
+      {
+        "id": "retrieval-003-contains-other-locality",
+        "description": "Answer explains that another locality's permit does not relieve the dealer of the Fairfax permit obligation",
+        "check": { "type": "answer_contains", "substring": "another locality" }
+      },
+      {
+        "id": "retrieval-003-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Live DB evidence from ordinance_provisions id 019f34be-077f-70bc-a77a-237f63a8f031: 'Possession of a permit issued in another locality shall not relieve a dealer of the obligation to obtain a permit from the Director.'"
+  },
+  {
+    "id": "retrieval-004",
+    "category": "retrieval",
+    "query": "What lighting level does the County Code require inside bathhouse facilities?",
+    "chunk_ids": ["019f34c8-bf0d-7ae9-b754-7030ea70787a"],
+    "criteria": [
+      {
+        "id": "retrieval-004-cites",
+        "description": "Response cites the Section 69.1-7-9 bathhouse-lighting chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34c8-bf0d-7ae9-b754-7030ea70787a" }
+      },
+      {
+        "id": "retrieval-004-contains-foot-candles",
+        "description": "Answer includes the 30 foot-candles requirement",
+        "check": { "type": "answer_contains", "substring": "30 foot-candles" }
+      },
+      {
+        "id": "retrieval-004-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Live DB evidence from ordinance_provisions id 019f34c8-bf0d-7ae9-b754-7030ea70787a: 'illuminated at a minimum of 30 foot-candles measured 24 inches above the floor.'"
+  },
+  {
+    "id": "retrieval-005",
+    "category": "retrieval",
+    "query": "When is land-disturbing activity of less than one acre regulated under Section 124.1-2-1?",
+    "chunk_ids": ["019f34d2-3ed8-72aa-8d79-9a787038f554"],
+    "criteria": [
+      {
+        "id": "retrieval-005-cites",
+        "description": "Response cites the Section 124.1-2-1 regulated land-disturbing activity chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d2-3ed8-72aa-8d79-9a787038f554" }
+      },
+      {
+        "id": "retrieval-005-contains-threshold",
+        "description": "Answer includes the 2,500-square-foot threshold",
+        "check": { "type": "answer_contains", "substring": "2,500 square feet" }
+      },
+      {
+        "id": "retrieval-005-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Live DB evidence from ordinance_provisions id 019f34d2-3ed8-72aa-8d79-9a787038f554: 'Land-disturbing activity that disturbs 2,500 square feet or more and is less than one acre is subject to...' Article 6 criteria."
+  },
+  {
+    "id": "retrieval-006",
+    "category": "retrieval",
+    "query": "What are Fairfax County Park Authority Trust Funds used to support?",
+    "chunk_ids": ["019f4eff-f832-7c39-a901-c60db8ba7c61"],
+    "criteria": [
+      {
+        "id": "retrieval-006-cites",
+        "description": "Response cites the Park Authority Trust Funds narrative chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4eff-f832-7c39-a901-c60db8ba7c61" }
+      },
+      {
+        "id": "retrieval-006-contains-parks",
+        "description": "Answer mentions 424 parks",
+        "check": { "type": "answer_contains", "substring": "424 parks" }
+      },
+      {
+        "id": "retrieval-006-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Live DB evidence from narrative_chunks id 019f4eff-f832-7c39-a901-c60db8ba7c61: Trust Funds support the Park Authority, which 'currently maintains and operates 424 parks and 23,869 acres of park land.'"
+  },
+  {
+    "id": "retrieval-007",
+    "category": "retrieval",
+    "query": "What rules did Chairman McKay announce for the November 2021 public comment period?",
+    "chunk_ids": ["019f467f-4658-7c62-b5d8-1c79555e709e"],
+    "criteria": [
+      {
+        "id": "retrieval-007-cites",
+        "description": "Response cites the public-comment rules narrative chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f467f-4658-7c62-b5d8-1c79555e709e" }
+      },
+      {
+        "id": "retrieval-007-contains-three-minutes",
+        "description": "Answer includes the three-minute speaker limit",
+        "check": { "type": "answer_contains", "substring": "three minutes" }
+      },
+      {
+        "id": "retrieval-007-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Live DB evidence from narrative_chunks id 019f467f-4658-7c62-b5d8-1c79555e709e: speakers 'must register in advance,' are given 'three minutes,' and no more than ten speakers may address the Board in a public-comment period."
+  },
+  {
+    "id": "retrieval-008",
+    "category": "retrieval",
+    "query": "Which election officials did Chairman McKay welcome after Hanley introduced them?",
+    "chunk_ids": ["019f43b2-57d3-7033-a803-eb1d01227d30"],
+    "criteria": [
+      {
+        "id": "retrieval-008-cites",
+        "description": "Response cites the election-officials narrative chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f43b2-57d3-7033-a803-eb1d01227d30" }
+      },
+      {
+        "id": "retrieval-008-contains-spicer",
+        "description": "Answer names Eric L. Spicer",
+        "check": { "type": "answer_contains", "substring": "Eric L. Spicer" }
+      },
+      {
+        "id": "retrieval-008-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Live DB evidence from narrative_chunks id 019f43b2-57d3-7033-a803-eb1d01227d30: Hanley introduced 'Eric L. Spicer, General Registrar and Director of Elections and Beth Dixon Methfessel, Clerk to the Fairfax County Electoral Board.'"
+  },
+  {
+    "id": "retrieval-009",
+    "category": "retrieval",
+    "query": "Who spoke about meals tax and no casino in Tysons in the listed public comments?",
+    "chunk_ids": ["019f4347-4357-7836-9fe9-56b3d28fe081"],
+    "criteria": [
+      {
+        "id": "retrieval-009-cites",
+        "description": "Response cites the public-comment speaker-list chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4347-4357-7836-9fe9-56b3d28fe081" }
+      },
+      {
+        "id": "retrieval-009-contains-meals-tax",
+        "description": "Answer identifies Sarah White for meals tax",
+        "check": { "type": "answer_contains", "substring": "Sarah White" }
+      },
+      {
+        "id": "retrieval-009-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Live DB evidence from narrative_chunks id 019f4347-4357-7836-9fe9-56b3d28fe081: 'Sarah White - Regarding Meals Tax' and 'Danielle Lasley - Regarding No Casino in Tysons.'"
+  },
+  {
+    "id": "retrieval-010",
+    "category": "retrieval",
+    "query": "What share of 9-1-1 calls arriving at DPSC were answered within 10 seconds in the last two displayed columns?",
+    "chunk_ids": ["019f56e5-d340-7cd4-85fb-9d5209e1bc4c"],
+    "criteria": [
+      {
+        "id": "retrieval-010-cites",
+        "description": "Response cites the DPSC 9-1-1 performance narrative chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f56e5-d340-7cd4-85fb-9d5209e1bc4c" }
+      },
+      {
+        "id": "retrieval-010-contains-75",
+        "description": "Answer includes 75%",
+        "check": { "type": "answer_contains", "substring": "75%" }
+      },
+      {
+        "id": "retrieval-010-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Live DB evidence from narrative_chunks id 019f56e5-d340-7cd4-85fb-9d5209e1bc4c: 'Percent 9-1-1 calls arriving at DPSC answered within 10 seconds 92% 86% 90% 83% 75% 75%.'"
+  },
+  {
+    "id": "retrieval-011",
+    "category": "retrieval",
+    "query": "What percentage of Clerk's Board Summaries were posted to the County website within 14 days of the Board meeting?",
+    "chunk_ids": ["019f535e-793c-7365-a2e2-845406c7029b"],
+    "criteria": [
+      {
+        "id": "retrieval-011-cites",
+        "description": "Response cites the Clerk's Board Summaries budget-indicator chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f535e-793c-7365-a2e2-845406c7029b" }
+      },
+      {
+        "id": "retrieval-011-contains-100",
+        "description": "Answer includes 100.0%",
+        "check": { "type": "answer_contains", "substring": "100.0%" }
+      },
+      {
+        "id": "retrieval-011-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Live DB evidence from budget_indicators id 019f535e-793c-7365-a2e2-845406c7029b: the row for 'Percent of Clerk's Board Summaries Posted...' lists '100.0% 100.0% 100.0% 100.0% 100.0% 100.0%.'"
+  },
+  {
+    "id": "retrieval-012",
+    "category": "retrieval",
+    "query": "What was the FY 2025 preventable accident rate per 100,000 miles driven, and what did it decrease from?",
+    "chunk_ids": ["019f4ea5-e0e3-7a1b-8c71-600c03d2d1a4"],
+    "criteria": [
+      {
+        "id": "retrieval-012-cites",
+        "description": "Response cites the preventable-accident-rate budget-indicator chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4ea5-e0e3-7a1b-8c71-600c03d2d1a4" }
+      },
+      {
+        "id": "retrieval-012-contains-rate",
+        "description": "Answer includes 1.06",
+        "check": { "type": "answer_contains", "substring": "1.06" }
+      },
+      {
+        "id": "retrieval-012-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Live DB evidence from budget_indicators id 019f4ea5-e0e3-7a1b-8c71-600c03d2d1a4: 'The preventable accident rate per 100,000 miles driven decreased from 1.12 to 1.06.'"
+  },
+  {
+    "id": "retrieval-013",
+    "category": "retrieval",
+    "query": "How many senior citizens were served in Fire and Rescue's Safety-Related Prevention and Preparedness measure, and what was the target?",
+    "chunk_ids": ["019f5356-b169-7e9f-a9c6-a1a2c2680fd3"],
+    "criteria": [
+      {
+        "id": "retrieval-013-cites",
+        "description": "Response cites the senior-citizens-served budget-indicator chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f5356-b169-7e9f-a9c6-a1a2c2680fd3" }
+      },
+      {
+        "id": "retrieval-013-contains-actual",
+        "description": "Answer includes 2,486",
+        "check": { "type": "answer_contains", "substring": "2,486" }
+      },
+      {
+        "id": "retrieval-013-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Live DB evidence from budget_indicators id 019f5356-b169-7e9f-a9c6-a1a2c2680fd3: indicator 'Senior citizens served' has value_actual 2486.0000, value_target 4000.0000, unit 'cases.'"
+  },
+  {
+    "id": "retrieval-014",
+    "category": "retrieval",
+    "query": "How much funding was included for year two of continued IT architecture optimization?",
+    "chunk_ids": ["019f53e4-ff1e-701f-9195-420d3bbeef47"],
+    "criteria": [
+      {
+        "id": "retrieval-014-cites",
+        "description": "Response cites the Department of Information Technology budget-indicator chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f53e4-ff1e-701f-9195-420d3bbeef47" }
+      },
+      {
+        "id": "retrieval-014-contains-funding",
+        "description": "Answer includes $5,000,000",
+        "check": { "type": "answer_contains", "substring": "$5,000,000" }
+      },
+      {
+        "id": "retrieval-014-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Live DB evidence from budget_indicators id 019f53e4-ff1e-701f-9195-420d3bbeef47: 'Infrastructure Stabilization, Innovation, and Optimization $5,000,000' and 'An increase of $5,000,000 is included to support year two of continued IT architecture optimization.'"
+  },
+  {
+    "id": "retrieval-015",
+    "category": "retrieval",
+    "query": "What FY 2027 advertised fund balance is listed for Fund 20000 County Debt Service?",
+    "chunk_ids": ["019f482d-f27b-7e3f-86af-445e825a99d8"],
+    "criteria": [
+      {
+        "id": "retrieval-015-cites",
+        "description": "Response cites the Fund 20000 County Debt Service budget-indicator chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f482d-f27b-7e3f-86af-445e825a99d8" }
+      },
+      {
+        "id": "retrieval-015-contains-balance",
+        "description": "Answer includes 149,380,516",
+        "check": { "type": "answer_contains", "substring": "149,380,516" }
+      },
+      {
+        "id": "retrieval-015-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Live DB evidence from budget_indicators id 019f482d-f27b-7e3f-86af-445e825a99d8: 'Fund 20000 County Debt Service 149,380,516 157,980,516 ... 165,399,005 7,418,489 4.70%.'"
+  }
+]
