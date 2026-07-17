@@ -51,7 +51,6 @@ import {
   ORDINANCE_EMBED_FETCH_PAGE_SIZE,
 } from "./ordinance-embedder.ts";
 import { requestSecret } from "../_shared/admin-auth.ts";
-import { reconciliationInvokeUrl } from "./_reconciliation-url.ts";
 import {
   type ClaimedPendingIngestion,
   type ClaimNextResult,
@@ -59,6 +58,10 @@ import {
   runPendingIngestionLoop,
 } from "./_multi-row-loop.ts";
 import { recordAiSessionDeferredPendingAlert } from "../_shared/pending-alerts.ts";
+import {
+  type ReconciliationTriggerDb,
+  triggerReconciliationIfNeeded,
+} from "./_reconciliation-trigger.ts";
 
 // Supabase.ai.Session is injected by the Edge Function runtime.
 // Declare here so TypeScript resolves it; actual availability is checked at runtime.
@@ -688,69 +691,6 @@ async function embedNarrativeChunks(
   }
 }
 
-// ── Task 2-6: Municode reconciliation trigger ─────────────────────────────────
-
-async function triggerReconciliationIfNeeded(
-  documentId: string,
-  nodeIds: string[],
-): Promise<void> {
-  if (nodeIds.length === 0) return;
-
-  const { data: pending, error: pendingErr } = await db
-    .from("pending_code_changes")
-    .select("id")
-    .in("municode_node_id", nodeIds)
-    .eq("codification_status", "pending");
-
-  if (pendingErr) {
-    console.error(
-      "[orchestrator] PendingCodeChange lookup failed:",
-      pendingErr.message,
-    );
-    return;
-  }
-
-  if (!pending || pending.length === 0) return;
-
-  console.log(
-    `[orchestrator] ${pending.length} overlapping PendingCodeChange(s) found — triggering reconciliation`,
-  );
-
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceKey) {
-    console.error("[orchestrator] missing env vars for reconciliation invoke");
-    return;
-  }
-
-  try {
-    const resp = await fetch(
-      reconciliationInvokeUrl(supabaseUrl),
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${serviceKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ document_id: documentId }),
-      },
-    );
-    if (!resp.ok) {
-      console.warn(
-        `[orchestrator] reconciliation returned HTTP ${resp.status}`,
-      );
-    } else {
-      console.log("[orchestrator] reconciliation triggered successfully");
-    }
-  } catch (e) {
-    // Reconciliation function may not yet be deployed — log and continue.
-    console.warn(
-      "[orchestrator] reconciliation invoke failed (may not be deployed):",
-      (e as Error).message,
-    );
-  }
-}
-
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 function duePendingFilter(nowIso: string): string {
@@ -975,11 +915,12 @@ async function processClaimedIngestion(
 
     // ── Municode branch ─────────────────────────────────────────────────────
     if (isMunicode) {
-      const { documentId, nodeIds, skipped, complete } = await handleMunicode(
-        pendingIngestionId,
-        softDeadlineMs,
-        forceFullReingest,
-      );
+      const { documentId, nodeIds, skipped, complete, supplementJobId } =
+        await handleMunicode(
+          pendingIngestionId,
+          softDeadlineMs,
+          forceFullReingest,
+        );
 
       if (!complete) {
         return await requeueForResume(pendingIngestionId, newAttempts);
@@ -1024,7 +965,12 @@ async function processClaimedIngestion(
       }
 
       // ── Task 2-6: check for overlapping PendingCodeChange rows ───────────
-      await triggerReconciliationIfNeeded(documentId, nodeIds);
+      await triggerReconciliationIfNeeded({
+        db: db as unknown as ReconciliationTriggerDb,
+        nodeIds,
+        supplementJobId,
+        pendingIngestionId,
+      });
 
       // Mark ingestion done
       const { error: ingestDoneErr } = await db
