@@ -1,10 +1,27 @@
--- Targeted, one-time backfill: real pre-zMOD (pre-2021) Fairfax County Zoning
--- Ordinance text for the two sections underlying 3 of the eval suite's remaining
+-- Targeted, one-time backfill: real pre-zMOD Fairfax County Zoning Ordinance
+-- text for the two sections underlying 3 of the eval suite's remaining
 -- zoning-temporal/adversarial cases (Accessory Dwelling Units and Home
 -- Occupations). Source: EnCode Archives "2021 Reprint" (the last full reprint
 -- of the pre-zMOD, 1978-descendant Zoning Ordinance, dated 2021-06-30, covering
--- amendments through ZO-21-488 -- before the Dec. 2, 2021 zMOD rewrite,
--- Ord. 19-19-112, replaced the whole ordinance with new-style citations).
+-- amendments through ZO-21-488).
+--
+-- SUPERSEDED_DATE = 2023-05-10, NOT July/Dec 2021 -- verified against primary
+-- sources (fairfaxcounty.gov news releases, ffxnow.com reporting) plus our own
+-- ingested Amendment History Table (chunk 019f4c56-664d-775d-b22a-38993c6abc77):
+-- the Board originally adopted zMOD on 2021-03-23 (effective 2021-07-01, as
+-- Chapter 112.1), but the Virginia Supreme Court declared that adoption VOID
+-- on 2023-03-23 for a FOIA violation (adopted at a mostly-virtual meeting with
+-- no valid in-person hearing) -- the county reverted to the pre-zMOD 1978
+-- Chapter 112 as the operative law ("the 1978 Zoning Ordinance is presently in
+-- effect" per county spokesperson). The Board validly readopted the
+-- modernized ordinance at an in-person hearing on 2023-05-09, repealing
+-- Chapter 112 and adopting Chapter 112.2, effective 2023-05-10 (matches our
+-- Amendment History Table row: "Repeal of Chapter 112 and adoption of Chapter
+-- 112.2 ... Adoption Date 2023/05/09, Effective Date 2023/05/10"). Since a
+-- void adoption is legally treated as never having occurred, the old Chapter
+-- 112 text in this migration was validly, permanently superseded exactly
+-- once -- 2023-05-10 -- not at either of the two 2021 dates various earlier
+-- (unverified) notes had claimed.
 --
 -- This is NOT the recurring EnCode crawler (encode.ts) -- that crawler only
 -- ever sees EnCode's current live tree and cannot reach pre-zMOD text at all
@@ -68,7 +85,7 @@ BEGIN
       'archive_page', 'https://online.encodeplus.com/regs/fairfaxcounty-va/archivedialog.aspx',
       'reprint_label', '2021 Reprint',
       'reprint_date', '2021-06-30',
-      'superseded_by', 'zMOD comprehensive rewrite, Ord. 19-19-112, effective 2021-12-02',
+      'superseded_by', 'Chapter 112.2 valid readoption, effective 2023-05-10 (2021 zMOD adoption later declared void by VA Supreme Court)',
       'note', 'One-time targeted backfill for eval cases requiring pre-zMOD zoning text (old-style citations); not part of the recurring EnCode crawler.'
     )
   );
@@ -85,7 +102,7 @@ BEGIN
     1,
     DATE '2021-06-30',
     false,
-    DATE '2021-12-02',
+    DATE '2023-05-10',
     'Sect. 8-918 Additional Standards for Accessory Dwelling Units (pre-zMOD, 1978 Ordinance)',
     $ADU$8-918 Additional Standards for Accessory Dwelling Units
 As established by the Fairfax County Board of Supervisors' Policy on Accessory Dwelling
@@ -219,7 +236,7 @@ labeled as to their subject matter.$ADU$,
     1,
     DATE '2021-06-30',
     false,
-    DATE '2021-12-02',
+    DATE '2023-05-10',
     'Article 10, Part 3 (Sect. 10-301 - 10-305) Home Occupations (pre-zMOD, 1978 Ordinance)',
     $HO$PART 3 10-300 HOME OCCUPATIONS
 10-301 Authorization

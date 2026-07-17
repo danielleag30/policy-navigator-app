@@ -1,16 +1,21 @@
 /**
  * Static-source-inspection tests for the targeted, one-time EnCode zoning
  * historical backfill migration (supabase/migrations/
- * 20260717032755_encode_zoning_historical_backfill.sql). Matches this repo's
- * existing convention for data/content correctness (see
+ * 20260717032755_encode_zoning_historical_backfill.sql) and its follow-up
+ * correction (supabase/migrations/
+ * 20260717070000_fix_encode_zoning_historical_superseded_date.sql). Matches
+ * this repo's existing convention for data/content correctness (see
  * tests/encode-ingestion.test.ts's file header) since no live Supabase
- * instance is available in CI -- the migration was already applied directly
- * to the hosted project and independently verified there (real content,
- * embeddings populated by the existing historical-embedding retry backlog);
- * these tests guard the committed SQL against silent regressions.
+ * instance is available in CI -- both migrations were already applied
+ * directly to the hosted project and independently verified there (real
+ * content, embeddings populated by the existing historical-embedding retry
+ * backlog, superseded_date corrected to 2023-05-10); these tests guard the
+ * committed SQL against silent regressions.
  */
 
 const MIGRATION_PATH = "supabase/migrations/20260717032755_encode_zoning_historical_backfill.sql";
+const FIX_MIGRATION_PATH =
+  "supabase/migrations/20260717070000_fix_encode_zoning_historical_superseded_date.sql";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -18,6 +23,10 @@ function assert(condition: unknown, message: string): asserts condition {
 
 async function readMigration(): Promise<string> {
   return await Deno.readTextFile(MIGRATION_PATH);
+}
+
+async function readFixMigration(): Promise<string> {
+  return await Deno.readTextFile(FIX_MIGRATION_PATH);
 }
 
 Deno.test("migration is idempotent: guards on the reprint URL before inserting", async () => {
@@ -54,11 +63,16 @@ Deno.test("historical document row uses an allowed doc_type/status and real sour
 
 Deno.test("both historical provisions are correctly flagged is_current=false with real effective/superseded dates", async () => {
   const sql = await readMigration();
-  const falseCount = (sql.match(/false,\s*\n\s*DATE '2021-12-02',/g) ?? [])
+  // 2023-05-10 is the Chapter 112.2 valid-readoption effective date, not the
+  // 2021 zMOD adoption date -- that 2021 adoption was later declared void by
+  // the Virginia Supreme Court (FOIA violation), so the pre-zMOD text in this
+  // migration was only permanently superseded once the readoption took
+  // effect. See the migration file's header comment for the full history.
+  const falseCount = (sql.match(/false,\s*\n\s*DATE '2023-05-10',/g) ?? [])
     .length;
   assert(
     falseCount === 2,
-    `expected exactly 2 rows with is_current=false and superseded_date='2021-12-02' (zMOD effective date), found ${falseCount}`,
+    `expected exactly 2 rows with is_current=false and superseded_date='2023-05-10' (Chapter 112.2 valid-readoption effective date), found ${falseCount}`,
   );
   assert(
     (sql.match(/DATE '2021-06-30'/g) ?? []).length >= 2,
@@ -111,5 +125,40 @@ Deno.test("Home Occupations historical content reflects the real pre-zMOD rule (
   assert(
     !sql.includes("400 square feet"),
     "the historical Home Occupations text must not contain the current (post-zMOD) 400 sq ft Home-Based Business cap",
+  );
+});
+
+Deno.test("no DATE literal in the migration uses the wrong 2021 zMOD dates (prose mentioning 2021-07-01 as history is fine)", async () => {
+  const sql = await readMigration();
+  assert(
+    !/DATE '2021-12-02'|DATE '2021-07-01'/.test(sql),
+    "no DATE literal should use the unverified/wrong 2021-12-02 or 2021-07-01 zMOD dates -- the verified supersession date is 2023-05-10 (Chapter 112.2's valid readoption, after the original 2021 adoption was declared void)",
+  );
+  assert(
+    !sql.includes("Ord. 19-19-112"),
+    "the migration must not cite the unverified/fabricated 'Ord. 19-19-112' ordinance number",
+  );
+});
+
+Deno.test("the correction migration is guarded by preconditions and targets exactly the 2 known rows", async () => {
+  const sql = await readFixMigration();
+  assert(
+    sql.includes("superseded_date = DATE '2021-12-02'") &&
+      sql.includes("SET superseded_date = DATE '2023-05-10'"),
+    "expected the correction to move superseded_date from the wrong 2021-12-02 to the verified 2023-05-10",
+  );
+  assert(
+    sql.includes("019f6e16-cac6-797e-a372-83f5e28a9cd5") &&
+      sql.includes("019f6e16-cac8-77f7-8653-3c0f5eacfc9c"),
+    "expected the correction to target exactly the 2 known historical row ids by id, not a broad WHERE clause",
+  );
+  assert(
+    (sql.match(/RAISE NOTICE '.*skipping \(idempotent/g) ?? []).length === 2,
+    "expected a precondition-guarded, idempotent skip path for both rows (safe to re-run)",
+  );
+  assert(
+    sql.includes("Post-correction ADU row did not verify") &&
+      sql.includes("Post-correction Home Occupations row did not verify"),
+    "expected post-condition verification that the correction actually landed before considering the migration successful",
   );
 });
