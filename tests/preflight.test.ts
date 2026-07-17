@@ -49,7 +49,7 @@ Deno.test(
 );
 
 Deno.test(
-  "AC-2: deferIngestion() sets status='pending', 15-min next_attempt_at, calls writePendingAlert",
+  "AC-2: deferIngestion() sets status='pending', 15-min next_attempt_at, records deduped alert",
   async () => {
     const src = await Deno.readTextFile(ORCHESTRATOR);
 
@@ -70,8 +70,8 @@ Deno.test(
       "deferIngestion must compute next_attempt_at using AI_SESSION_DEFER_MINUTES",
     );
     assert(
-      deferBody.includes("await writePendingAlert("),
-      "deferIngestion must call writePendingAlert to record the deferral",
+      deferBody.includes("await recordAiSessionDeferredPendingAlert("),
+      "deferIngestion must record a deduped alert for the deferral",
     );
   },
 );
