@@ -349,5 +349,34 @@
       }
     ],
     "notes": "Trap: the old version of this section enumerates permitted RPA uses (a)-(e) with no adaptation-measures entry, so a model retrieving only the old text would incorrectly answer 'no'. Old row: id 019f692c-2ad1-7b8a-877b-c483bdafeb7c, node THCOCOFAVI1976_CH118CHBAPROR_ART2ALUSDERE_S118-2-1ALUSDEREREPRAR, effective_date 2024-11-19, superseded_date 2025-04-25, ends at '(e) Flood control and stormwater management facilities...' with no subsection (f) and references the old Chapter 124 / VSMP Permit Regulations. Current row: id 019f34d1-3db8-77b4-8c4a-eb97d9f01490, same node_id (Ord. 31-24-118), effective_date 2026-04-28, adds '(f) Adaptation measures, subject to compliance with the performance criteria in Article 3 of this Chapter.' and updates the stormwater cross-references to the new Chapter 124.1 / VESMR. Genuine substantive change confirmed (content_hash differs: 4a241d077... vs c3874eda5...)."
+  },
+  {
+    "id": "adversarial-015",
+    "category": "adversarial_near_miss",
+    "query": "Under the current Fairfax County Zoning Ordinance, do the same accessory dwelling unit rules that applied before 2021 still apply?",
+    "chunk_ids": ["019f4c4c-7368-74e9-9e28-946612b06d8b"],
+    "criteria": [
+      {
+        "id": "adversarial-015-cites-current",
+        "description": "Response cites the current Accessory Living Unit standards (subsection 4102.7.B), not just the pre-2021 rule",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c4c-7368-74e9-9e28-946612b06d8b" }
+      },
+      {
+        "id": "adversarial-015-contains-current-size",
+        "description": "Answer states the current 800-square-foot / 40% size cap rather than presenting the superseded 35%-only, elderly/disabled-occupant rule as still governing",
+        "check": { "type": "answer_contains", "substring": "800 square" }
+      },
+      {
+        "id": "adversarial-015-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      },
+      {
+        "id": "adversarial-015-temporal-flag",
+        "description": "Response flags the temporal/version distinction between pre- and post-zMOD ADU rules",
+        "check": { "type": "temporal_flag" }
+      }
+    ],
+    "notes": "Real, one-time targeted backfill (2026-07-17), same historical/current pair as temporal-013 (historical row 019f6e16-cac6-797e-a372-83f5e28a9cd5 / Sect. 8-918, superseded_date 2023-05-10; current row 019f4c4c-7368-74e9-9e28-946612b06d8b / subsection 4102.7.B). Trap: the query's 'do the same rules... still apply' framing implies continuity; the correct answer must recognize the rules genuinely changed (BZA special-permit-only to administrative-permit-by-default, 35%-of-principal-dwelling cap to 800 sq ft/40% whichever is less, elderly/disabled-occupant requirement removed, 5-year permit expiration removed) rather than confirming false continuity or citing only the old Sect. 8-918 text as if it were still in force. The rules changed for good as of the Board's 2023-05-09 in-person readoption of the modernized ordinance (effective 2023-05-10, as Chapter 112.2) -- not the Board's original 2021-03-23 zMOD adoption (intended effective 2021-07-01, as Chapter 112.1), which the Virginia Supreme Court later declared void on 2023-03-23 for a FOIA violation, briefly reinstating this same pre-zMOD text as the operative law until the 2023 readoption. See temporal-013's notes for the full sourcing."
   }
 ]
