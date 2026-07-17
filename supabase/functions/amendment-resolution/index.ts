@@ -10,10 +10,13 @@
  *     -> reconciliation (unchanged) compares those pending_code_changes rows
  *        against fresh Municode/EnCode text and marks them "codified"
  *
- * Never fabricates a municode_node_id: a decision is left unresolved (and logged
- * in amendment_resolution_logs) unless a candidate ordinance provision can be
- * confidently identified via citation/keyword match plus a high-confidence LLM
- * verification pass.
+ * Never fabricates a municode_node_id or a vote_tally_id: a decision is left
+ * unresolved (and logged in amendment_resolution_logs) unless a candidate
+ * ordinance provision can be confidently identified via citation/keyword match
+ * plus a high-confidence LLM verification pass, AND the vote_tallies row that
+ * actually corresponds to that decision can be independently verified on the
+ * same document (policy_decisions.vote_tally_id itself is never trusted --
+ * see pickVerifiedVoteTally in _helpers.ts for why).
  *
  * Triggered by pg_cron every 6 hours, or manually via HTTP POST -- same trust
  * boundary as reconciliation and change-detection (no extra admin gate; this is
@@ -35,9 +38,11 @@ import {
   extractKeywords,
   type OrdinanceCandidate,
   parseResolutionLlmResult,
+  pickVerifiedVoteTally,
   type PolicyDecisionForResolution,
   rankAndCapCandidates,
   shouldAcceptResolution,
+  type VoteTallyCandidate,
 } from "./_helpers.ts";
 
 const FN_NAME = "amendment-resolution";
@@ -57,7 +62,7 @@ async function loadUnresolvedDecisions(): Promise<
   const { data: decisions, error: decErr } = await db
     .from("policy_decisions")
     .select(
-      "id, document_id, vote_tally_id, meeting_date, decision_type, subject, effective_date, raw_extracted_text",
+      "id, document_id, meeting_date, decision_type, subject, effective_date, raw_extracted_text",
     )
     .eq("is_amendment", true)
     .order("meeting_date", { ascending: true })
@@ -158,11 +163,32 @@ async function fetchCandidates(
   return candidates;
 }
 
+async function fetchVoteTallyCandidates(
+  documentId: string,
+): Promise<VoteTallyCandidate[]> {
+  const { data, error: err } = await db
+    .from("vote_tallies")
+    .select("id, motion_text")
+    .eq("document_id", documentId)
+    .limit(50);
+
+  if (err) {
+    logWarn(FN_NAME, "vote_tallies lookup failed", {
+      document_id: documentId,
+      message: err.message,
+    });
+    return [];
+  }
+
+  return (data ?? []) as VoteTallyCandidate[];
+}
+
 async function logUnresolved(
   decision: PolicyDecisionForResolution,
   reason: "missing_vote_tally" | "no_candidates" | "low_confidence",
   confidence: "high" | "medium" | "low" | null,
   llmNotes: string | null,
+  resolvedNodeId: string | null = null,
 ): Promise<void> {
   const { error: insertErr } = await db.from("amendment_resolution_logs")
     .insert({
@@ -170,7 +196,7 @@ async function logUnresolved(
       policy_decision_id: decision.id,
       status: "unresolved",
       reason,
-      municode_node_id: null,
+      municode_node_id: resolvedNodeId,
       confidence,
       llm_notes: llmNotes,
       amendment_event_id: null,
@@ -187,11 +213,6 @@ async function logUnresolved(
 async function resolveDecision(
   decision: PolicyDecisionForResolution,
 ): Promise<"resolved" | "unresolved" | "transient_skip"> {
-  if (decision.vote_tally_id === null) {
-    await logUnresolved(decision, "missing_vote_tally", null, null);
-    return "unresolved";
-  }
-
   const searchText = `${decision.subject} ${
     decision.raw_extracted_text.slice(0, 2000)
   }`;
@@ -233,10 +254,36 @@ async function resolveDecision(
     return "unresolved";
   }
 
+  // The node is resolved -- now find the vote_tallies row that actually
+  // corresponds to THIS decision. policy_decisions.vote_tally_id (extraction-
+  // time chunk adjacency) is never trusted directly: a board meeting document
+  // routinely bundles several unrelated votes, and that link can point at the
+  // wrong one. Search every vote on the same document with the same
+  // citation/keyword signal used for node resolution instead.
+  const voteCandidates = await fetchVoteTallyCandidates(decision.document_id);
+  const voteMatch = pickVerifiedVoteTally(
+    voteCandidates,
+    keywords,
+    citationTokens,
+  );
+
+  if (!voteMatch.vote_tally_id) {
+    await logUnresolved(
+      decision,
+      "missing_vote_tally",
+      parsed.confidence,
+      `Node resolved to ${parsed.municode_node_id} but no verified vote tally found among ${voteCandidates.length} vote(s) on document ${decision.document_id}. ${parsed.notes}`
+        .trim(),
+      parsed.municode_node_id,
+    );
+    return "unresolved";
+  }
+
   const amendmentEventId = uuidv7();
   const amendmentEventRow = buildAmendmentEventRow(
     decision,
     parsed.municode_node_id!,
+    voteMatch.vote_tally_id,
     amendmentEventId,
   );
 
@@ -269,7 +316,9 @@ async function resolveDecision(
     reason: null,
     municode_node_id: parsed.municode_node_id,
     confidence: parsed.confidence,
-    llm_notes: parsed.notes,
+    llm_notes:
+      `${parsed.notes} [vote_tally verified via ${voteMatch.matched_via}]`
+        .trim(),
     amendment_event_id: amendmentEventId,
     pending_code_change_id: pendingChangeId,
   });

@@ -16,10 +16,12 @@ import {
   matchesCitation,
   type OrdinanceCandidate,
   parseResolutionLlmResult,
+  pickVerifiedVoteTally,
   type PolicyDecisionForResolution,
   rankAndCapCandidates,
   resolveEffectiveDate,
   shouldAcceptResolution,
+  type VoteTallyCandidate,
 } from "../supabase/functions/amendment-resolution/_helpers.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -41,7 +43,6 @@ function makeDecision(
   return {
     id: "dec-1",
     document_id: "doc-1",
-    vote_tally_id: "vote-1",
     meeting_date: "2000-04-24",
     decision_type: "fee_schedule",
     subject:
@@ -357,6 +358,121 @@ Deno.test("shouldAcceptResolution: rejects matched=false regardless of confidenc
 });
 
 // ---------------------------------------------------------------------------
+// pickVerifiedVoteTally — never blindly trust policy_decisions.vote_tally_id
+// ---------------------------------------------------------------------------
+
+function makeVote(id: string, motion_text: string): VoteTallyCandidate {
+  return { id, motion_text };
+}
+
+Deno.test("pickVerifiedVoteTally: regression — real production case (Gypsy Moth / Appendix I) picks the correct vote among 3 unrelated votes on the same document, not the adjacent one", () => {
+  // These are the real 1993-04-22 document's 3 vote_tallies rows. The bug:
+  // policy_decisions.vote_tally_id pointed at the Girl Scout proclamation
+  // (extraction-time chunk adjacency), not the actual amendment vote.
+  const girlScoutVote = makeVote(
+    "vote-girlscout",
+    'Proclamation designating "GIRL SCOUT LEADER\'S DAY"',
+  );
+  const gypsyMothVote = makeVote(
+    "vote-gypsymoth",
+    "Amendment to the Code of the County of Fairfax, Appendix I, Fairfax County Special Service District for the Control of Gypsy Moth Infestations, Section 5, to reduce tax rate",
+  );
+  const sarVote = makeVote(
+    "vote-sar",
+    "Approval of Supplemental Appropriation Resolution (SAR) AS 93054 and Amendment to the Fiscal Planning Resolution (FPR) AS 93905",
+  );
+
+  const decisionSubject =
+    "Reduction of tax rate for Fairfax County Special Service District for the Control of Gypsy Moth Infestations";
+  const decisionText =
+    "ADOPTION OF A PROPOSED AMENDMENT TO THE CODE OF THE COUNTY OF FAIRFAX, APPENDIX I, FAIRFAX COUNTY SPECIAL SERVICE DISTRICT FOR THE CONTROL OF GYPSY MOTH INFESTATIONS, SECTION 5, TO REDUCE ITS TAX RATE";
+
+  const citationTokens = extractCitationTokens(
+    `${decisionSubject} ${decisionText}`,
+  );
+  const keywords = extractKeywords(decisionSubject);
+
+  const result = pickVerifiedVoteTally(
+    [girlScoutVote, gypsyMothVote, sarVote],
+    keywords,
+    citationTokens,
+  );
+
+  assertEquals(
+    result.vote_tally_id,
+    "vote-gypsymoth",
+    "must pick the actual amendment vote, not the adjacent proclamation the extractor linked",
+  );
+  assertEquals(result.matched_via, "citation");
+});
+
+Deno.test("pickVerifiedVoteTally: a unique citation match wins outright", () => {
+  const result = pickVerifiedVoteTally(
+    [
+      makeVote("a", "Some unrelated proclamation"),
+      makeVote("b", "Amendment to Chapter 67.1 sewer service charges"),
+    ],
+    ["sewer"],
+    ["CH67.1"],
+  );
+  assertEquals(result.vote_tally_id, "b");
+  assertEquals(result.matched_via, "citation");
+});
+
+Deno.test("pickVerifiedVoteTally: multiple citation matches fall back to a keyword tiebreak", () => {
+  const result = pickVerifiedVoteTally(
+    [
+      makeVote("a", "Chapter 67.1 sewer service charges revision"),
+      makeVote("b", "Chapter 67.1 general housekeeping cleanup"),
+    ],
+    ["sewer"],
+    ["CH67.1"],
+  );
+  assertEquals(result.vote_tally_id, "a");
+  assertEquals(result.matched_via, "keyword");
+});
+
+Deno.test("pickVerifiedVoteTally: keyword scoring picks the clear leader when there's no citation", () => {
+  const result = pickVerifiedVoteTally(
+    [
+      makeVote("a", "Proclamation for volunteer week"),
+      makeVote("b", "Gypsy Moth Infestation special service district tax rate"),
+    ],
+    ["gypsy", "moth", "infestation", "district"],
+    [],
+  );
+  assertEquals(result.vote_tally_id, "b");
+  assertEquals(result.matched_via, "keyword");
+});
+
+Deno.test("pickVerifiedVoteTally: a tied keyword score is ambiguous and returns no match", () => {
+  const result = pickVerifiedVoteTally(
+    [
+      makeVote("a", "Gypsy Moth control district"),
+      makeVote("b", "Gypsy Moth infestation program"),
+    ],
+    ["gypsy", "moth"],
+    [],
+  );
+  assertEquals(result.vote_tally_id, null, "a tie must never be guessed");
+});
+
+Deno.test("pickVerifiedVoteTally: zero keyword overlap returns no match", () => {
+  const result = pickVerifiedVoteTally(
+    [makeVote("a", "Unrelated proclamation about a parade")],
+    ["gypsy", "moth", "infestation"],
+    [],
+  );
+  assertEquals(result.vote_tally_id, null);
+});
+
+Deno.test("pickVerifiedVoteTally: no candidates on the document returns no match", () => {
+  const result = pickVerifiedVoteTally([], ["gypsy"], ["CH67.1"]);
+  assertEquals(result.vote_tally_id, null);
+  assertEquals(result.matched_via, null);
+});
+
+// ---------------------------------------------------------------------------
 // resolveEffectiveDate
 // ---------------------------------------------------------------------------
 
@@ -391,6 +507,7 @@ Deno.test("buildAmendmentEventRow: builds the exact shape reconciliation/pending
   const row = buildAmendmentEventRow(
     decision,
     "FACOCO_CH67.1SASESEDI_ART10CH_S67.1-10-2AVCOLASPSECHBACHHAWACH",
+    "verified-vote-1",
     "event-1",
   );
 
@@ -402,21 +519,21 @@ Deno.test("buildAmendmentEventRow: builds the exact shape reconciliation/pending
   assertEquals(row.adopted_date, "2000-04-24");
   assertEquals(row.effective_date, "2000-04-24"); // decision.effective_date was null -> falls back
   assertEquals(row.effective_date_source, "default");
-  assertEquals(row.vote_tally_id, "vote-1");
+  assertEquals(row.vote_tally_id, "verified-vote-1");
   assertEquals(row.document_id, "doc-1");
   assertEquals(row.ordinance_number, null);
   assertEquals(row.resolution_number, null);
 });
 
-Deno.test("buildAmendmentEventRow: throws rather than fabricating a vote_tally_id when null", () => {
-  const decision = makeDecision({ vote_tally_id: null });
+Deno.test("buildAmendmentEventRow: throws rather than fabricating a vote_tally_id when the verified id is null", () => {
+  const decision = makeDecision();
   let threw = false;
   try {
-    buildAmendmentEventRow(decision, "some-node", "event-1");
+    buildAmendmentEventRow(decision, "some-node", null, "event-1");
   } catch {
     threw = true;
   }
-  assert(threw, "must refuse to build a row without a real vote_tally_id");
+  assert(threw, "must refuse to build a row without a verified vote_tally_id");
 });
 
 Deno.test("buildPendingCodeChangeRow: builds a 'pending' row referencing the amendment event", () => {

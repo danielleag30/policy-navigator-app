@@ -9,7 +9,6 @@ import type { OllamaMessage } from "../_shared/ollama-client.ts";
 export interface PolicyDecisionForResolution {
   id: string;
   document_id: string;
-  vote_tally_id: string | null;
   meeting_date: string;
   decision_type: string;
   subject: string;
@@ -282,6 +281,81 @@ export function shouldAcceptResolution(result: ResolutionLlmResult): boolean {
     result.municode_node_id !== null;
 }
 
+// ── Vote tally verification ─────────────────────────────────────────────────────
+
+export interface VoteTallyCandidate {
+  id: string;
+  motion_text: string;
+}
+
+export interface VoteTallyMatch {
+  vote_tally_id: string | null;
+  matched_via: "citation" | "keyword" | null;
+}
+
+/**
+ * Finds the vote_tallies row on the same document that actually corresponds to
+ * this amendment decision. policy_decisions.vote_tally_id is set at extraction
+ * time from chunk adjacency and is NOT trustworthy on its own -- a board
+ * meeting document routinely contains several unrelated votes (e.g. a
+ * proclamation, an appropriation, and the actual ordinance amendment all in
+ * one document), and the adjacency link can point at the wrong one. This
+ * scores every vote on the document by the same citation/keyword signal
+ * already used for node resolution, rather than trusting any single
+ * pre-existing link.
+ *
+ * A single citation-token match (e.g. both the decision and a vote's
+ * motion_text mention "Appendix I") wins outright as the strongest possible
+ * signal. Otherwise the candidate with a clear keyword-overlap lead wins; a
+ * tie or zero overlap returns no match rather than guessing.
+ */
+export function pickVerifiedVoteTally(
+  candidates: VoteTallyCandidate[],
+  keywords: string[],
+  citationTokens: string[],
+): VoteTallyMatch {
+  if (candidates.length === 0) {
+    return { vote_tally_id: null, matched_via: null };
+  }
+
+  let pool = candidates;
+
+  if (citationTokens.length > 0) {
+    const citationMatches = candidates.filter((c) => {
+      const voteTokens = extractCitationTokens(c.motion_text);
+      return voteTokens.some((t) => citationTokens.includes(t));
+    });
+    if (citationMatches.length === 1) {
+      return { vote_tally_id: citationMatches[0].id, matched_via: "citation" };
+    }
+    if (citationMatches.length > 1) {
+      pool = citationMatches; // ambiguous on citation alone -- narrow, then keyword tiebreak
+    }
+  }
+
+  if (keywords.length === 0) {
+    return { vote_tally_id: null, matched_via: null };
+  }
+
+  const scored = pool
+    .map((c) => {
+      const text = c.motion_text.toLowerCase();
+      const score = keywords.filter((k) => text.includes(k)).length;
+      return { id: c.id, score };
+    })
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  if (scored.length === 0) {
+    return { vote_tally_id: null, matched_via: null };
+  }
+  if (scored.length > 1 && scored[1].score === scored[0].score) {
+    return { vote_tally_id: null, matched_via: null }; // tie -- ambiguous, don't guess
+  }
+
+  return { vote_tally_id: scored[0].id, matched_via: "keyword" };
+}
+
 // ── Row builders ───────────────────────────────────────────────────────────────
 
 export interface AmendmentEventInsert {
@@ -333,13 +407,16 @@ export function resolveEffectiveDate(
 export function buildAmendmentEventRow(
   decision: PolicyDecisionForResolution,
   resolvedNodeId: string,
+  verifiedVoteTallyId: string | null,
   newId: string,
 ): AmendmentEventInsert {
   const { effective_date, effective_date_source } = resolveEffectiveDate(
     decision,
   );
-  if (decision.vote_tally_id === null) {
-    throw new Error("buildAmendmentEventRow requires a non-null vote_tally_id");
+  if (!verifiedVoteTallyId) {
+    throw new Error(
+      "buildAmendmentEventRow requires a verified, non-null vote_tally_id -- never pass policy_decisions.vote_tally_id directly",
+    );
   }
 
   return {
@@ -351,7 +428,7 @@ export function buildAmendmentEventRow(
     effective_date,
     effective_date_source,
     amendment_text: decision.raw_extracted_text,
-    vote_tally_id: decision.vote_tally_id,
+    vote_tally_id: verifiedVoteTallyId,
     document_id: decision.document_id,
   };
 }
