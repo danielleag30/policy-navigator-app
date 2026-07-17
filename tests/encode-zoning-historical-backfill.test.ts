@@ -1,21 +1,25 @@
 /**
  * Static-source-inspection tests for the targeted, one-time EnCode zoning
  * historical backfill migration (supabase/migrations/
- * 20260717032755_encode_zoning_historical_backfill.sql) and its follow-up
- * correction (supabase/migrations/
- * 20260717070000_fix_encode_zoning_historical_superseded_date.sql). Matches
- * this repo's existing convention for data/content correctness (see
+ * 20260717032755_encode_zoning_historical_backfill.sql) and its two follow-up
+ * corrections (supabase/migrations/
+ * 20260717070000_fix_encode_zoning_historical_superseded_date.sql and
+ * 20260717080000_fix_encode_zoning_document_superseded_by_metadata.sql).
+ * Matches this repo's existing convention for data/content correctness (see
  * tests/encode-ingestion.test.ts's file header) since no live Supabase
- * instance is available in CI -- both migrations were already applied
+ * instance is available in CI -- all three migrations were already applied
  * directly to the hosted project and independently verified there (real
  * content, embeddings populated by the existing historical-embedding retry
- * backlog, superseded_date corrected to 2023-05-10); these tests guard the
+ * backlog, superseded_date corrected to 2023-05-10, and the parent document's
+ * raw_api_response.superseded_by corrected to match); these tests guard the
  * committed SQL against silent regressions.
  */
 
 const MIGRATION_PATH = "supabase/migrations/20260717032755_encode_zoning_historical_backfill.sql";
 const FIX_MIGRATION_PATH =
   "supabase/migrations/20260717070000_fix_encode_zoning_historical_superseded_date.sql";
+const FIX_METADATA_MIGRATION_PATH =
+  "supabase/migrations/20260717080000_fix_encode_zoning_document_superseded_by_metadata.sql";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -27,6 +31,10 @@ async function readMigration(): Promise<string> {
 
 async function readFixMigration(): Promise<string> {
   return await Deno.readTextFile(FIX_MIGRATION_PATH);
+}
+
+async function readFixMetadataMigration(): Promise<string> {
+  return await Deno.readTextFile(FIX_METADATA_MIGRATION_PATH);
 }
 
 Deno.test("migration is idempotent: guards on the reprint URL before inserting", async () => {
@@ -161,4 +169,63 @@ Deno.test("the correction migration is guarded by preconditions and targets exac
       sql.includes("Post-correction Home Occupations row did not verify"),
     "expected post-condition verification that the correction actually landed before considering the migration successful",
   );
+});
+
+Deno.test("the document-metadata correction migration fixes superseded_by on exactly the known document, guarded by preconditions", async () => {
+  const sql = await readFixMetadataMigration();
+  assert(
+    sql.includes("019f6e16-cac3-754d-9adb-efce9391f6e8"),
+    "expected the correction to target the known parent document id",
+  );
+  assert(
+    sql.includes(
+      "old_value text := 'zMOD comprehensive rewrite, Ord. 19-19-112, effective 2021-12-02'",
+    ),
+    "expected the precondition to require the exact original wrong superseded_by string before touching anything",
+  );
+  assert(
+    sql.includes("Chapter 112.2 valid readoption, effective 2023-05-10") &&
+      sql.includes(
+        "Berry v. Board of Supervisors of Fairfax County, 884 S.E.2d 515 (Va. 2023)",
+      ),
+    "expected the corrected superseded_by value to cite the real, verified case (Berry v. Board of Supervisors, 884 S.E.2d 515 (Va. 2023)) and the 2023-05-10 date",
+  );
+  const newValueMatch = sql.match(/new_value text := '([^']*)'/);
+  assert(
+    newValueMatch !== null,
+    "expected a new_value text declaration to inspect",
+  );
+  assert(
+    !newValueMatch![1].includes("Ord. 19-19-112"),
+    "the corrected (new_value) string must not repeat the fabricated 'Ord. 19-19-112' citation",
+  );
+  assert(
+    sql.includes("jsonb_set(") && sql.includes("'{superseded_by}'"),
+    "expected a targeted jsonb_set on the superseded_by key only, not a blind overwrite of raw_api_response",
+  );
+  assert(
+    sql.includes("raw_api_response ->> 'historical_backfill' = 'true'") &&
+      sql.includes("raw_api_response ->> 'reprint_date' = '2021-06-30'"),
+    "expected the post-condition to verify the other raw_api_response keys were left untouched",
+  );
+});
+
+Deno.test("no data field (as opposed to explanatory history comments) cites the fabricated 'Ord. 19-19-112' ordinance number as a real value", async () => {
+  // FIX_MIGRATION_PATH's header comment and FIX_METADATA_MIGRATION_PATH's
+  // old_value precondition both intentionally quote the original wrong
+  // claim -- as history being corrected / the exact string a precondition
+  // must match -- not an assertion of fact, so both are excluded here.
+  // FIX_METADATA_MIGRATION_PATH's new_value is checked separately above.
+  const paths = [
+    MIGRATION_PATH,
+    "eval/cases/temporal-correctness.json",
+    "eval/cases/adversarial-near-miss.json",
+  ];
+  for (const path of paths) {
+    const text = await Deno.readTextFile(path);
+    assert(
+      !text.includes("Ord. 19-19-112"),
+      `${path} must not cite the unverified/fabricated 'Ord. 19-19-112' ordinance number`,
+    );
+  }
 });

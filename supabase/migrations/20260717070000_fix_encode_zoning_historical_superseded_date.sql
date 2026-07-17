@@ -12,8 +12,9 @@
 --
 --   1. The Board adopted zMOD on 2021-03-23, intended effective 2021-07-01,
 --      as Chapter 112.1.
---   2. The Virginia Supreme Court declared that adoption VOID on 2023-03-23
---      (FOIA violation -- adopted at a mostly-virtual meeting with no valid
+--   2. The Virginia Supreme Court declared that adoption VOID AB INITIO on
+--      2023-03-23 (Berry v. Board of Supervisors of Fairfax County, 884
+--      S.E.2d 515 (Va. 2023)) for a FOIA violation (adopted at a mostly-virtual meeting with no valid
 --      in-person hearing). The county reverted to the pre-zMOD 1978 Chapter
 --      112 as the operative law ("the 1978 Zoning Ordinance is presently in
 --      effect" per county spokesperson) -- i.e. the exact text in the 2

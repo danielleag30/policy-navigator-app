@@ -10,7 +10,8 @@
 -- ingested Amendment History Table (chunk 019f4c56-664d-775d-b22a-38993c6abc77):
 -- the Board originally adopted zMOD on 2021-03-23 (effective 2021-07-01, as
 -- Chapter 112.1), but the Virginia Supreme Court declared that adoption VOID
--- on 2023-03-23 for a FOIA violation (adopted at a mostly-virtual meeting with
+-- AB INITIO on 2023-03-23 (Berry v. Board of Supervisors of Fairfax County,
+-- 884 S.E.2d 515 (Va. 2023)) for a FOIA violation (adopted at a mostly-virtual meeting with
 -- no valid in-person hearing) -- the county reverted to the pre-zMOD 1978
 -- Chapter 112 as the operative law ("the 1978 Zoning Ordinance is presently in
 -- effect" per county spokesperson). The Board validly readopted the
@@ -85,7 +86,7 @@ BEGIN
       'archive_page', 'https://online.encodeplus.com/regs/fairfaxcounty-va/archivedialog.aspx',
       'reprint_label', '2021 Reprint',
       'reprint_date', '2021-06-30',
-      'superseded_by', 'Chapter 112.2 valid readoption, effective 2023-05-10 (2021 zMOD adoption later declared void by VA Supreme Court)',
+      'superseded_by', 'Chapter 112.2 valid readoption, effective 2023-05-10 (2021 zMOD adoption declared void ab initio by Berry v. Board of Supervisors of Fairfax County, 884 S.E.2d 515 (Va. 2023))',
       'note', 'One-time targeted backfill for eval cases requiring pre-zMOD zoning text (old-style citations); not part of the recurring EnCode crawler.'
     )
   );
