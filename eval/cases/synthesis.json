@@ -1,0 +1,372 @@
+[
+  {
+    "id": "synthesis-001",
+    "category": "synthesis",
+    "query": "In one answer, connect the traffic-safety sources: what is the deadline for police accident reports, and what was the FY 2025 preventable accident rate per 100,000 miles driven?",
+    "chunk_ids": [
+      "019f34cc-7827-7691-a5ee-13b506ecf41d",
+      "019f4ea5-e0e3-7a1b-8c71-600c03d2d1a4"
+    ],
+    "criteria": [
+      {
+        "id": "synthesis-001-cites-ordinance",
+        "description": "Response cites the ordinance_provisions accident-report deadline chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34cc-7827-7691-a5ee-13b506ecf41d" }
+      },
+      {
+        "id": "synthesis-001-cites-budget",
+        "description": "Response cites the budget_indicators preventable-accident-rate chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4ea5-e0e3-7a1b-8c71-600c03d2d1a4" }
+      },
+      {
+        "id": "synthesis-001-contains-deadline",
+        "description": "Answer includes the twenty-four-hour deadline",
+        "check": { "type": "answer_contains", "substring": "twenty-four" }
+      },
+      {
+        "id": "synthesis-001-contains-rate",
+        "description": "Answer includes the 1.06 accident rate",
+        "check": { "type": "answer_contains", "substring": "1.06" }
+      },
+      {
+        "id": "synthesis-001-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Requires ordinance_provisions plus budget_indicators. Evidence: ordinance says reports are due 'within twenty-four (24) hours'; budget text says the preventable accident rate decreased 'from 1.12 to 1.06.'"
+  },
+  {
+    "id": "synthesis-002",
+    "category": "synthesis",
+    "query": "Compare two environmental/governance facts: how many members are on the Exception Review Committee, and how many parks and acres does the Park Authority maintain?",
+    "chunk_ids": [
+      "019f34d1-7797-7271-84f8-d9245a788d1f",
+      "019f4eff-f832-7c39-a901-c60db8ba7c61"
+    ],
+    "criteria": [
+      {
+        "id": "synthesis-002-cites-ordinance",
+        "description": "Response cites the ordinance_provisions Exception Review Committee membership chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d1-7797-7271-84f8-d9245a788d1f" }
+      },
+      {
+        "id": "synthesis-002-cites-narrative",
+        "description": "Response cites the narrative_chunks Park Authority Trust Funds chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4eff-f832-7c39-a901-c60db8ba7c61" }
+      },
+      {
+        "id": "synthesis-002-contains-members",
+        "description": "Answer includes 11 members",
+        "check": { "type": "answer_contains", "substring": "11 members" }
+      },
+      {
+        "id": "synthesis-002-contains-acres",
+        "description": "Answer includes 23,869 acres",
+        "check": { "type": "answer_contains", "substring": "23,869 acres" }
+      },
+      {
+        "id": "synthesis-002-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Requires ordinance_provisions plus narrative_chunks. Evidence: ordinance says 'composed of 11 members'; narrative says the Park Authority maintains '424 parks and 23,869 acres of park land.'"
+  },
+  {
+    "id": "synthesis-003",
+    "category": "synthesis",
+    "query": "Give a two-part answer: what does Section 33-1-2 require before someone acts as a precious metal or gem dealer, and how much FY 2027 funding supports year two of IT architecture optimization?",
+    "chunk_ids": [
+      "019f34be-077f-70bc-a77a-237f63a8f031",
+      "019f53e4-ff1e-701f-9195-420d3bbeef47"
+    ],
+    "criteria": [
+      {
+        "id": "synthesis-003-cites-ordinance",
+        "description": "Response cites the ordinance_provisions dealer-permit chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34be-077f-70bc-a77a-237f63a8f031" }
+      },
+      {
+        "id": "synthesis-003-cites-budget",
+        "description": "Response cites the budget_indicators IT optimization chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f53e4-ff1e-701f-9195-420d3bbeef47" }
+      },
+      {
+        "id": "synthesis-003-contains-permit",
+        "description": "Answer mentions a permit from the Director",
+        "check": { "type": "answer_contains", "substring": "permit from the Director" }
+      },
+      {
+        "id": "synthesis-003-contains-funding",
+        "description": "Answer includes $5,000,000",
+        "check": { "type": "answer_contains", "substring": "$5,000,000" }
+      },
+      {
+        "id": "synthesis-003-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Requires ordinance_provisions plus budget_indicators. Evidence: ordinance says a dealer must obtain 'a permit from the Director'; budget text says '$5,000,000' supports year two of IT architecture optimization."
+  },
+  {
+    "id": "synthesis-004",
+    "category": "synthesis",
+    "query": "Summarize both facility-operation facts: what lighting is required in bathhouse facilities, and what percent of DPSC 9-1-1 calls were answered within 10 seconds in the last two displayed columns?",
+    "chunk_ids": [
+      "019f34c8-bf0d-7ae9-b754-7030ea70787a",
+      "019f56e5-d340-7cd4-85fb-9d5209e1bc4c"
+    ],
+    "criteria": [
+      {
+        "id": "synthesis-004-cites-ordinance",
+        "description": "Response cites the ordinance_provisions bathhouse-lighting chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34c8-bf0d-7ae9-b754-7030ea70787a" }
+      },
+      {
+        "id": "synthesis-004-cites-narrative",
+        "description": "Response cites the narrative_chunks DPSC 9-1-1 performance chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f56e5-d340-7cd4-85fb-9d5209e1bc4c" }
+      },
+      {
+        "id": "synthesis-004-contains-foot-candles",
+        "description": "Answer includes 30 foot-candles",
+        "check": { "type": "answer_contains", "substring": "30 foot-candles" }
+      },
+      {
+        "id": "synthesis-004-contains-75",
+        "description": "Answer includes 75%",
+        "check": { "type": "answer_contains", "substring": "75%" }
+      },
+      {
+        "id": "synthesis-004-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Requires ordinance_provisions plus narrative_chunks. Evidence: ordinance says '30 foot-candles measured 24 inches above the floor'; narrative row ends the 9-1-1 timeliness series with '75% 75%.'"
+  },
+  {
+    "id": "synthesis-005",
+    "category": "synthesis",
+    "query": "Connect stormwater regulation and funding: what land-disturbance threshold triggers Article 6 review for less-than-one-acre activity, and what FY 2027 Stormwater Services revenue amount is listed for the Capital Construction Program?",
+    "chunk_ids": [
+      "019f34d2-3ed8-72aa-8d79-9a787038f554",
+      "019f5130-f212-7ada-9f40-fa38a6d87343"
+    ],
+    "criteria": [
+      {
+        "id": "synthesis-005-cites-ordinance",
+        "description": "Response cites the ordinance_provisions land-disturbing-activity chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34d2-3ed8-72aa-8d79-9a787038f554" }
+      },
+      {
+        "id": "synthesis-005-cites-budget",
+        "description": "Response cites the budget_indicators Stormwater Services revenue chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f5130-f212-7ada-9f40-fa38a6d87343" }
+      },
+      {
+        "id": "synthesis-005-contains-threshold",
+        "description": "Answer includes 2,500 square feet",
+        "check": { "type": "answer_contains", "substring": "2,500 square feet" }
+      },
+      {
+        "id": "synthesis-005-contains-revenue",
+        "description": "Answer includes 78,519,185",
+        "check": { "type": "answer_contains", "substring": "78,519,185" }
+      },
+      {
+        "id": "synthesis-005-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Requires ordinance_provisions plus budget_indicators. Evidence: ordinance says '2,500 square feet or more and is less than one acre'; budget row has indicator 'Stormwater Services revenues' value_actual 78519185.0000 dollars."
+  },
+  {
+    "id": "synthesis-006",
+    "category": "synthesis",
+    "query": "Using both public-meeting and performance-measure sources, what time limit applied to public-comment speakers, and what was the reported percent for Clerk's Board Summaries posted within 14 days?",
+    "chunk_ids": [
+      "019f467f-4658-7c62-b5d8-1c79555e709e",
+      "019f535e-793c-7365-a2e2-845406c7029b"
+    ],
+    "criteria": [
+      {
+        "id": "synthesis-006-cites-narrative",
+        "description": "Response cites the narrative_chunks public-comment rules chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f467f-4658-7c62-b5d8-1c79555e709e" }
+      },
+      {
+        "id": "synthesis-006-cites-budget",
+        "description": "Response cites the budget_indicators Clerk's Board Summaries chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f535e-793c-7365-a2e2-845406c7029b" }
+      },
+      {
+        "id": "synthesis-006-contains-three-minutes",
+        "description": "Answer includes three minutes",
+        "check": { "type": "answer_contains", "substring": "three minutes" }
+      },
+      {
+        "id": "synthesis-006-contains-100",
+        "description": "Answer includes 100.0%",
+        "check": { "type": "answer_contains", "substring": "100.0%" }
+      },
+      {
+        "id": "synthesis-006-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Requires narrative_chunks plus budget_indicators. Evidence: public-comment chunk says each speaker is given 'three minutes'; budget row repeats '100.0%' for Clerk's Board Summaries posted within 14 days."
+  },
+  {
+    "id": "synthesis-007",
+    "category": "synthesis",
+    "query": "For Park Authority context, state how many parks and acres the Park Authority maintains, and give the FY 2025 actual expenditures for Park Easement Administration.",
+    "chunk_ids": [
+      "019f4eff-f832-7c39-a901-c60db8ba7c61",
+      "019f55d1-0721-7b4a-a262-ead679d4a7f7"
+    ],
+    "criteria": [
+      {
+        "id": "synthesis-007-cites-narrative",
+        "description": "Response cites the narrative_chunks Park Authority Trust Funds chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4eff-f832-7c39-a901-c60db8ba7c61" }
+      },
+      {
+        "id": "synthesis-007-cites-budget",
+        "description": "Response cites the budget_indicators Park Easement Administration chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f55d1-0721-7b4a-a262-ead679d4a7f7" }
+      },
+      {
+        "id": "synthesis-007-contains-parks",
+        "description": "Answer includes 424 parks",
+        "check": { "type": "answer_contains", "substring": "424 parks" }
+      },
+      {
+        "id": "synthesis-007-contains-expenditures",
+        "description": "Answer includes 2,165,446.55",
+        "check": { "type": "answer_contains", "substring": "2,165,446.55" }
+      },
+      {
+        "id": "synthesis-007-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Requires narrative_chunks plus budget_indicators. Evidence: narrative says '424 parks and 23,869 acres'; budget row has Park Easement Administration actual expenditures value_actual 2165446.5500 dollars."
+  },
+  {
+    "id": "synthesis-008",
+    "category": "synthesis",
+    "query": "Tie the election-meeting note to the budget table: who were the election officials welcomed by Chairman McKay, and what FY 2027 total expenditures were listed for the General Registrar funding table?",
+    "chunk_ids": [
+      "019f43b2-57d3-7033-a803-eb1d01227d30",
+      "019f48d2-3c7a-74d9-a3ef-a6c3386c0447"
+    ],
+    "criteria": [
+      {
+        "id": "synthesis-008-cites-narrative",
+        "description": "Response cites the narrative_chunks election-officials chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f43b2-57d3-7033-a803-eb1d01227d30" }
+      },
+      {
+        "id": "synthesis-008-cites-budget",
+        "description": "Response cites the budget_indicators General Registrar expenditures chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f48d2-3c7a-74d9-a3ef-a6c3386c0447" }
+      },
+      {
+        "id": "synthesis-008-contains-spicer",
+        "description": "Answer includes Eric L. Spicer",
+        "check": { "type": "answer_contains", "substring": "Eric L. Spicer" }
+      },
+      {
+        "id": "synthesis-008-contains-expenditures",
+        "description": "Answer includes $9,572,304",
+        "check": { "type": "answer_contains", "substring": "$9,572,304" }
+      },
+      {
+        "id": "synthesis-008-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Requires narrative_chunks plus budget_indicators. Evidence: narrative names Eric L. Spicer and Beth Dixon Methfessel; budget row lists 'Total Expenditures ... $9,572,304.'"
+  },
+  {
+    "id": "synthesis-009",
+    "category": "synthesis",
+    "query": "Answer both parts: which public commenters were listed for meals tax and no casino in Tysons, and how does the zoning ordinance define the Comprehensive Plan?",
+    "chunk_ids": [
+      "019f4347-4357-7836-9fe9-56b3d28fe081",
+      "019f4c4f-d74e-7549-a44f-7122c2c80295"
+    ],
+    "criteria": [
+      {
+        "id": "synthesis-009-cites-narrative",
+        "description": "Response cites the narrative_chunks public-comment speaker-list chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4347-4357-7836-9fe9-56b3d28fe081" }
+      },
+      {
+        "id": "synthesis-009-cites-ordinance",
+        "description": "Response cites the ordinance_provisions Comprehensive Plan definition chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c4f-d74e-7549-a44f-7122c2c80295" }
+      },
+      {
+        "id": "synthesis-009-contains-speaker",
+        "description": "Answer includes Danielle Lasley",
+        "check": { "type": "answer_contains", "substring": "Danielle Lasley" }
+      },
+      {
+        "id": "synthesis-009-contains-plan",
+        "description": "Answer describes the Comprehensive Plan as guiding physical development",
+        "check": { "type": "answer_contains", "substring": "physical development" }
+      },
+      {
+        "id": "synthesis-009-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Requires narrative_chunks plus ordinance_provisions. Evidence: narrative says 'Sarah White - Regarding Meals Tax' and 'Danielle Lasley - Regarding No Casino in Tysons'; ordinance definition says the Comprehensive Plan is intended to guide 'physical development of the County.'"
+  },
+  {
+    "id": "synthesis-010",
+    "category": "synthesis",
+    "query": "Combine the facility code and Fire and Rescue performance measure: what must bathhouse light fixtures do, and how many senior citizens were served?",
+    "chunk_ids": [
+      "019f34c8-bf0d-7ae9-b754-7030ea70787a",
+      "019f5356-b169-7e9f-a9c6-a1a2c2680fd3"
+    ],
+    "criteria": [
+      {
+        "id": "synthesis-010-cites-ordinance",
+        "description": "Response cites the ordinance_provisions bathhouse-lighting chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f34c8-bf0d-7ae9-b754-7030ea70787a" }
+      },
+      {
+        "id": "synthesis-010-cites-budget",
+        "description": "Response cites the budget_indicators senior-citizens-served chunk",
+        "check": { "type": "cites_chunk", "chunk_id": "019f5356-b169-7e9f-a9c6-a1a2c2680fd3" }
+      },
+      {
+        "id": "synthesis-010-contains-shielded",
+        "description": "Answer says light fixtures must be shielded",
+        "check": { "type": "answer_contains", "substring": "shielded" }
+      },
+      {
+        "id": "synthesis-010-contains-seniors",
+        "description": "Answer includes 2,486",
+        "check": { "type": "answer_contains", "substring": "2,486" }
+      },
+      {
+        "id": "synthesis-010-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Requires ordinance_provisions plus budget_indicators. Evidence: ordinance says 'All light fixtures shall be shielded'; budget row has indicator 'Senior citizens served' value_actual 2486.0000."
+  }
+]
