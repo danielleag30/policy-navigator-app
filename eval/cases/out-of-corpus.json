@@ -39,7 +39,7 @@
         "check": { "type": "is_refusal" }
       }
     ],
-    "notes": "Verified absence in live DB: indexed search for 'delivery robot' OR 'sidewalk robot' OR 'personal delivery device' returned 0 matches across ordinance_provisions, narrative_chunks, budget_indicators, vote_tallies, and policy_decisions."
+    "notes": "Live DB literal sweep found one unrelated match for 'personal delivery device': ordinance_provisions chunk 019f34cb-05b8-7778-9d1a-d83528a3619f defines 'Vehicle' in a trespass-towing section as excluding 'personal delivery devices and devices moved by human power.' That definitional exclusion does not answer the tested question about County permit requirements for delivery robots operating on sidewalks; searches for 'delivery robot' and 'sidewalk robot' returned 0 matches across ordinance_provisions, narrative_chunks, budget_indicators, vote_tallies, and policy_decisions."
   },
   {
     "id": "out-of-corpus-004",
@@ -53,7 +53,7 @@
         "check": { "type": "is_refusal" }
       }
     ],
-    "notes": "Verified absence in live DB: indexed search for escooter OR 'e scooter' OR 'electric scooter' OR 'scooter fleet' returned 0 matches across ordinance_provisions, narrative_chunks, budget_indicators, vote_tallies, and policy_decisions."
+    "notes": "Live DB literal sweep found one unrelated substring match for 'e scooter' inside the words 'the scooter': narrative_chunks chunk 019f46b0-9d62-79e6-8a78-3b77c81c8437 describes a Herndon Senior Center participant whose 'scooter battery was dead' and two people who pushed his scooter to the center. That personal mobility-scooter story does not answer the tested question about shared micromobility operator fleet caps; searches for escooter, 'electric scooter,' and 'scooter fleet' returned 0 matches across ordinance_provisions, narrative_chunks, budget_indicators, vote_tallies, and policy_decisions."
   },
   {
     "id": "out-of-corpus-005",
