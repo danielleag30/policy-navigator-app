@@ -298,5 +298,53 @@
       }
     ],
     "notes": "Real amendment (Ord. 36-25-124.1), verified live -- this is one of the 4 sections explicitly named in PR #97/#98 (§124.1-2-4), node-id-corrected by PR #98 to share the current row's node_id. Historical row: id 019f6927-6a78-7fb9-8c9c-c79c1e7eb1dc, node S124.1-2-4LASTACCHBAPRAR, effective_date 2026-01-16, superseded_date 2026-04-28, titled 'Chesapeake Bay Preservation Act Land-Disturbing Activity', subsection (B) reads 'Unless excluded by Section 124.1-1-7 , land disturbing activities with state permits issued after June 30, 2014, do not require completion of a registration statement...'. Current row: id 019f34d2-440d-7b49-ac14-041cc75c7665, same node_id (post-PR #98), effective_date 2026-04-28, retitled 'Land-Disturbing Activity in Chesapeake Bay Preservation Areas', subsection (B) rewritten to 'Unless part of a common plan of development or sale that disturbs one or more acre, land-disturbing activities in Chesapeake Bay Preservation Areas that are equal to or greater than 2,500 square feet but less than one acre do not require completion of a registration statement...'. Genuine substantive scope-of-applicability change confirmed (content_hash differs: 68352fe06... vs f0d83fd67...), not just a title change."
+  },
+  {
+    "id": "temporal-013",
+    "category": "temporal_correctness",
+    "query": "What are the requirements for constructing an accessory dwelling unit on a single-family residential lot in Fairfax County?",
+    "chunk_ids": ["019f4c4c-7368-74e9-9e28-946612b06d8b"],
+    "criteria": [
+      {
+        "id": "temporal-013-cites",
+        "description": "Response cites the current Accessory Living Unit standards (subsection 4102.7.B)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c4c-7368-74e9-9e28-946612b06d8b" }
+      },
+      {
+        "id": "temporal-013-contains-current-size",
+        "description": "Answer reflects the current 800-square-foot / 40% size cap, not the superseded 35%-only cap",
+        "check": { "type": "answer_contains", "substring": "800 square" }
+      },
+      {
+        "id": "temporal-013-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Real, one-time targeted backfill (2026-07-17): pre-zMOD old text extracted directly from EnCode Archives' \"2021 Reprint\" PDF (online.encodeplus.com/regs/fairfaxcounty-va/doclibrary.aspx?id=922528cd-6de4-4112-8678-79e8ed26a092, dated 2021-06-30 -- last full reprint before the Dec 2, 2021 zMOD rewrite, Ord. 19-19-112). Historical row: id 019f6e16-cac6-797e-a372-83f5e28a9cd5, node encode:historical:8-918, effective_date 2021-06-30, superseded_date 2021-12-02, 'Sect. 8-918 Additional Standards for Accessory Dwelling Units' -- required BZA special-permit approval (not by-right/administrative), size capped at 35% of principal dwelling's gross floor area, and required one occupant to qualify as elderly (55+) and/or disabled, with the permit expiring after 5 years (renewable). Current row: id 019f4c4c-7368-74e9-9e28-946612b06d8b, node encode:2553 ('4102.7 Accessory Uses'), subsection B ('Accessory Living Unit') -- administrative permit by default (special permit only for a larger unit), size capped at the lesser of 800 sq ft or 40% of gross floor area, no age/disability occupancy requirement, no permit expiration. Genuine substantive change confirmed by direct comparison of both texts, not a relabeling."
+  },
+  {
+    "id": "temporal-014",
+    "category": "temporal_correctness",
+    "query": "What types of home-based businesses are permitted under Fairfax County zoning regulations?",
+    "chunk_ids": ["019f4c4c-7368-74e9-9e28-946612b06d8b"],
+    "criteria": [
+      {
+        "id": "temporal-014-cites",
+        "description": "Response cites the current Home-Based Business standards (subsection 4102.7.H)",
+        "check": { "type": "cites_chunk", "chunk_id": "019f4c4c-7368-74e9-9e28-946612b06d8b" }
+      },
+      {
+        "id": "temporal-014-contains-current-size",
+        "description": "Answer reflects the current 400-square-foot area cap for a home-based business, which did not exist under the pre-zMOD Home Occupation standards",
+        "check": { "type": "answer_contains", "substring": "400 square" }
+      },
+      {
+        "id": "temporal-014-not-refusal",
+        "description": "Response is not a refusal",
+        "check": { "type": "not_refusal" }
+      }
+    ],
+    "notes": "Real, one-time targeted backfill (2026-07-17): same EnCode Archives \"2021 Reprint\" PDF as temporal-013 (dated 2021-06-30, pre-zMOD). Historical row: id 019f6e16-cac8-77f7-8653-3c0f5eacfc9c, node encode:historical:10-300, effective_date 2021-06-30, superseded_date 2021-12-02, Article 10 Part 3 'Home Occupations' (Sect. 10-301 to 10-305) -- permitted list limited to named trades (artists/sculptors, authors/composers, dressmakers, home crafts, office facilities, schools of special education capped at 4 pupils at a time/8 per day, letting of 2 rooms to boarders, horseback riding lessons), no explicit square-footage cap, barbershops/beauty parlors flatly listed under 'Home Occupations Not Permitted'. Current row: id 019f4c4c-7368-74e9-9e28-946612b06d8b, node encode:2553, subsection H ('Home-Based Business') -- different permitted-use list (general online retail, small health/exercise facility, limited household repair, office, sewing/tailoring only, music/photography/art studios, small-scale/home food production, specialized instruction center), an explicit 400-square-foot total area cap, and barbershops/hair salons now allowed with special permit approval rather than being flatly prohibited. Genuine substantive change confirmed by direct comparison, not a relabeling -- old 'Home Occupation' terminology itself no longer exists in the current ordinance."
   }
 ]
