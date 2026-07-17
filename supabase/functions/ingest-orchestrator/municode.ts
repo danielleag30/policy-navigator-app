@@ -636,6 +636,7 @@ async function drainQueue(
       );
       return {
         documentId: ctx.documentId,
+        supplementJobId: ctx.jobId,
         nodeIds: [],
         skipped: false,
         complete: false,
@@ -683,6 +684,7 @@ async function drainQueue(
 
   return {
     documentId: ctx.documentId,
+    supplementJobId: ctx.jobId,
     nodeIds,
     skipped: false,
     complete: true,
@@ -694,7 +696,7 @@ const RESUME_LEASE_MINUTES = 5;
 
 type ResumableLookup =
   | { kind: "claimed"; documentId: string; state: ResumeState }
-  | { kind: "leased"; documentId: string }
+  | { kind: "leased"; documentId: string; supplementJobId: string }
   | { kind: "none" };
 
 /**
@@ -753,7 +755,11 @@ async function findResumableDocument(): Promise<ResumableLookup> {
   }
   if (!claimed) {
     // Someone else holds an unexpired lease on this document right now.
-    return { kind: "leased", documentId: candidate.id as string };
+    return {
+      kind: "leased",
+      documentId: candidate.id as string,
+      supplementJobId: (candidate.municode_resume_state as ResumeState).jobId,
+    };
   }
 
   return {
@@ -1703,6 +1709,7 @@ export async function handleMunicodeHistoricalBackfill(
 
 export interface MunicodeResult {
   documentId: string;
+  supplementJobId: string;
   nodeIds: string[];
   skipped: boolean;
   /** false when the soft deadline was hit mid-walk and a resume is needed on the next invocation. */
@@ -1739,6 +1746,7 @@ export async function handleMunicode(
     );
     return {
       documentId: resumable.documentId,
+      supplementJobId: resumable.supplementJobId,
       nodeIds: [],
       skipped: false,
       complete: false,
@@ -1827,6 +1835,7 @@ export async function handleMunicode(
     console.log(`[municode] duplicate content_hash — skipped`);
     return {
       documentId: existing.id as string,
+      supplementJobId: jobId,
       nodeIds: [],
       skipped: true,
       complete: true,
@@ -1942,6 +1951,7 @@ export async function handleMunicode(
         );
         return {
           documentId: orphan!.id as string,
+          supplementJobId: jobId,
           nodeIds: [],
           skipped: false,
           complete: false,
@@ -1969,6 +1979,7 @@ export async function handleMunicode(
       }
       return {
         documentId,
+        supplementJobId: jobId,
         nodeIds: (rows ?? []).map((r) => r.municode_node_id as string),
         skipped: false,
         complete: true,
