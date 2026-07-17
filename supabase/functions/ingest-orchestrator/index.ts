@@ -58,6 +58,7 @@ import {
   type PendingIngestionClaim,
   runPendingIngestionLoop,
 } from "./_multi-row-loop.ts";
+import { recordAiSessionDeferredPendingAlert } from "../_shared/pending-alerts.ts";
 
 // Supabase.ai.Session is injected by the Edge Function runtime.
 // Declare here so TypeScript resolves it; actual availability is checked at runtime.
@@ -184,10 +185,7 @@ async function deferIngestion(
       `Defer-without-retry DB update failed (${reason}): ${deferErr.message}`,
     );
   }
-  await writePendingAlert(
-    pendingIngestionId,
-    `AI Session unavailable (${reason}) — deferred without consuming retry`,
-  );
+  await recordAiSessionDeferredPendingAlert(db, pendingIngestionId, reason);
   console.warn(`[orchestrator] deferred ingestion: ${reason}`);
   return success({ status: "deferred", reason: "ai_session_unavailable" });
 }
