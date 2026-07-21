@@ -345,6 +345,7 @@ function tableToText(tableHtml: string): string {
 
     const parts = row.map((cell, col) => {
       const header = columnHeaders[col] || `Column ${col + 1}`;
+      // TODO: detect EnCode use-table legends before using this non-allowed wording; other table types may need a neutral blank-cell label.
       const value = cell?.text || "blank cell (not allowed)";
       return `${header}: ${value}`;
     });
