@@ -586,8 +586,53 @@ function candidateCorpus(c: EnrichedCandidate, doc?: SourceDocument): string {
   ].map(normalizedText).join(" ");
 }
 
-function mentionsRealEstateTax(query: string): boolean {
-  return /\b(real estate|property)\b/i.test(query) && /\btax\b/i.test(query);
+const BUDGET_INDICATOR_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "at",
+  "county",
+  "current",
+  "currently",
+  "fairfax",
+  "for",
+  "in",
+  "is",
+  "latest",
+  "now",
+  "of",
+  "rate",
+  "the",
+  "this",
+  "today",
+  "va",
+  "value",
+  "virginia",
+  "what",
+  "whats",
+  "year",
+]);
+
+function budgetIndicatorQueryTerms(query: string): string[] {
+  const normalized = query.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  const terms = normalized.split(/\s+/).filter((term) =>
+    term.length > 2 && !BUDGET_INDICATOR_STOPWORDS.has(term) &&
+    !/^(19|20)\d{2}$/.test(term)
+  );
+  return [...new Set(terms)];
+}
+
+function matchesBudgetIndicatorQuery(
+  query: string,
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): boolean {
+  if (c.table !== "budget_indicators") return false;
+  const corpus = candidateCorpus(c, doc);
+  const terms = budgetIndicatorQueryTerms(query);
+  if (terms.length === 0) return true;
+  return terms.every((term) => corpus.includes(term));
 }
 
 function isRelevantTaxRateCandidate(
@@ -597,8 +642,9 @@ function isRelevantTaxRateCandidate(
 ): boolean {
   if (!/\btax\b/i.test(query) || !/\brate\b/i.test(query)) return false;
   const corpus = candidateCorpus(c, doc);
-  if (mentionsRealEstateTax(query)) {
-    return /\b(real estate|property)\b/.test(corpus) && /\btax\b/.test(corpus);
+  if (c.table === "budget_indicators") {
+    return /\btax\b/.test(corpus) && /\brate\b/.test(corpus) &&
+      matchesBudgetIndicatorQuery(query, c, doc);
   }
   return /\btax\b/.test(corpus) && /\brate\b/.test(corpus);
 }
@@ -718,7 +764,7 @@ function budgetIndicatorCandidate(
   };
 }
 
-async function fetchCurrentTaxRateBudgetIndicators(
+async function fetchCurrentBudgetIndicatorRows(
   query: string,
 ): Promise<EnrichedCandidate[]> {
   if (
@@ -734,11 +780,11 @@ async function fetchCurrentTaxRateBudgetIndicators(
       "*, documents!inner(id, url, title, filename, ingested_at, source_published_at, fiscal_year)",
     )
     .or(
-      "program.ilike.%Real Estate Tax%,indicator_name.ilike.%Real Estate Tax%,raw_extracted_text.ilike.%Real Estate tax%",
+      "program.ilike.%Tax%,indicator_name.ilike.%Tax%,raw_extracted_text.ilike.%tax%",
     )
     .not("value_actual", "is", null)
     .order("fiscal_year", { ascending: false })
-    .limit(20);
+    .limit(200);
 
   if (dbErr) {
     console.error(
@@ -751,7 +797,8 @@ async function fetchCurrentTaxRateBudgetIndicators(
   return ((data ?? []) as Record<string, unknown>[])
     .filter((row) => {
       const doc = row.documents as SourceDocument | undefined;
-      return isAdoptedBudgetSource(budgetIndicatorCandidate(row), doc);
+      return isAdoptedBudgetSource(budgetIndicatorCandidate(row), doc) &&
+        isRelevantTaxRateCandidate(query, budgetIndicatorCandidate(row), doc);
     })
     .slice(0, 3)
     .map((row) => {
@@ -764,7 +811,7 @@ async function prependCurrentBudgetIndicators(
   query: string,
   candidates: EnrichedCandidate[],
 ): Promise<EnrichedCandidate[]> {
-  const currentIndicators = await fetchCurrentTaxRateBudgetIndicators(query);
+  const currentIndicators = await fetchCurrentBudgetIndicatorRows(query);
   if (currentIndicators.length === 0) return candidates;
 
   const seen = new Set(currentIndicators.map((c) => c.key));
