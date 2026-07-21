@@ -207,6 +207,45 @@ Deno.test("extractSectionText: scopes extraction to the id=thePage/secid-matchin
   );
 });
 
+Deno.test("extractSectionText: preserves EnCode use-table district attribution from image alt headers", () => {
+  const html = `
+<div id="doc-view-content">
+<div id="thePage" class="textPage" secid="2545" role="main">
+<section id="secid-2545"><h4>Use Table for Residential, Commercial, and Industrial Districts</h4></section>
+<table class="general small">
+  <thead>
+    <tr><th colspan="5">TABLE 4101.1: Use Table for Residential, Commercial, and Industrial Districts</th></tr>
+    <tr><th rowspan="2">Use</th><th colspan="3">Residential Districts</th><th rowspan="2">Use-Specific Standards</th></tr>
+    <tr>
+      <th><img alt="R-C" src="r-c.png"></th>
+      <th><img alt="R-E" src="r-e.png"></th>
+      <th><img alt="R-1" src="r-1.png"></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Agricultural Operation</td><td>P</td><td>P</td><td>P</td><td>4102.2.A</td></tr>
+    <tr><td>Restaurant</td><td>&nbsp;</td><td>&nbsp;</td><td>SE</td><td>4102.5</td></tr>
+  </tbody>
+</table>
+</div>
+</div>`;
+
+  const text = extractSectionText(html, "2545");
+
+  assert(
+    text.includes(
+      "Use: Agricultural Operation; Residential Districts > R-C: P; Residential Districts > R-E: P; Residential Districts > R-1: P; Use-Specific Standards: 4102.2.A",
+    ),
+    `R-E permitted-use attribution must survive table flattening, got: ${text}`,
+  );
+  assert(
+    text.includes(
+      "Use: Restaurant; Residential Districts > R-C: blank cell (not allowed); Residential Districts > R-E: blank cell (not allowed); Residential Districts > R-1: SE; Use-Specific Standards: 4102.5",
+    ),
+    `blank district cells must remain attributable after flattening, got: ${text}`,
+  );
+});
+
 Deno.test("extractSectionText: falls back to the whole #doc-view-content fragment (scripts still stripped) when the secid div is missing", () => {
   const html =
     `<div id="doc-view-content"><script>var x=1;</script><p>Amendment History Table text</p></div>`;
