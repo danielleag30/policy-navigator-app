@@ -235,7 +235,16 @@ export function matchesAllowPattern(
   url: string,
   source: DiscoverySource,
 ): boolean {
-  return source.allow_patterns.some((pattern) => url.startsWith(pattern));
+  return source.allow_patterns.some((pattern) => {
+    if (pattern.startsWith("regex:")) {
+      try {
+        return new RegExp(pattern.slice("regex:".length)).test(url);
+      } catch {
+        return false;
+      }
+    }
+    return url.startsWith(pattern);
+  });
 }
 
 const DOCUMENT_EXTENSIONS = [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".zip"];
