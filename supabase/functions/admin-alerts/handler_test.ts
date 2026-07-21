@@ -1,8 +1,8 @@
 import {
-  type AdminAlertsDb,
   ADMIN_SECRET_HEADER,
-  type HandlerDeps,
+  type AdminAlertsDb,
   handleAdminAlerts,
+  type HandlerDeps,
   type PendingAlertRow,
 } from "./handler.ts";
 
@@ -150,6 +150,26 @@ Deno.test("non-GET method returns 405", async () => {
     ok: false,
     error: { code: "NOT_FOUND", message: "Method not allowed" },
   });
+});
+
+Deno.test("OPTIONS preflight returns 204 with CORS headers and no database access", async () => {
+  const db = new FakeDb([row()]);
+  const response = await handleAdminAlerts(
+    request({ method: "OPTIONS" }),
+    deps(db),
+  );
+
+  assertEquals(response.status, 204);
+  assertEquals(db.calls, 0);
+  assertEquals(response.headers.get("Access-Control-Allow-Origin"), "*");
+  assertEquals(
+    response.headers.get("Access-Control-Allow-Headers"),
+    "authorization, content-type, x-admin-secret",
+  );
+  assertEquals(
+    response.headers.get("Access-Control-Allow-Methods"),
+    "GET, POST, OPTIONS",
+  );
 });
 
 Deno.test("returns empty array when no unacknowledged alerts exist", async () => {

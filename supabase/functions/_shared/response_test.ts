@@ -11,8 +11,11 @@ function assertEquals(actual: unknown, expected: unknown, message?: string): voi
 Deno.test("success() response includes CORS headers", () => {
   const res = success({ hello: "world" });
   assertEquals(res.headers.get("Access-Control-Allow-Origin"), "*");
-  assertEquals(res.headers.get("Access-Control-Allow-Headers"), "authorization, content-type");
-  assertEquals(res.headers.get("Access-Control-Allow-Methods"), "POST, OPTIONS");
+  assertEquals(
+    res.headers.get("Access-Control-Allow-Headers"),
+    "authorization, content-type, x-admin-secret",
+  );
+  assertEquals(res.headers.get("Access-Control-Allow-Methods"), "GET, POST, OPTIONS");
 });
 
 Deno.test("error() response includes CORS headers on every error code", () => {
@@ -37,7 +40,10 @@ Deno.test("corsPreflightResponse() returns 204 with full CORS header set and no 
   const res = corsPreflightResponse();
   assertEquals(res.status, 204);
   assertEquals(res.headers.get("Access-Control-Allow-Origin"), "*");
-  assertEquals(res.headers.get("Access-Control-Allow-Headers"), "authorization, content-type");
-  assertEquals(res.headers.get("Access-Control-Allow-Methods"), "POST, OPTIONS");
+  assertEquals(
+    res.headers.get("Access-Control-Allow-Headers"),
+    "authorization, content-type, x-admin-secret",
+  );
+  assertEquals(res.headers.get("Access-Control-Allow-Methods"), "GET, POST, OPTIONS");
   assertEquals(await res.text(), "");
 });

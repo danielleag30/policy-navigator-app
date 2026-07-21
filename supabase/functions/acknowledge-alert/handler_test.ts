@@ -200,3 +200,23 @@ Deno.test("authorization bearer secret is accepted", async () => {
   assertEquals(response.status, 200);
   assertEquals(db.calls, 2);
 });
+
+Deno.test("OPTIONS preflight returns 204 with CORS headers and no database access", async () => {
+  const db = new FakeDb(row());
+  const response = await handleAcknowledgeAlert(request({ method: "OPTIONS" }), {
+    db,
+    adminSecret: SECRET,
+  });
+
+  assertEquals(response.status, 204);
+  assertEquals(db.calls, 0);
+  assertEquals(response.headers.get("Access-Control-Allow-Origin"), "*");
+  assertEquals(
+    response.headers.get("Access-Control-Allow-Headers"),
+    "authorization, content-type, x-admin-secret",
+  );
+  assertEquals(
+    response.headers.get("Access-Control-Allow-Methods"),
+    "GET, POST, OPTIONS",
+  );
+});

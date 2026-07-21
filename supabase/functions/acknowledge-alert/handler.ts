@@ -1,9 +1,6 @@
-import {
-  ADMIN_SECRET_HEADER,
-  requestSecret,
-} from "../_shared/admin-auth.ts";
+import { ADMIN_SECRET_HEADER, requestSecret } from "../_shared/admin-auth.ts";
 import { logError, logInfo } from "../_shared/logger.ts";
-import { error, success } from "../_shared/response.ts";
+import { corsPreflightResponse, error, success } from "../_shared/response.ts";
 
 export { ADMIN_SECRET_HEADER };
 const FUNCTION_NAME = "acknowledge-alert";
@@ -60,6 +57,10 @@ export async function handleAcknowledgeAlert(
   { db, adminSecret, now = () => new Date() }: HandlerDeps,
 ): Promise<Response> {
   logInfo(FUNCTION_NAME, "request started", { method: req.method });
+
+  if (req.method === "OPTIONS") {
+    return corsPreflightResponse();
+  }
 
   if (req.method !== "POST") {
     logError(FUNCTION_NAME, "method not allowed", { method: req.method });
