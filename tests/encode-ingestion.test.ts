@@ -345,6 +345,35 @@ Deno.test("wiring: the encode_zoning branch embeds via the external HTTP path (e
   );
 });
 
+Deno.test("wiring: encode_zoning branch triggers reconciliation after finalizing changed EnCode content", async () => {
+  const src = await Deno.readTextFile(ORCHESTRATOR_SRC);
+  const encodeBranchStart = src.indexOf("// ── EnCode zoning branch");
+  assert(encodeBranchStart !== -1, "EnCode branch section marker not found");
+  const encodeBranchEnd = src.indexOf(
+    "throw new Error(`Unknown doc_type",
+    encodeBranchStart,
+  );
+  const branch = src.slice(encodeBranchStart, encodeBranchEnd);
+
+  const finalizationIdx = branch.indexOf('.from("documents")');
+  const triggerIdx = branch.indexOf("triggerReconciliationIfNeeded");
+  const doneIdx = branch.indexOf('.from("pending_ingestions")');
+
+  assert(triggerIdx !== -1, "EnCode branch must trigger reconciliation");
+  assert(
+    finalizationIdx !== -1 && finalizationIdx < triggerIdx,
+    "EnCode reconciliation must run after document finalization",
+  );
+  assert(
+    doneIdx !== -1 && triggerIdx < doneIdx,
+    "EnCode reconciliation must run before marking the ingestion done",
+  );
+  assert(
+    branch.includes("supplementJobId: `encode:${documentId}`"),
+    "EnCode reconciliation must use a namespaced publication signal",
+  );
+});
+
 // ---------------------------------------------------------------------------
 // ENCODE_ZONING_ENABLED compliance gate (blocking fix -- codex cross-vendor
 // review of PR #92): EnCode's robots.txt disallows /regs/ for generic bots,
@@ -586,5 +615,41 @@ Deno.test("wiring: encode_zoning is a recognized doc_type in the discovery-crawl
     typeof encodeSource.base_url === "string" &&
       encodeSource.base_url.includes("encodeplus.com"),
     "encode_zoning source must point at online.encodeplus.com",
+  );
+});
+
+Deno.test("wiring: recently adopted zoning amendments page is an independent PDF discovery source", async () => {
+  const seedConfig = JSON.parse(
+    await Deno.readTextFile(
+      new URL("../supabase/config/seed-sources.json", import.meta.url).pathname,
+    ),
+  );
+  const source = seedConfig.sources.find(
+    (s: { id?: string }) => s.id === "zoning_recently_adopted_amendments",
+  );
+
+  assert(
+    source,
+    "seed-sources.json must include the recently adopted amendments source",
+  );
+  assertEquals(source.doc_type, "bos_summary");
+  assert(
+    source.discovery_urls.some((url: string) =>
+      url ===
+        "https://www.fairfaxcounty.gov/planning-development/zoning-ordinance/amendments/recently-adopted"
+    ),
+    "recently adopted source must crawl the county listing page",
+  );
+  assert(
+    source.allow_patterns.some((pattern: string) =>
+      pattern.startsWith("https://plus.fairfaxcounty.gov/")
+    ),
+    "recently adopted source must allow PLUS attachment downloads",
+  );
+  assert(
+    source.allow_patterns.some((pattern: string) =>
+      pattern.includes("Zoning%20Ordinance/Adopted%20Amendments/")
+    ),
+    "recently adopted source must allow county-hosted adopted amendment PDFs",
   );
 });

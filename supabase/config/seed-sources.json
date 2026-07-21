@@ -100,6 +100,31 @@
       ]
     },
     {
+      "id": "zoning_recently_adopted_amendments",
+      "doc_type": "bos_summary",
+      "label": "Recently Adopted Zoning Ordinance Amendments",
+      "discovery_urls": [
+        "https://www.fairfaxcounty.gov/planning-development/zoning-ordinance/amendments/recently-adopted"
+      ],
+      "discovery_depth": 1,
+      "discovery_note": "Independent cross-check for zoning amendments after Board adoption and before EnCode codification. The page lists adopted/effective dates and links amendment-text/staff-report PDFs, including exact old/new subsection language, so it should feed the same PDF extraction path as board packages and summaries.",
+      "allow_patterns": [
+        "https://plus.fairfaxcounty.gov/CitizenAccess/ViewAttachment.aspx",
+        "https://plus.fairfaxcounty.gov/CitizenAccess/urlrouting.ashx",
+        "https://www.fairfaxcounty.gov/planning-development/sites/planning-development/files/Assets/documents/Zoning%20Ordinance/Adopted%20Amendments/",
+        "https://www.fairfaxcounty.gov/planning-development/sites/planning-development/files/Assets/Documents/Zoning%20Ordinance/Adopted%20Amendments/",
+        "https://www.fairfaxcounty.gov/planning-development/sites/planning-development/files/Assets/documents/Zoning%20Ordinance/Proposed%20Amendments/",
+        "https://www.fairfaxcounty.gov/planning-development/sites/planning-development/files/assets/documents/zoning%20ordinance/proposed%20amendments/",
+        "https://www.fairfaxcounty.gov/planning-development/sites/planning-development/files/assets/documents/zoning-ordinance/amendments/",
+        "https://www.fairfaxcounty.gov/planning-development/sites/planning-development/files/Assets/Documents/zoning-ordinance/amendments/"
+      ],
+      "match_priority": 1,
+      "examples": [
+        "https://plus.fairfaxcounty.gov/CitizenAccess/urlrouting.ashx?type=1001&ID1=REC26&ID2=00000&ID3=00HOT&agency=FFX&SeqNo=6595158",
+        "https://www.fairfaxcounty.gov/planning-development/sites/planning-development/files/Assets/documents/Zoning%20Ordinance/Adopted%20Amendments/ZO21488.pdf"
+      ]
+    },
+    {
       "id": "municode_api",
       "doc_type": "municode_api",
       "label": "Municode API — Fairfax County Ordinances",

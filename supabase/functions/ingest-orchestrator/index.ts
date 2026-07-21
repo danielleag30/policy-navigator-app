@@ -1041,6 +1041,16 @@ async function processClaimedIngestion(
         throw new Error(`Document finalization failed: ${docFinalErr.message}`);
       }
 
+      // EnCode has no Municode-style supplement job id. Use the finalized
+      // document id as the publication signal for reconciliation logs, after
+      // handleEncode() has already proven this is a changed EnCode version.
+      await triggerReconciliationIfNeeded({
+        db: db as unknown as ReconciliationTriggerDb,
+        nodeIds,
+        supplementJobId: `encode:${documentId}`,
+        pendingIngestionId,
+      });
+
       // Mark ingestion done
       const { error: ingestDoneErr } = await db
         .from("pending_ingestions")
