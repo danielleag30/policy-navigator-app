@@ -523,6 +523,17 @@ function isHistoricalQuery(query: string): boolean {
       .test(query);
 }
 
+function hasExplicitCurrentIntent(query: string): boolean {
+  return /\b(current|currently|now|today|present|latest|this year|current rate)\b/i
+    .test(query) ||
+    /\b(what(?:'s| is)|show|give|tell)\b[\s\S]*\btax\b[\s\S]*\brate\b/i
+      .test(query);
+}
+
+function isHistoricalOnlyQuery(query: string): boolean {
+  return isHistoricalQuery(query) && !hasExplicitCurrentIntent(query);
+}
+
 /**
  * Deterministic pre-filter: for current queries, remove is_current=false ordinance
  * chunks when a same-municode_node_id is_current=true chunk is in the candidate set.
@@ -565,9 +576,7 @@ function hardFilterSuperseded(
 // ── Current-state reranking for non-ordinance evidence ───────────────────────
 
 function isCurrentStateQuery(query: string): boolean {
-  if (isHistoricalQuery(query)) return false;
-  return /\b(current|currently|now|today|present|latest|this year|current rate|tax rate)\b/i
-    .test(query);
+  return hasExplicitCurrentIntent(query);
 }
 
 function normalizedText(value: unknown): string {
@@ -595,10 +604,12 @@ const BUDGET_INDICATOR_STOPWORDS = new Set([
   "county",
   "current",
   "currently",
+  "different",
   "fairfax",
   "for",
   "in",
   "is",
+  "it",
   "latest",
   "now",
   "of",
@@ -609,6 +620,7 @@ const BUDGET_INDICATOR_STOPWORDS = new Set([
   "va",
   "value",
   "virginia",
+  "was",
   "what",
   "whats",
   "year",
@@ -628,11 +640,15 @@ function matchesBudgetIndicatorQuery(
   c: EnrichedCandidate,
   doc?: SourceDocument,
 ): boolean {
-  if (c.table !== "budget_indicators") return false;
   const corpus = candidateCorpus(c, doc);
   const terms = budgetIndicatorQueryTerms(query);
   if (terms.length === 0) return true;
-  return terms.every((term) => corpus.includes(term));
+  const hasTotSynonym = /\btot\b/.test(corpus) &&
+    terms.includes("transient") && terms.includes("occupancy");
+  return terms.every((term) =>
+    corpus.includes(term) ||
+    (hasTotSynonym && (term === "transient" || term === "occupancy"))
+  );
 }
 
 function isRelevantTaxRateCandidate(
@@ -643,6 +659,10 @@ function isRelevantTaxRateCandidate(
   if (!/\btax\b/i.test(query) || !/\brate\b/i.test(query)) return false;
   const corpus = candidateCorpus(c, doc);
   if (c.table === "budget_indicators") {
+    return /\btax\b/.test(corpus) && /\brate\b/.test(corpus) &&
+      matchesBudgetIndicatorQuery(query, c, doc);
+  }
+  if (c.table === "narrative_chunks") {
     return /\btax\b/.test(corpus) && /\brate\b/.test(corpus) &&
       matchesBudgetIndicatorQuery(query, c, doc);
   }
@@ -681,6 +701,11 @@ function parseDocumentDate(doc?: SourceDocument): number | null {
   );
   if (named) {
     const parsed = Date.parse(`${named[1]} ${named[2]}, ${named[3]}`);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+
+  if (doc.ingested_at) {
+    const parsed = Date.parse(doc.ingested_at);
     if (!Number.isNaN(parsed)) return parsed;
   }
 
@@ -2469,7 +2494,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   // ── Step 6 (task 2-9): Temporal Judge ──────────────────────────────────────
 
-  const historical = isHistoricalQuery(query);
+  const historical = isHistoricalOnlyQuery(query);
   const budgetAnchored = historical
     ? enriched
     : await prependCurrentBudgetIndicators(query, enriched);
