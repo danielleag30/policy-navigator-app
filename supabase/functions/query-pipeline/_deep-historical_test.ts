@@ -8,6 +8,8 @@ import {
   ENCODE_ZONING_REPRINTS,
   extractDeepHistoricalYear,
   extractQueryTerms,
+  fetchPreingestedReprintBlocks,
+  type PreingestDb,
   reprintDocUrl,
   runDeepHistoricalLookup,
   selectRelevantChunks,
@@ -285,6 +287,48 @@ const reprint1945 = ENCODE_ZONING_REPRINTS.find((r) =>
   r.label === "1945 Reprint"
 )!;
 
+interface MockPreingestOptions {
+  /** null (default) = no row for this reprint yet — matches a fresh background job. */
+  status?: "pending" | "in_progress" | "complete" | null;
+  pages?: Array<{ page_number: number; text: string }>;
+}
+
+/** In-memory fake satisfying PreingestDb's narrow shape, for tests. */
+function mockPreingestDb(opts: MockPreingestOptions = {}): PreingestDb {
+  const status = opts.status ?? null;
+  const pages = opts.pages ?? [];
+
+  function from(table: string) {
+    if (table === "encode_reprint_preingest_state") {
+      return {
+        select: (_columns: string) => ({
+          eq: (_column: string, _value: string) => ({
+            maybeSingle: () =>
+              Promise.resolve({
+                data: status === null ? null : { status },
+                error: null,
+              }),
+          }),
+        }),
+      };
+    }
+    if (table === "encode_reprint_pages") {
+      return {
+        select: (_columns: string) => ({
+          eq: (_column: string, _value: string) => ({
+            order: (_column: string, _o: { ascending: boolean }) =>
+              Promise.resolve({ data: pages, error: null }),
+          }),
+        }),
+      };
+    }
+    throw new Error(`mockPreingestDb: unexpected table ${table}`);
+  }
+
+  // deno-lint-ignore no-explicit-any
+  return { from } as any as PreingestDb;
+}
+
 function doclingResponse(blocks: unknown[]): Response {
   return new Response(
     JSON.stringify({
@@ -331,6 +375,7 @@ Deno.test("runDeepHistoricalLookup returns a real cited answer when the LLM grou
     },
     async () => {
       const outcome = await runDeepHistoricalLookup(
+        mockPreingestDb(),
         "what were the home occupation rules in 1948?",
         reprint1945,
       );
@@ -376,6 +421,7 @@ Deno.test("runDeepHistoricalLookup refuses (not_found) rather than fabricate whe
     async () => {
       // Query terms overlap "setback" so a chunk is selected, but the LLM itself refuses.
       const outcome = await runDeepHistoricalLookup(
+        mockPreingestDb(),
         "what were setback rules in 1948?",
         reprint1945,
       );
@@ -407,6 +453,7 @@ Deno.test("runDeepHistoricalLookup refuses (not_found) when nothing in the fetch
     },
     async () => {
       const outcome = await runDeepHistoricalLookup(
+        mockPreingestDb(),
         "home occupation signage rules in 1948?",
         reprint1945,
       );
@@ -441,6 +488,7 @@ Deno.test("runDeepHistoricalLookup fails cleanly (never fabricates) when the LLM
     },
     async () => {
       const outcome = await runDeepHistoricalLookup(
+        mockPreingestDb(),
         "home occupation rules in 1948?",
         reprint1945,
       );
@@ -464,6 +512,7 @@ Deno.test("runDeepHistoricalLookup fails cleanly when the Docling fetch errors",
     },
     async () => {
       const outcome = await runDeepHistoricalLookup(
+        mockPreingestDb(),
         "home occupation rules in 1948?",
         reprint1945,
       );
@@ -486,6 +535,7 @@ Deno.test("runDeepHistoricalLookup treats an empty fetched document as not_found
     },
     async () => {
       const outcome = await runDeepHistoricalLookup(
+        mockPreingestDb(),
         "home occupation rules in 1948?",
         reprint1945,
       );
@@ -526,10 +576,207 @@ Deno.test("runDeepHistoricalLookup passes the extended timeout to ollamaChat, no
       // Here we just confirm the happy path still succeeds with both set,
       // proving the override parameter is accepted end-to-end.
       const outcome = await runDeepHistoricalLookup(
+        mockPreingestDb(),
         "home occupation rules in 1948?",
         reprint1945,
       );
       assertEquals(outcome.status, "answered");
+    },
+  );
+});
+
+// ── fetchPreingestedReprintBlocks (pre-ingested fast path) ──────────────────
+
+Deno.test("fetchPreingestedReprintBlocks returns null when no preingest row exists yet", async () => {
+  const blocks = await fetchPreingestedReprintBlocks(
+    mockPreingestDb(),
+    reprint1945,
+  );
+  assertEquals(blocks, null);
+});
+
+Deno.test("fetchPreingestedReprintBlocks returns null while status is pending or in_progress", async () => {
+  for (const status of ["pending", "in_progress"] as const) {
+    const blocks = await fetchPreingestedReprintBlocks(
+      mockPreingestDb({ status }),
+      reprint1945,
+    );
+    assertEquals(blocks, null, `expected null for status=${status}`);
+  }
+});
+
+Deno.test("fetchPreingestedReprintBlocks maps stored pages to FlatBlock[] once status is complete", async () => {
+  const db = mockPreingestDb({
+    status: "complete",
+    pages: [
+      { page_number: 5, text: "Home occupation permits require approval." },
+      { page_number: 6, text: "Signage limits apply." },
+    ],
+  });
+  const blocks = await fetchPreingestedReprintBlocks(db, reprint1945);
+  assert(blocks !== null, "expected non-null blocks once status is complete");
+  assertEquals(blocks!.length, 2);
+  assertEquals(blocks![0].page_no, 5);
+  assertEquals(
+    blocks![0].text,
+    "Home occupation permits require approval.",
+  );
+  assertEquals(blocks![1].page_no, 6);
+});
+
+Deno.test("fetchPreingestedReprintBlocks propagates a state-lookup error instead of silently treating it as not-ready", async () => {
+  const db: PreingestDb = {
+    from: (table: string) => {
+      if (table === "encode_reprint_preingest_state") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () =>
+                Promise.resolve({ data: null, error: { message: "boom" } }),
+            }),
+          }),
+        };
+      }
+      throw new Error("unexpected table");
+    },
+    // deno-lint-ignore no-explicit-any
+  } as any;
+
+  let threw = false;
+  try {
+    await fetchPreingestedReprintBlocks(db, reprint1945);
+  } catch (e) {
+    threw = true;
+    assert(
+      (e as Error).message.includes("boom"),
+      "error message must surface the real DB error",
+    );
+  }
+  assert(
+    threw,
+    "expected fetchPreingestedReprintBlocks to throw on a DB error",
+  );
+});
+
+// ── runDeepHistoricalLookup fast-path / live-fallback branching ─────────────
+
+Deno.test("runDeepHistoricalLookup answers from the fast path without ever calling the Docling wrapper", async () => {
+  const db = mockPreingestDb({
+    status: "complete",
+    pages: [
+      {
+        page_number: 42,
+        text:
+          "Home occupation permits require a special use approval under Sect. 10-301.",
+      },
+    ],
+  });
+
+  await withMockedFetch(
+    BASE_ENV,
+    (input) => {
+      const url = String(input);
+      if (url.includes("docling.example")) {
+        throw new Error(
+          "Docling wrapper must never be called once the reprint is fully pre-ingested",
+        );
+      }
+      return Promise.resolve(
+        ollamaResponse(JSON.stringify({
+          answer:
+            "Home occupations required a special use approval under Sect. 10-301.",
+          cited_pages: [42],
+        })),
+      );
+    },
+    async () => {
+      const outcome = await runDeepHistoricalLookup(
+        db,
+        "what were the home occupation rules in 1948?",
+        reprint1945,
+      );
+      // status can only be "answered" here if the Docling branch above was
+      // genuinely skipped -- reaching it converts the outcome to "failed".
+      assertEquals(outcome.status, "answered");
+      if (outcome.status === "answered") {
+        assertEquals(outcome.page, 42);
+        assert(
+          outcome.sourceLabel.includes("pre-ingested"),
+          "fast-path answers must disclose they came from the pre-ingested store",
+        );
+      }
+    },
+  );
+});
+
+Deno.test("runDeepHistoricalLookup falls back to the live OCR endpoint when a reprint is only partially pre-ingested", async () => {
+  const db = mockPreingestDb({ status: "in_progress" });
+
+  await withMockedFetch(
+    BASE_ENV,
+    (input) => {
+      const url = String(input);
+      if (url.includes("docling.example")) {
+        assert(
+          url.includes("/process-ocr"),
+          "live fallback must call the OCR-enabled /process-ocr endpoint, not the plain /process",
+        );
+        return Promise.resolve(
+          doclingResponse([
+            {
+              text:
+                "Home occupation permits require a special use approval under Sect. 10-301.",
+              page_no: 42,
+              bbox: null,
+              reading_order_index: 0,
+            },
+          ]),
+        );
+      }
+      return Promise.resolve(
+        ollamaResponse(JSON.stringify({
+          answer:
+            "Home occupations required a special use approval under Sect. 10-301.",
+          cited_pages: [42],
+        })),
+      );
+    },
+    async () => {
+      const outcome = await runDeepHistoricalLookup(
+        db,
+        "what were the home occupation rules in 1948?",
+        reprint1945,
+      );
+      assertEquals(outcome.status, "answered");
+      if (outcome.status === "answered") {
+        assert(
+          outcome.sourceLabel.includes("live historical lookup"),
+          "fallback answers must disclose they came from a live lookup, not the pre-ingested store",
+        );
+      }
+    },
+  );
+});
+
+Deno.test("runDeepHistoricalLookup falls back to live OCR when no preingest row exists at all", async () => {
+  await withMockedFetch(
+    BASE_ENV,
+    (input) => {
+      const url = String(input);
+      if (url.includes("docling.example")) {
+        return Promise.resolve(doclingResponse([]));
+      }
+      throw new Error(
+        "ollamaChat must not be called when Docling returns zero blocks",
+      );
+    },
+    async () => {
+      const outcome = await runDeepHistoricalLookup(
+        mockPreingestDb(), // no row at all — same as a reprint the background job hasn't reached
+        "home occupation rules in 1948?",
+        reprint1945,
+      );
+      assertEquals(outcome.status, "not_found");
     },
   );
 });

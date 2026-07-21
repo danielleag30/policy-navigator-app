@@ -46,6 +46,32 @@ Convert a PDF at `url` to an ordered list of text blocks.
 }
 ```
 
+### `POST /process-ocr`
+OCR-enabled variant of `/process` — opt-in only, separate route. `/process`
+above stays `do_ocr=False` always. Optional `page_start`/`page_end`
+(1-indexed, inclusive) slice the PDF with poppler-utils before conversion so
+the OCR pass only runs over the requested pages.
+
+**Request**
+```json
+{"url": "https://example.gov/scanned.pdf", "page_start": 5, "page_end": 7}
+```
+
+Response shape matches `/process`.
+
+### `POST /pdfinfo`
+Page count only (poppler-utils `pdfinfo`), no Docling/OCR work.
+
+**Request**
+```json
+{"url": "https://example.gov/scanned.pdf"}
+```
+
+**Response**
+```json
+{"pages": 42}
+```
+
 ### `POST /embed`
 Embed a batch of texts with `thenlper/gte-small` (mean-pooled, L2-normalized, 384d).
 
