@@ -42,6 +42,16 @@ interface EnrichedCandidate extends RankedCandidate {
   hasAmendmentHistory: boolean;
 }
 
+interface SourceDocument {
+  id: string;
+  url: string;
+  title: string | null;
+  filename: string | null;
+  ingested_at: string;
+  source_published_at: string | null;
+  fiscal_year: number | null;
+}
+
 function rrfMerge(
   bm25Results: Map<ChunkTable, Record<string, unknown>[]>,
   vectorResults: Map<ChunkTable, Record<string, unknown>[]>,
@@ -126,6 +136,296 @@ function testCandidate(
     superseded_date: null,
     hasAmendmentHistory: false,
   };
+}
+
+function isHistoricalQuery(query: string): boolean {
+  return /\b(19|20)\d{2}\b/.test(query) ||
+    /\b(as of|at the time of|before the|prior to|in january|in february|in march|in april|in may|in june|in july|in august|in september|in october|in november|in december)\b/i
+      .test(query);
+}
+
+function hasExplicitCurrentIntent(query: string): boolean {
+  return /\b(current|currently|now|today|present|latest|this year|current rate)\b/i
+    .test(query) ||
+    /\b(what(?:'s| is)|show|give|tell)\b[\s\S]*\btax\b[\s\S]*\brate\b/i
+      .test(query);
+}
+
+function isHistoricalOnlyQuery(query: string): boolean {
+  return isHistoricalQuery(query) && !hasExplicitCurrentIntent(query);
+}
+
+function isCurrentStateQuery(query: string): boolean {
+  return hasExplicitCurrentIntent(query);
+}
+
+function normalizedText(value: unknown): string {
+  return typeof value === "string" ? value.toLowerCase() : "";
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function candidateText(c: EnrichedCandidate): string {
+  if (c.table === "budget_indicators") {
+    return [
+      c.row.raw_extracted_text,
+      c.row.fiscal_year,
+      c.row.program,
+      c.row.indicator_name,
+      c.row.value_actual,
+      c.row.unit,
+    ].map((value) => value === null || value === undefined ? "" : String(value))
+      .join(" ");
+  }
+  if (c.table === "narrative_chunks") return normalizedText(c.row.content);
+  return "";
+}
+
+function candidateCorpus(c: EnrichedCandidate, doc?: SourceDocument): string {
+  return [
+    candidateText(c),
+    c.row.program,
+    c.row.indicator_name,
+    c.row.department,
+    doc?.title,
+    doc?.filename,
+    doc?.url,
+  ].map(normalizedText).join(" ");
+}
+
+const BUDGET_INDICATOR_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "at",
+  "county",
+  "current",
+  "currently",
+  "different",
+  "fairfax",
+  "for",
+  "in",
+  "is",
+  "it",
+  "latest",
+  "now",
+  "of",
+  "rate",
+  "the",
+  "this",
+  "today",
+  "va",
+  "value",
+  "virginia",
+  "was",
+  "what",
+  "whats",
+  "year",
+]);
+
+function budgetIndicatorQueryTerms(query: string): string[] {
+  const normalized = query.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  const terms = normalized.split(/\s+/).filter((term) =>
+    term.length > 2 && !BUDGET_INDICATOR_STOPWORDS.has(term) &&
+    !/^(19|20)\d{2}$/.test(term)
+  );
+  return [...new Set(terms)];
+}
+
+function matchesBudgetIndicatorQuery(
+  query: string,
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): boolean {
+  const corpus = candidateCorpus(c, doc);
+  const terms = budgetIndicatorQueryTerms(query);
+  if (terms.length === 0) return true;
+  const hasTotSynonym = /\btot\b/.test(corpus) &&
+    terms.includes("transient") && terms.includes("occupancy");
+  return terms.every((term) =>
+    corpus.includes(term) ||
+    (hasTotSynonym && (term === "transient" || term === "occupancy"))
+  );
+}
+
+function isRelevantTaxRateCandidate(
+  query: string,
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): boolean {
+  if (!/\btax\b/i.test(query) || !/\brate\b/i.test(query)) return false;
+  const corpus = candidateCorpus(c, doc);
+  if (c.table === "budget_indicators") {
+    return /\btax\b/.test(corpus) && /\brate\b/.test(corpus) &&
+      matchesBudgetIndicatorQuery(query, c, doc);
+  }
+  if (c.table === "narrative_chunks") {
+    return /\btax\b/.test(corpus) && /\brate\b/.test(corpus) &&
+      matchesBudgetIndicatorQuery(query, c, doc);
+  }
+  return /\btax\b/.test(corpus) && /\brate\b/.test(corpus);
+}
+
+function isAdoptedBudgetSource(
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): boolean {
+  const corpus = candidateCorpus(c, doc);
+  return /\badopt(ed|ion)?\b/.test(corpus) &&
+    !/\b(proposed|advertised|mark[- ]?up|markup|draft)\b/.test(corpus);
+}
+
+function parseDocumentFiscalYear(doc?: SourceDocument): number | null {
+  if (!doc) return null;
+  const explicitFiscalYear = asNumber(doc.fiscal_year);
+  if (explicitFiscalYear !== null) return explicitFiscalYear;
+
+  const text = [doc.url, doc.title, doc.filename].filter(Boolean).join(" ");
+  const fiscalYear = text.match(
+    /\b(?:fy|fiscal[-_\s]*year[-_\s]*)(20\d{2})\b/i,
+  );
+  if (fiscalYear) return Number(fiscalYear[1]);
+
+  return null;
+}
+
+function parseDocumentRecencyScore(doc?: SourceDocument): number | null {
+  if (!doc) return null;
+  const fiscalYear = parseDocumentFiscalYear(doc);
+  if (fiscalYear !== null) return 1_000_000 + fiscalYear;
+
+  if (doc.source_published_at) {
+    const parsed = Date.parse(doc.source_published_at);
+    if (!Number.isNaN(parsed)) return parsed / 86_400_000;
+  }
+  const text = [doc.title, doc.filename, doc.url].filter(Boolean).join(" ");
+  const iso = text.match(
+    /\b(20\d{2})[-_/](0?[1-9]|1[0-2])[-_/](0?[1-9]|[12]\d|3[01])\b/,
+  );
+  if (iso) {
+    const parsed = Date.parse(
+      `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`,
+    );
+    if (!Number.isNaN(parsed)) return parsed / 86_400_000;
+  }
+
+  const named = text.match(
+    /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+([0-3]?\d),?\s+(20\d{2})\b/i,
+  );
+  if (named) {
+    const parsed = Date.parse(`${named[1]} ${named[2]}, ${named[3]}`);
+    if (!Number.isNaN(parsed)) return parsed / 86_400_000;
+  }
+
+  if (doc.ingested_at) {
+    const parsed = Date.parse(doc.ingested_at);
+    if (!Number.isNaN(parsed)) return parsed / 86_400_000;
+  }
+  return null;
+}
+
+function hasDraftQualifierNearRateMention(
+  c: EnrichedCandidate,
+): boolean {
+  const content = candidateText(c);
+  const rateMention =
+    /\btax\s+rate\b[\s\S]{0,100}(?:\d+(?:\.\d+)?\s*(?:%|percent)|\$\s*\d+(?:\.\d+)?)/ig;
+  const valueThenRate =
+    /(?:\d+(?:\.\d+)?\s*(?:%|percent)|\$\s*\d+(?:\.\d+)?)[\s\S]{0,100}\btax\s+rate\b/ig;
+  const draftRegex = /\b(proposed|advertised|mark[- ]?up|markup|draft)\b/i;
+  const windows: string[] = [];
+
+  for (const regex of [rateMention, valueThenRate]) {
+    for (const match of content.matchAll(regex)) {
+      const index = match.index ?? 0;
+      windows.push(content.slice(Math.max(0, index - 200), index + 300));
+    }
+  }
+
+  return windows.some((window) => draftRegex.test(window));
+}
+
+function currentStateScore(
+  query: string,
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): number {
+  if (
+    c.table === "budget_indicators" && isRelevantTaxRateCandidate(query, c, doc)
+  ) {
+    const fiscalYear = asNumber(c.row.fiscal_year) ?? doc?.fiscal_year ?? 0;
+    const adoptedBoost = isAdoptedBudgetSource(c, doc) ? 100 : 0;
+    const draftPenalty =
+      /\b(proposed|advertised|mark[- ]?up|markup|draft)\b/.test(
+          candidateCorpus(c, doc),
+        )
+        ? -100
+        : 0;
+    return 1000 + adoptedBoost + draftPenalty + fiscalYear;
+  }
+
+  if (
+    c.table === "narrative_chunks" && isRelevantTaxRateCandidate(query, c, doc)
+  ) {
+    const recencyScore = parseDocumentRecencyScore(doc);
+    const adoptedBoost = isAdoptedBudgetSource(c, doc) ? 100 : 0;
+    const draftPenalty = hasDraftQualifierNearRateMention(c) ? -100 : 0;
+    return 500 + adoptedBoost + draftPenalty +
+      (recencyScore === null ? 0 : recencyScore);
+  }
+
+  return 0;
+}
+
+function rerankCurrentStateCandidatesForTest(
+  query: string,
+  candidates: EnrichedCandidate[],
+  documents: Map<string, SourceDocument>,
+): EnrichedCandidate[] {
+  if (!isCurrentStateQuery(query)) return candidates;
+  return [...candidates].sort((a, b) => {
+    const docA = typeof a.row.document_id === "string"
+      ? documents.get(a.row.document_id)
+      : undefined;
+    const docB = typeof b.row.document_id === "string"
+      ? documents.get(b.row.document_id)
+      : undefined;
+    const scoreDelta = currentStateScore(query, b, docB) -
+      currentStateScore(query, a, docA);
+    if (scoreDelta !== 0) return scoreDelta;
+    return b.rrfScore - a.rrfScore;
+  });
+}
+
+function selectedCurrentBudgetIndicatorsForTest(
+  query: string,
+  rows: EnrichedCandidate[],
+  documents: Map<string, SourceDocument>,
+): EnrichedCandidate[] {
+  if (
+    !isCurrentStateQuery(query) || !/\btax\b/i.test(query) ||
+    !/\brate\b/i.test(query)
+  ) {
+    return [];
+  }
+
+  return rows
+    .filter((row) => {
+      const doc = typeof row.row.document_id === "string"
+        ? documents.get(row.row.document_id)
+        : undefined;
+      return isAdoptedBudgetSource(row, doc) &&
+        isRelevantTaxRateCandidate(query, row, doc);
+    })
+    .sort((a, b) => {
+      const fyA = asNumber(a.row.fiscal_year) ?? 0;
+      const fyB = asNumber(b.row.fiscal_year) ?? 0;
+      return fyB - fyA;
+    })
+    .slice(0, 3);
 }
 
 function fkCandidate(
@@ -758,6 +1058,7 @@ Deno.test("sourceTitle prefers the document's real title when populated", () => 
     ingested_at: "2026-06-20T15:30:00Z",
     doc_type: "budget_pdf",
     source_published_at: null,
+    fiscal_year: null,
   };
   const title = sourceTitle(
     doc,
@@ -777,6 +1078,7 @@ Deno.test("sourceTitle falls back to filename when title is missing", () => {
     ingested_at: "2026-06-20T15:30:00Z",
     doc_type: "budget_pdf",
     source_published_at: null,
+    fiscal_year: null,
   };
   const title = sourceTitle(
     doc,
@@ -800,6 +1102,7 @@ Deno.test("sourceTitle never surfaces the raw table name when title/filename are
     ingested_at: "2026-06-09T12:00:00Z",
     doc_type: "bos_summary",
     source_published_at: null,
+    fiscal_year: null,
   };
   const title = sourceTitle(
     doc,
@@ -830,6 +1133,7 @@ Deno.test("sourceTitle maps every known doc_type to a human-readable label", () 
       ingested_at: "2026-06-09T12:00:00Z",
       doc_type: docType,
       source_published_at: null,
+      fiscal_year: null,
     };
     const title = sourceTitle(
       doc,
@@ -852,6 +1156,7 @@ Deno.test("sourceTitle prefers source_published_at over ingested_at when both ar
     ingested_at: "2026-07-15T00:54:03Z",
     doc_type: "bos_summary",
     source_published_at: "1995-08-07",
+    fiscal_year: null,
   };
   const title = sourceTitle(
     doc,
@@ -966,5 +1271,367 @@ Deno.test("response assembly freshness uses most recent cited ingested_at", () =
     freshnessNotice(freshnessTimestamp) !== "Sources current as of 2026-06-21"
   ) {
     throw new Error("unexpected freshness notice");
+  }
+});
+
+Deno.test("current-state rerank prefers latest adopted real estate tax budget indicator", () => {
+  const markupDocId = "00000000-0000-0000-0000-000000000201";
+  const adoptedDocId = "00000000-0000-0000-0000-000000000202";
+  const oldMarkup = testCandidate("budget_indicators", "old-markup", {
+    document_id: markupDocId,
+    fiscal_year: 2025,
+    program: "Real Estate Tax",
+    indicator_name: "Real Estate Tax rate",
+    value_actual: 1.125,
+    unit: "dollars per $100 assessed value",
+    raw_extracted_text:
+      "FY 2025 Budget Mark-Up proposes a Real Estate tax rate of $1.125 per $100.",
+  });
+  oldMarkup.rrfScore = 0.03;
+
+  const currentAdopted = testCandidate("budget_indicators", "fy2027-adopted", {
+    document_id: adoptedDocId,
+    fiscal_year: 2027,
+    program: "Real Estate Tax",
+    indicator_name: "Real Estate Tax rate",
+    value_actual: 1.12,
+    unit: "dollars per $100 assessed value",
+    raw_extracted_text:
+      "FY 2027 Adopted Budget sets the Real Estate tax rate at $1.12 per $100.",
+  });
+  currentAdopted.rrfScore = 0.01;
+
+  const documents = new Map<string, SourceDocument>([
+    [markupDocId, {
+      id: markupDocId,
+      url: "https://example.test/fy2025/markup.pdf",
+      title: "FY 2025 Budget Mark-Up",
+      filename: "FY2025_Markup.pdf",
+      ingested_at: "2026-07-01T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: "2024-04-20",
+      fiscal_year: 2025,
+    }],
+    [adoptedDocId, {
+      id: adoptedDocId,
+      url: "https://example.test/fy2027/adopted/overview.pdf",
+      title: "FY 2027 Adopted Budget Overview",
+      filename: "FY2027_Adopted_Overview.pdf",
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: "2026-05-05",
+      fiscal_year: 2027,
+    }],
+  ]);
+
+  const ranked = rerankCurrentStateCandidatesForTest(
+    "what is the current tax rate",
+    [oldMarkup, currentAdopted],
+    documents,
+  );
+
+  if (ranked[0].id !== "fy2027-adopted") {
+    throw new Error(`expected FY2027 adopted first, got ${ranked[0].id}`);
+  }
+});
+
+Deno.test("compound current and historical real estate tax query still prefers current $1.12 anchor", () => {
+  const currentDocId = "00000000-0000-0000-0000-000000000232";
+  const historicalDocId = "00000000-0000-0000-0000-000000000231";
+  const historicalRate = testCandidate(
+    "budget_indicators",
+    "real-estate-fy2020",
+    {
+      document_id: historicalDocId,
+      fiscal_year: 2020,
+      program: "Real Estate Tax",
+      indicator_name: "Real Estate Tax rate",
+      value_actual: 1.15,
+      unit: "dollars per $100 assessed value",
+      raw_extracted_text:
+        "FY 2020 Adopted Budget sets the Real Estate tax rate at $1.15 per $100.",
+    },
+  );
+  historicalRate.rrfScore = 0.03;
+
+  const currentRate = testCandidate("budget_indicators", "real-estate-fy2027", {
+    document_id: currentDocId,
+    fiscal_year: 2027,
+    program: "Real Estate Tax",
+    indicator_name: "Real Estate Tax rate",
+    value_actual: 1.12,
+    unit: "dollars per $100 assessed value",
+    raw_extracted_text:
+      "FY 2027 Adopted Budget sets the Real Estate tax rate at $1.12 per $100.",
+  });
+  currentRate.rrfScore = 0.01;
+
+  const documents = new Map<string, SourceDocument>([
+    [historicalDocId, {
+      id: historicalDocId,
+      url: "https://example.test/fy2020/adopted/overview.pdf",
+      title: "FY 2020 Adopted Budget Overview",
+      filename: "FY2020_Adopted_Overview.pdf",
+      ingested_at: "2026-07-01T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: "2019-05-07",
+      fiscal_year: 2020,
+    }],
+    [currentDocId, {
+      id: currentDocId,
+      url: "https://example.test/fy2027/adopted/overview.pdf",
+      title: "FY 2027 Adopted Budget Overview",
+      filename: "FY2027_Adopted_Overview.pdf",
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: "2026-05-05",
+      fiscal_year: 2027,
+    }],
+  ]);
+
+  const query =
+    "what is the current real estate tax rate, and was it different in 2020?";
+  const ranked = rerankCurrentStateCandidatesForTest(
+    query,
+    [historicalRate, currentRate],
+    documents,
+  );
+
+  if (isHistoricalOnlyQuery(query)) {
+    throw new Error(
+      "compound current+historical query was treated as historical-only",
+    );
+  }
+  if (ranked[0].id !== "real-estate-fy2027") {
+    throw new Error(`expected current $1.12 row first, got ${ranked[0].id}`);
+  }
+  if (ranked[0].row.value_actual !== 1.12) {
+    throw new Error(
+      `expected current value 1.12, got ${ranked[0].row.value_actual}`,
+    );
+  }
+});
+
+Deno.test("current-state narrative recency selects real transient occupancy tax increase chunk", () => {
+  const revenueOverviewDocId = "019f4747-3a67-7e01-bdb9-c186ec35fcd0";
+  const staleDocId = "019f7e45-6930-7ee8-b56a-089cb78d4697";
+  const currentTot = testCandidate(
+    "narrative_chunks",
+    "019f4747-ee4b-7089-bcaf-4498bef4c586",
+    {
+      document_id: revenueOverviewDocId,
+      content:
+        "In FY 2026, TOT receipts are projected to increase 48.3 percent, which is primarily associated with a 2-percentage point increase in the FY 2026 TOT tax rate from 4 percent to 6 percent approved by the Board of Supervisors. Transient Occupancy Taxes are charged as part of a hotel bill and remitted by the hotel to the County. The Transient Occupancy Tax had been levied at 4 percent. Actual FY 2025 collections increased over the previous year as business travel continued to recover and hotel average daily rates increased. The remaining discussion covers revenue allocation assumptions, tourism promotion funding, visitor activity, and other General Fund planning context separate from the rate change sentence. Tourism-fund allocations were proposed in a separate planning discussion later in the document.",
+    },
+  );
+  currentTot.rrfScore = 0.01;
+
+  const staleTot = testCandidate(
+    "narrative_chunks",
+    "019f7e45-b2cd-706b-84de-2591108fa2bc",
+    {
+      document_id: staleDocId,
+      content:
+        "Transient Occupancy Tax ($25.6 million) Fairfax County currently levies a 4% transient occupancy tax (2% for general purposes and 2% to promote tourism). The Transient Occupancy Tax rate has not been adjusted since 2004. Public hearing, approval by the Board of Supervisors and ordinance change Rates between 2 and 5% are earmarked for tourism promotion.",
+    },
+  );
+  staleTot.rrfScore = 0.03;
+
+  const documents = new Map<string, SourceDocument>([
+    [revenueOverviewDocId, {
+      id: revenueOverviewDocId,
+      url:
+        "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/fy2027/advertised/overview/General%20Fund%20Revenue%20Overview.pdf",
+      title: null,
+      filename: null,
+      ingested_at: "2026-07-09T14:27:58.183+00:00",
+      doc_type: "budget_pdf",
+      source_published_at: null,
+      fiscal_year: null,
+    }],
+    [staleDocId, {
+      id: staleDocId,
+      url:
+        "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/budget%20committee%20meeting/2024/sep-17/2024_Sept_17_BudgetComm_TaxingAuthority_Supplemental.pdf",
+      title: null,
+      filename: null,
+      ingested_at: "2026-07-20T06:45:05.968+00:00",
+      doc_type: "bos_minutes",
+      source_published_at: null,
+      fiscal_year: null,
+    }],
+  ]);
+
+  const ranked = rerankCurrentStateCandidatesForTest(
+    "what is the current transient occupancy tax rate",
+    [staleTot, currentTot],
+    documents,
+  );
+
+  if (ranked[0].id !== "019f4747-ee4b-7089-bcaf-4498bef4c586") {
+    throw new Error(
+      `expected real current TOT narrative chunk first, got ${ranked[0].id}`,
+    );
+  }
+  if (!String(ranked[0].row.content).includes("6 percent")) {
+    throw new Error(
+      "expected selected TOT narrative chunk to support 6 percent",
+    );
+  }
+});
+
+Deno.test("pure historical tax rate query remains historical-only", () => {
+  const oldMarkup = testCandidate("budget_indicators", "real-estate-fy2020", {
+    document_id: "old-doc",
+    fiscal_year: 2020,
+    program: "Real Estate Tax",
+    indicator_name: "Real Estate Tax rate",
+    value_actual: 1.15,
+    raw_extracted_text: "FY 2020 Adopted tax rate $1.15.",
+  });
+  oldMarkup.rrfScore = 0.03;
+
+  const currentAdopted = testCandidate(
+    "budget_indicators",
+    "real-estate-fy2027",
+    {
+      document_id: "current-doc",
+      fiscal_year: 2027,
+      program: "Real Estate Tax",
+      indicator_name: "Real Estate Tax rate",
+      value_actual: 1.12,
+      raw_extracted_text: "FY 2027 Adopted tax rate $1.12.",
+    },
+  );
+  currentAdopted.rrfScore = 0.01;
+
+  const query = "what was the tax rate in 2020?";
+  const ranked = rerankCurrentStateCandidatesForTest(
+    query,
+    [oldMarkup, currentAdopted],
+    new Map(),
+  );
+
+  if (!isHistoricalOnlyQuery(query)) {
+    throw new Error("pure historical tax-rate query was not historical-only");
+  }
+  if (ranked[0].id !== "real-estate-fy2020") {
+    throw new Error(`expected historical row first, got ${ranked[0].id}`);
+  }
+});
+
+Deno.test("current-state budget indicator lookup selects current personal property tax rate", () => {
+  const adoptedDocId = "00000000-0000-0000-0000-000000000222";
+  const staleDocId = "00000000-0000-0000-0000-000000000221";
+  const currentPersonalProperty = testCandidate(
+    "budget_indicators",
+    "personal-property-fy2027-adopted",
+    {
+      document_id: adoptedDocId,
+      fiscal_year: 2027,
+      program: "Personal Property Tax",
+      indicator_name: "Personal Property Tax rate",
+      value_actual: 4.57,
+      unit: "dollars per $100 assessed value",
+      raw_extracted_text:
+        "FY 2027 Adopted Budget: Personal Property Tax rate is $4.57 per $100.",
+    },
+  );
+  const stalePersonalProperty = testCandidate(
+    "budget_indicators",
+    "personal-property-1993",
+    {
+      document_id: staleDocId,
+      fiscal_year: 1994,
+      program: "Personal Property Tax",
+      indicator_name: "Personal Property Tax rate",
+      value_actual: 4.57,
+      unit: "dollars per $100 assessed value",
+      raw_extracted_text:
+        "1993 BOS summary: Personal Property Tax rate is $4.57 per $100.",
+    },
+  );
+  const realEstate = testCandidate("budget_indicators", "real-estate", {
+    document_id: adoptedDocId,
+    fiscal_year: 2027,
+    program: "Real Estate Tax",
+    indicator_name: "Real Estate Tax rate",
+    value_actual: 1.12,
+    raw_extracted_text: "FY 2027 Adopted Budget Real Estate Tax rate.",
+  });
+
+  const documents = new Map<string, SourceDocument>([
+    [adoptedDocId, {
+      id: adoptedDocId,
+      url: "https://example.test/fy2027/adopted/general-fund-revenue.pdf",
+      title: "FY 2027 Adopted General Fund Revenue Overview",
+      filename: "FY2027_Adopted_General_Fund_Revenue_Overview.pdf",
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: "2026-05-05",
+      fiscal_year: 2027,
+    }],
+    [staleDocId, {
+      id: staleDocId,
+      url: "https://example.test/1993-bos-summary.pdf",
+      title: "1993 Board Summary",
+      filename: "1993_BOS_Summary.pdf",
+      ingested_at: "2026-07-01T00:00:00Z",
+      doc_type: "bos_summary",
+      source_published_at: "1993-04-01",
+      fiscal_year: 1994,
+    }],
+  ]);
+
+  const selected = selectedCurrentBudgetIndicatorsForTest(
+    "what is the current personal property tax rate",
+    [stalePersonalProperty, realEstate, currentPersonalProperty],
+    documents,
+  );
+
+  if (selected[0]?.id !== "personal-property-fy2027-adopted") {
+    throw new Error(
+      `expected current personal property first, got ${selected[0]?.id}`,
+    );
+  }
+  if (selected.some((candidate) => candidate.id === "personal-property-1993")) {
+    throw new Error("selected stale 1993 personal property tax row");
+  }
+  if (selected.some((candidate) => candidate.id === "real-estate")) {
+    throw new Error("personal property query selected real estate tax row");
+  }
+});
+
+Deno.test("current-state rerank does not override explicit historical tax-rate queries", () => {
+  const oldMarkup = testCandidate("budget_indicators", "old-markup", {
+    document_id: "old-doc",
+    fiscal_year: 2025,
+    program: "Real Estate Tax",
+    indicator_name: "Real Estate Tax rate",
+    raw_extracted_text: "FY 2025 Budget Mark-Up tax rate $1.125.",
+  });
+  oldMarkup.rrfScore = 0.03;
+
+  const currentAdopted = testCandidate("budget_indicators", "fy2027-adopted", {
+    document_id: "new-doc",
+    fiscal_year: 2027,
+    program: "Real Estate Tax",
+    indicator_name: "Real Estate Tax rate",
+    raw_extracted_text: "FY 2027 Adopted tax rate $1.12.",
+  });
+  currentAdopted.rrfScore = 0.01;
+
+  const ranked = rerankCurrentStateCandidatesForTest(
+    "what was the tax rate in 2024",
+    [oldMarkup, currentAdopted],
+    new Map(),
+  );
+
+  if (ranked[0].id !== "old-markup") {
+    throw new Error(
+      `expected historical query to preserve retrieval order, got ${
+        ranked[0].id
+      }`,
+    );
   }
 });
