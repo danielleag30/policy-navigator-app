@@ -221,6 +221,8 @@ interface SourceDocument {
   title: string | null;
   filename: string | null;
   ingested_at: string;
+  source_published_at: string | null;
+  fiscal_year: number | null;
 }
 
 interface AnnotatedDrafterChunk {
@@ -557,6 +559,218 @@ function hardFilterSuperseded(
   });
 
   return { filtered, amendedNodeIds };
+}
+
+// ── Current-state reranking for non-ordinance evidence ───────────────────────
+
+function isCurrentStateQuery(query: string): boolean {
+  if (isHistoricalQuery(query)) return false;
+  return /\b(current|currently|now|today|present|latest|this year|current rate|tax rate)\b/i
+    .test(query);
+}
+
+function normalizedText(value: unknown): string {
+  return typeof value === "string" ? value.toLowerCase() : "";
+}
+
+function candidateCorpus(c: EnrichedCandidate, doc?: SourceDocument): string {
+  return [
+    candidateText(c),
+    c.row.program,
+    c.row.indicator_name,
+    c.row.department,
+    doc?.title,
+    doc?.filename,
+    doc?.url,
+  ].map(normalizedText).join(" ");
+}
+
+function mentionsRealEstateTax(query: string): boolean {
+  return /\b(real estate|property)\b/i.test(query) && /\btax\b/i.test(query);
+}
+
+function isRelevantTaxRateCandidate(
+  query: string,
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): boolean {
+  if (!/\btax\b/i.test(query) || !/\brate\b/i.test(query)) return false;
+  const corpus = candidateCorpus(c, doc);
+  if (mentionsRealEstateTax(query)) {
+    return /\b(real estate|property)\b/.test(corpus) && /\btax\b/.test(corpus);
+  }
+  return /\btax\b/.test(corpus) && /\brate\b/.test(corpus);
+}
+
+function isAdoptedBudgetSource(
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): boolean {
+  const corpus = candidateCorpus(c, doc);
+  return /\badopt(ed|ion)?\b/.test(corpus) &&
+    !/\b(proposed|advertised|mark[- ]?up|markup|draft)\b/.test(corpus);
+}
+
+function parseDocumentDate(doc?: SourceDocument): number | null {
+  if (!doc) return null;
+  if (doc.source_published_at) {
+    const parsed = Date.parse(doc.source_published_at);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+
+  const text = [doc.title, doc.filename, doc.url].filter(Boolean).join(" ");
+  const iso = text.match(
+    /\b(20\d{2})[-_/](0?[1-9]|1[0-2])[-_/](0?[1-9]|[12]\d|3[01])\b/,
+  );
+  if (iso) {
+    const parsed = Date.parse(
+      `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`,
+    );
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+
+  const named = text.match(
+    /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+([0-3]?\d),?\s+(20\d{2})\b/i,
+  );
+  if (named) {
+    const parsed = Date.parse(`${named[1]} ${named[2]}, ${named[3]}`);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+
+  return null;
+}
+
+function currentStateScore(
+  query: string,
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): number {
+  if (
+    c.table === "budget_indicators" && isRelevantTaxRateCandidate(query, c, doc)
+  ) {
+    const fiscalYear = asNumber(c.row.fiscal_year) ?? doc?.fiscal_year ?? 0;
+    const adoptedBoost = isAdoptedBudgetSource(c, doc) ? 100 : 0;
+    const draftPenalty =
+      /\b(proposed|advertised|mark[- ]?up|markup|draft)\b/.test(
+          candidateCorpus(c, doc),
+        )
+        ? -100
+        : 0;
+    return 1000 + adoptedBoost + draftPenalty + fiscalYear;
+  }
+
+  if (
+    c.table === "narrative_chunks" && isRelevantTaxRateCandidate(query, c, doc)
+  ) {
+    const docDate = parseDocumentDate(doc);
+    const adoptedBoost = isAdoptedBudgetSource(c, doc) ? 100 : 0;
+    const draftPenalty =
+      /\b(proposed|advertised|mark[- ]?up|markup|draft)\b/.test(
+          candidateCorpus(c, doc),
+        )
+        ? -100
+        : 0;
+    return 500 + adoptedBoost + draftPenalty +
+      (docDate === null ? 0 : docDate / 86_400_000);
+  }
+
+  return 0;
+}
+
+async function rerankCurrentStateCandidates(
+  query: string,
+  candidates: EnrichedCandidate[],
+): Promise<EnrichedCandidate[]> {
+  if (!isCurrentStateQuery(query)) return candidates;
+
+  const documents = await fetchSourceDocuments(candidates);
+  return [...candidates].sort((a, b) => {
+    const docA = typeof a.row.document_id === "string"
+      ? documents.get(a.row.document_id)
+      : undefined;
+    const docB = typeof b.row.document_id === "string"
+      ? documents.get(b.row.document_id)
+      : undefined;
+    const scoreDelta = currentStateScore(query, b, docB) -
+      currentStateScore(query, a, docA);
+    if (scoreDelta !== 0) return scoreDelta;
+    return b.rrfScore - a.rrfScore;
+  });
+}
+
+function budgetIndicatorCandidate(
+  row: Record<string, unknown>,
+): EnrichedCandidate {
+  const id = row.id as string;
+  return {
+    key: `budget_indicators:${id}`,
+    table: "budget_indicators",
+    id,
+    row,
+    rankBm25: null,
+    rankVector: null,
+    rrfScore: Number.MAX_SAFE_INTEGER,
+    ancestors: [],
+    municode_node_id: undefined,
+    superseded_date: null,
+    hasAmendmentHistory: false,
+  };
+}
+
+async function fetchCurrentTaxRateBudgetIndicators(
+  query: string,
+): Promise<EnrichedCandidate[]> {
+  if (
+    !isCurrentStateQuery(query) || !/\btax\b/i.test(query) ||
+    !/\brate\b/i.test(query)
+  ) {
+    return [];
+  }
+
+  const { data, error: dbErr } = await db
+    .from("budget_indicators")
+    .select(
+      "*, documents!inner(id, url, title, filename, ingested_at, source_published_at, fiscal_year)",
+    )
+    .or(
+      "program.ilike.%Real Estate Tax%,indicator_name.ilike.%Real Estate Tax%,raw_extracted_text.ilike.%Real Estate tax%",
+    )
+    .not("value_actual", "is", null)
+    .order("fiscal_year", { ascending: false })
+    .limit(20);
+
+  if (dbErr) {
+    console.error(
+      "current tax-rate budget indicator lookup error:",
+      dbErr.message,
+    );
+    return [];
+  }
+
+  return ((data ?? []) as Record<string, unknown>[])
+    .filter((row) => {
+      const doc = row.documents as SourceDocument | undefined;
+      return isAdoptedBudgetSource(budgetIndicatorCandidate(row), doc);
+    })
+    .slice(0, 3)
+    .map((row) => {
+      const { documents: _documents, ...candidateRow } = row;
+      return budgetIndicatorCandidate(candidateRow);
+    });
+}
+
+async function prependCurrentBudgetIndicators(
+  query: string,
+  candidates: EnrichedCandidate[],
+): Promise<EnrichedCandidate[]> {
+  const currentIndicators = await fetchCurrentTaxRateBudgetIndicators(query);
+  if (currentIndicators.length === 0) return candidates;
+
+  const seen = new Set(currentIndicators.map((c) => c.key));
+  return [
+    ...currentIndicators,
+    ...candidates.filter((candidate) => !seen.has(candidate.key)),
+  ];
 }
 
 // ── Temporal Judge ────────────────────────────────────────────────────────────
@@ -1044,7 +1258,9 @@ async function fetchSourceDocuments(
 
   const { data, error: dbErr } = await db
     .from("documents")
-    .select("id, url, title, filename, ingested_at")
+    .select(
+      "id, url, title, filename, ingested_at, source_published_at, fiscal_year",
+    )
     .in("id", documentIds);
 
   if (dbErr) {
@@ -2165,8 +2381,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // ── Step 6 (task 2-9): Temporal Judge ──────────────────────────────────────
 
   const historical = isHistoricalQuery(query);
+  const budgetAnchored = historical
+    ? enriched
+    : await prependCurrentBudgetIndicators(query, enriched);
   const { filtered: preFiltered, amendedNodeIds } = hardFilterSuperseded(
-    enriched,
+    budgetAnchored,
     historical,
   );
 
@@ -2179,12 +2398,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
       amendedNodeIds.has(c.municode_node_id),
   }));
 
-  const pendingChanges = await fetchPendingChanges(taggedCandidates);
+  const currentAwareCandidates = await rerankCurrentStateCandidates(
+    query,
+    taggedCandidates,
+  );
+
+  const pendingChanges = await fetchPendingChanges(currentAwareCandidates);
 
   llmCalls += 1;
   const judgeResult = await runTemporalJudge(
     query,
-    taggedCandidates,
+    currentAwareCandidates,
     pendingChanges,
   );
 
