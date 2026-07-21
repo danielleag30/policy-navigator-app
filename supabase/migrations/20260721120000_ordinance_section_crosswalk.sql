@@ -107,6 +107,12 @@ AS $$
   LIMIT 1;
 $$;
 
+-- Postgres grants EXECUTE to PUBLIC by default on newly created functions,
+-- and anon/authenticated are both implicitly members of PUBLIC -- revoking
+-- from anon/authenticated alone does NOT remove that default PUBLIC grant.
+-- Must revoke from PUBLIC explicitly or anon/authenticated can still call the
+-- function despite the revokes below (live-proven during cross-vendor review).
+REVOKE ALL ON FUNCTION get_crosswalk_citation_at(text, date) FROM PUBLIC;
 REVOKE ALL ON FUNCTION get_crosswalk_citation_at(text, date) FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION get_crosswalk_citation_at(text, date) TO service_role;
 
@@ -146,6 +152,7 @@ AS $$
   ORDER BY cw.effective_date ASC;
 $$;
 
+REVOKE ALL ON FUNCTION get_crosswalk_history(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION get_crosswalk_history(text) FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION get_crosswalk_history(text) TO service_role;
 

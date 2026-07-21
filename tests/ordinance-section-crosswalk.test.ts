@@ -71,6 +71,17 @@ Deno.test("indexes and RLS match the established ordinance_provisions convention
 Deno.test("both read-helper functions are STABLE, SECURITY DEFINER, and locked down to service_role only", async () => {
   const sql = await readMigration();
   for (const fn of ["get_crosswalk_citation_at(text, date)", "get_crosswalk_history(text)"]) {
+    // Postgres grants EXECUTE to PUBLIC by default on new functions, and
+    // anon/authenticated are implicitly members of PUBLIC -- revoking from
+    // anon/authenticated alone does NOT remove that default grant, so both
+    // roles could still call the function unless PUBLIC is revoked too
+    // (live-proven during cross-vendor review: anon/authenticated could call
+    // both functions and read real ordinance_provisions content despite the
+    // anon/authenticated-only revokes).
+    assert(
+      sql.includes(`REVOKE ALL ON FUNCTION ${fn} FROM PUBLIC`),
+      `expected ${fn} to revoke the default PUBLIC execute grant -- REVOKE FROM anon, authenticated alone does not remove it, since both are members of PUBLIC`,
+    );
     assert(
       sql.includes(`REVOKE ALL ON FUNCTION ${fn} FROM anon, authenticated`),
       `expected ${fn} to revoke anon/authenticated execute`,
