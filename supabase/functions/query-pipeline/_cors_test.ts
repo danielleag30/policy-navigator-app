@@ -33,8 +33,11 @@ Deno.test("OPTIONS preflight returns 204 with CORS headers, never reaches the PO
   if (res === "continue") throw new Error("OPTIONS must not fall through to the handler body");
   assertEquals(res.status, 204);
   assertEquals(res.headers.get("Access-Control-Allow-Origin"), "*");
-  assertEquals(res.headers.get("Access-Control-Allow-Headers"), "authorization, content-type");
-  assertEquals(res.headers.get("Access-Control-Allow-Methods"), "POST, OPTIONS");
+  assertEquals(
+    res.headers.get("Access-Control-Allow-Headers"),
+    "authorization, content-type, x-admin-secret",
+  );
+  assertEquals(res.headers.get("Access-Control-Allow-Methods"), "GET, POST, OPTIONS");
 });
 
 Deno.test("POST is not rejected — falls through to the real handler body", () => {

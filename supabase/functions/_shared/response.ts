@@ -22,8 +22,8 @@
 // real request is ever sent.
 export const CORS_HEADERS: HeadersInit = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "authorization, content-type, x-admin-secret",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
 export function corsPreflightResponse(): Response {
