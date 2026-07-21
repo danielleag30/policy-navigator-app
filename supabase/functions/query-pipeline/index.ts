@@ -937,9 +937,8 @@ async function prependCurrentTaxRateAnchors(
   candidates: EnrichedCandidate[],
 ): Promise<EnrichedCandidate[]> {
   const currentIndicators = await fetchCurrentBudgetIndicatorRows(query);
-  const currentAnchors = currentIndicators.length > 0
-    ? currentIndicators
-    : await fetchCurrentNarrativeTaxRateRows(query);
+  const currentNarratives = await fetchCurrentNarrativeTaxRateRows(query);
+  const currentAnchors = [...currentIndicators, ...currentNarratives];
   if (currentAnchors.length === 0) return candidates;
 
   const seen = new Set(currentAnchors.map((c) => c.key));
