@@ -221,6 +221,8 @@ interface SourceDocument {
   title: string | null;
   filename: string | null;
   ingested_at: string;
+  doc_type: string | null;
+  source_published_at: string | null;
 }
 
 interface AnnotatedDrafterChunk {
@@ -1044,7 +1046,9 @@ async function fetchSourceDocuments(
 
   const { data, error: dbErr } = await db
     .from("documents")
-    .select("id, url, title, filename, ingested_at")
+    .select(
+      "id, url, title, filename, ingested_at, doc_type, source_published_at",
+    )
     .in("id", documentIds);
 
   if (dbErr) {
@@ -1057,6 +1061,42 @@ async function fetchSourceDocuments(
   );
 }
 
+// Human-readable labels for documents.doc_type, keyed by the CHECK constraint
+// values in migrations 001/20260710123000. Used only when a document has no
+// real title/filename — never surface the raw doc_type or table name to users.
+const DOC_TYPE_LABELS: Record<string, string> = {
+  bos_summary: "Board Summary",
+  bos_minutes: "Board Minutes",
+  budget_pdf: "Budget Document",
+  municode_api: "Municode Ordinance",
+  encode_zoning: "Zoning Ordinance",
+};
+
+// Last-resort labels when there's no document row at all (e.g. a dangling
+// document_id) — still human-readable, keyed by CHUNK_TABLES.
+const CHUNK_TABLE_LABELS: Record<ChunkTable, string> = {
+  ordinance_provisions: "Ordinance Provision",
+  vote_tallies: "Vote Tally",
+  policy_decisions: "Policy Decision",
+  budget_indicators: "Budget Indicator",
+  narrative_chunks: "Document",
+};
+
+// The only per-document date available for most doc types today. Prefer
+// source_published_at (the document's real-world date) but it is currently
+// unpopulated for bos_summary/bos_minutes/budget_pdf at ingestion time, so
+// this generally falls back to ingested_at (the scrape date, not the
+// document's real date) — good enough to distinguish citations, but see
+// PR notes for the underlying ingestion gap.
+function fallbackSourceDate(doc: SourceDocument | undefined): string | null {
+  if (!doc) return null;
+  const raw = doc.source_published_at ?? doc.ingested_at;
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 10);
+}
+
 function sourceTitle(
   doc: SourceDocument | undefined,
   c: EnrichedCandidate,
@@ -1064,10 +1104,15 @@ function sourceTitle(
   if (doc?.title) return doc.title;
   if (doc?.filename) return doc.filename;
   if (c.table === "ordinance_provisions") {
-    return asText(c.row.section_title) ?? asText(c.row.municode_node_id) ??
-      "Ordinance provision";
+    const provisionTitle = asText(c.row.section_title) ??
+      asText(c.row.municode_node_id);
+    if (provisionTitle) return provisionTitle;
   }
-  return c.table;
+
+  const label = (doc?.doc_type && DOC_TYPE_LABELS[doc.doc_type]) ??
+    CHUNK_TABLE_LABELS[c.table];
+  const date = fallbackSourceDate(doc);
+  return date ? `${label} — ${date}` : label;
 }
 
 function retrievedDate(ingestedAt: string | null): string {
