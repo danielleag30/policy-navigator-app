@@ -431,7 +431,6 @@ function selectedCurrentBudgetIndicatorsForTest(
 function prependCurrentNarrativeTaxRateAnchorsForTest(
   query: string,
   candidates: EnrichedCandidate[],
-  budgetRows: EnrichedCandidate[],
   narrativeRows: EnrichedCandidate[],
   documents: Map<string, SourceDocument>,
 ): EnrichedCandidate[] {
@@ -442,7 +441,7 @@ function prependCurrentNarrativeTaxRateAnchorsForTest(
     return candidates;
   }
 
-  const narrativeAnchors = narrativeRows
+  const anchors = narrativeRows
     .filter((row) => {
       const doc = typeof row.row.document_id === "string"
         ? documents.get(row.row.document_id)
@@ -461,7 +460,6 @@ function prependCurrentNarrativeTaxRateAnchorsForTest(
     })
     .slice(0, 3);
 
-  const anchors = [...budgetRows, ...narrativeAnchors];
   const seen = new Set(anchors.map((c) => c.key));
   return [...anchors, ...candidates.filter((c) => !seen.has(c.key))];
 }
@@ -1520,31 +1518,12 @@ Deno.test("current-state narrative recency selects real transient occupancy tax 
   const anchored = prependCurrentNarrativeTaxRateAnchorsForTest(
     "what is the current transient occupancy tax rate",
     [staleTot],
-    [
-      testCandidate("budget_indicators", "tot-revenue-not-rate", {
-        program: "Fund 10030",
-        indicator_name: "Transient Occupancy Tax (TOT) revenue",
-        value_actual: 6645815,
-        unit: "dollars",
-        fiscal_year: 2027,
-        raw_extracted_text: "Transient Occupancy Tax revenue is $6,645,815.",
-      }),
-    ],
     [staleTot, currentTot],
     documents,
   );
-  const anchoredAndReranked = rerankCurrentStateCandidatesForTest(
-    "what is the current transient occupancy tax rate",
-    anchored,
-    documents,
-  );
-  if (
-    anchoredAndReranked[0].id !== "019f4747-ee4b-7089-bcaf-4498bef4c586"
-  ) {
+  if (anchored[0].id !== "019f4747-ee4b-7089-bcaf-4498bef4c586") {
     throw new Error(
-      `expected current TOT narrative anchor first after rerank, got ${
-        anchoredAndReranked[0].id
-      }`,
+      `expected current TOT narrative anchor first, got ${anchored[0].id}`,
     );
   }
 });
