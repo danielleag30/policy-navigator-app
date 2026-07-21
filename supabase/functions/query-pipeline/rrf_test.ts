@@ -275,7 +275,8 @@ function isAdoptedBudgetSource(
 ): boolean {
   const corpus = candidateCorpus(c, doc);
   return /\badopt(ed|ion)?\b/.test(corpus) &&
-    !/\b(proposed|advertised|mark[- ]?up|markup|draft)\b/.test(corpus);
+    !hasDraftQualifierNearRateMention(c) &&
+    !hasDraftSourceStatus(doc);
 }
 
 function parseDocumentFiscalYear(doc?: SourceDocument): number | null {
@@ -340,12 +341,27 @@ function hasDraftQualifierNearRateMention(
 
   for (const regex of [rateMention, valueThenRate]) {
     for (const match of content.matchAll(regex)) {
-      const index = match.index ?? 0;
-      windows.push(content.slice(Math.max(0, index - 200), index + 300));
+      windows.push(match[0]);
     }
   }
 
   return windows.some((window) => draftRegex.test(window));
+}
+
+function hasDraftSourceStatus(doc?: SourceDocument): boolean {
+  const sourceStatus = [doc?.title, doc?.filename, doc?.url]
+    .map(normalizedText)
+    .join(" ");
+  return /\b(proposed|advertised|mark[- ]?up|markup|draft)\b/.test(
+    sourceStatus,
+  );
+}
+
+function hasDraftQualifierForRateEvidence(
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): boolean {
+  return hasDraftQualifierNearRateMention(c) || hasDraftSourceStatus(doc);
 }
 
 function currentStateScore(
@@ -358,13 +374,8 @@ function currentStateScore(
   ) {
     const fiscalYear = asNumber(c.row.fiscal_year) ?? doc?.fiscal_year ?? 0;
     const adoptedBoost = isAdoptedBudgetSource(c, doc) ? 100 : 0;
-    const draftPenalty =
-      /\b(proposed|advertised|mark[- ]?up|markup|draft)\b/.test(
-          candidateCorpus(c, doc),
-        )
-        ? -100
-        : 0;
-    return 1000 + adoptedBoost + draftPenalty + fiscalYear;
+    const draftPenalty = hasDraftQualifierForRateEvidence(c, doc) ? -100 : 0;
+    return 2_000_000 + adoptedBoost + draftPenalty + fiscalYear;
   }
 
   if (
@@ -372,7 +383,7 @@ function currentStateScore(
   ) {
     const recencyScore = parseDocumentRecencyScore(doc);
     const adoptedBoost = isAdoptedBudgetSource(c, doc) ? 100 : 0;
-    const draftPenalty = hasDraftQualifierNearRateMention(c) ? -100 : 0;
+    const draftPenalty = hasDraftQualifierForRateEvidence(c, doc) ? -100 : 0;
     return 500 + adoptedBoost + draftPenalty +
       (recencyScore === null ? 0 : recencyScore);
   }
@@ -1408,6 +1419,113 @@ Deno.test("compound current and historical real estate tax query still prefers c
   if (ranked[0].row.value_actual !== 1.12) {
     throw new Error(
       `expected current value 1.12, got ${ranked[0].row.value_actual}`,
+    );
+  }
+});
+
+Deno.test("current-state rerank uses real FY2027 adopted row over advertised narrative row", () => {
+  const adoptedDocId = "019f5735-154a-7182-aa08-e8557b11a214";
+  const advertisedDocId = "019f480b-bab2-7242-896c-0083f74c8bd9";
+  const query = "what is the current real estate tax rate";
+  const currentAdopted = testCandidate(
+    "budget_indicators",
+    "019f5736-0f82-7310-a4db-c7bbc4806450",
+    {
+      document_id: adoptedDocId,
+      fiscal_year: 2027,
+      program: "Real Estate Tax",
+      indicator_name: "Real Estate Tax rate",
+      value_actual: 1.12,
+      unit: "dollars per $100 of assessed value",
+      raw_extracted_text:
+        "DATE: May 4, 2026 TO: Board of Supervisors FROM: Bryan J. Hill County Executive SUBJECT: Adoption of the FY 2027 Budget Plan Attached for your review are the following documents: Board revenue and expenditure adjustments approved at the Budget Mark-up on April 28, 2026 (Attachment I); Resolution Adopting Tax Rates for FY 2027 (Attachment II); FY 2027 Appropriation Resolution for County Agencies/Funds (Attachment III); FY 2027 Appropriation Resolution for School Board Funds (Attachment IV); FY 2027 Fiscal Planning Resolution (Attachment V); and FY 2027 General Fund Statement; FY 2027 General Fund Expenditures by Agency; FY 2027 Expenditures by Fund, Appropriated; and FY 2027 Expenditures by Fund, NonAppropriated (Attachment VI). The attachments noted above provide the official documentation of the adjustments made by the Board of Supervisors on April 28, 2026, associated with the markup of the FY 2027 budget. It should be noted that the Board took final action on the FY 2027-2031 Capital Improvement Program during budget mark-up on April 28. The Real Estate Tax rate to be approved by the Board will decrease from $1.1225 per $100 of assessed value to $1.12 per $100 of assessed value. The Personal Property Tax rate will remain at $4.57 per $100 of assessed value for most classes of personal property.",
+    },
+  );
+  currentAdopted.rrfScore = 0.01;
+
+  const advertisedNarrative = testCandidate(
+    "narrative_chunks",
+    "019f480d-1e26-7225-aba3-5c279c2ecbaf",
+    {
+      document_id: advertisedDocId,
+      content:
+        "Category Actual Projections FY 2025 FY 2026 FY 2027 FY 2028 Real Estate Tax - Assessment Base 2.73% 5.34% 3.77% 1.10% Equalization 1.91% 4.68% 3.32% 0.80% Residential 2.86% 6.17% 3.99% 1.00% Nonresidential (1.24%) (0.38%) 0.92% 0.00% Normal Growth 0.82% 0.66% 0.45% 0.30% Real Estate Tax Rate per $100 of assessed value 1 $1.125 $1.1225 $1.1225 $1.1225 Personal Property Tax - Current 2 7.22% 2.37% 3.14% 2.00% Local Sales Tax 2.60% 2.00% 1.50% 2.50% Business, Professional and Occupational License (BPOL) Taxes 3.49% 2.02% 1.50% 2.50% Food and Beverage Tax -- -- 100.00% 2.50% Interest on Investments 9.51% (12.79%) (9.58%) 3.08% Interest Rate Earned on Investments 4.47% 4.06% 3.50% 3.50% Fines and Forfeitures 12.76% 0.61% 1.96% 2.50% Charges for Services 6.93% 2.67% 4.72% 2.50% State/Federal Revenue 2 3.80% (2.40%) (1.30%) 2.00% Total General Fund Revenue 5.53% 4.54% 3.75% 1.50% 1 The FY 2028 forecast is based on the current Real Estate tax rate of $1.1225 per $100 of assessed value.",
+    },
+  );
+  advertisedNarrative.rrfScore = 0.03;
+
+  const documents = new Map<string, SourceDocument>([
+    [adoptedDocId, {
+      id: adoptedDocId,
+      url:
+        "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/fy2027/fy2027-adopted-package.pdf",
+      title: null,
+      filename: null,
+      ingested_at: "2026-07-12T16:42:04.490Z",
+      doc_type: "budget_pdf",
+      source_published_at: null,
+      fiscal_year: null,
+    }],
+    [advertisedDocId, {
+      id: advertisedDocId,
+      url:
+        "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/fy2027/advertised/overview/Multi%20Year.pdf",
+      title: null,
+      filename: null,
+      ingested_at: "2026-07-09T18:02:36.082Z",
+      doc_type: "budget_pdf",
+      source_published_at: null,
+      fiscal_year: null,
+    }],
+  ]);
+
+  const adoptedScore = currentStateScore(
+    query,
+    currentAdopted,
+    documents.get(adoptedDocId),
+  );
+  const advertisedScore = currentStateScore(
+    query,
+    advertisedNarrative,
+    documents.get(advertisedDocId),
+  );
+  if (hasDraftQualifierNearRateMention(currentAdopted)) {
+    throw new Error(
+      "incidental Budget Mark-up text near the document opening was penalized",
+    );
+  }
+  if (
+    hasDraftQualifierForRateEvidence(
+      currentAdopted,
+      documents.get(adoptedDocId),
+    )
+  ) {
+    throw new Error("adopted package received a false draft penalty");
+  }
+  if (
+    !hasDraftQualifierForRateEvidence(
+      advertisedNarrative,
+      documents.get(advertisedDocId),
+    )
+  ) {
+    throw new Error(
+      "advertised narrative document did not receive a draft penalty",
+    );
+  }
+  if (adoptedScore <= advertisedScore) {
+    throw new Error(
+      `expected adopted score to beat advertised score; adopted=${adoptedScore} advertised=${advertisedScore}`,
+    );
+  }
+
+  const ranked = rerankCurrentStateCandidatesForTest(
+    query,
+    [advertisedNarrative, currentAdopted],
+    documents,
+  );
+  if (ranked[0].id !== "019f5736-0f82-7310-a4db-c7bbc4806450") {
+    throw new Error(
+      `expected real FY2027 adopted row first, got ${ranked[0].id}`,
     );
   }
 });
