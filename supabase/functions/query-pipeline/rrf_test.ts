@@ -309,6 +309,65 @@ function formatCitation(
   return `[${title}, ${pageText}, retrieved ${retrievedDate(ingestedAt)}]`;
 }
 
+// ── Source title resolution (mirrors index.ts's sourceTitle) ─────────────────
+
+interface SourceDocument {
+  id: string;
+  url: string;
+  title: string | null;
+  filename: string | null;
+  ingested_at: string;
+  doc_type: string | null;
+  source_published_at: string | null;
+}
+
+function asText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
+const DOC_TYPE_LABELS: Record<string, string> = {
+  bos_summary: "Board Summary",
+  bos_minutes: "Board Minutes",
+  budget_pdf: "Budget Document",
+  municode_api: "Municode Ordinance",
+  encode_zoning: "Zoning Ordinance",
+};
+
+const CHUNK_TABLE_LABELS: Record<ChunkTable, string> = {
+  ordinance_provisions: "Ordinance Provision",
+  vote_tallies: "Vote Tally",
+  policy_decisions: "Policy Decision",
+  budget_indicators: "Budget Indicator",
+  narrative_chunks: "Document",
+};
+
+function fallbackSourceDate(doc: SourceDocument | undefined): string | null {
+  if (!doc) return null;
+  const raw = doc.source_published_at ?? doc.ingested_at;
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 10);
+}
+
+function sourceTitle(
+  doc: SourceDocument | undefined,
+  c: EnrichedCandidate,
+): string {
+  if (doc?.title) return doc.title;
+  if (doc?.filename) return doc.filename;
+  if (c.table === "ordinance_provisions") {
+    const provisionTitle = asText(c.row.section_title) ??
+      asText(c.row.municode_node_id);
+    if (provisionTitle) return provisionTitle;
+  }
+
+  const label = (doc?.doc_type && DOC_TYPE_LABELS[doc.doc_type]) ??
+    CHUNK_TABLE_LABELS[c.table];
+  const date = fallbackSourceDate(doc);
+  return date ? `${label} — ${date}` : label;
+}
+
 function validIsoTimestamp(value: string | null): string | null {
   if (!value) return null;
   const parsed = new Date(value);
@@ -687,6 +746,148 @@ Deno.test("verifier correction budget caps post-draft calls and falls back with 
     throw new Error(
       "expected unverified caveat after exhausted correction passes",
     );
+  }
+});
+
+Deno.test("sourceTitle prefers the document's real title when populated", () => {
+  const doc: SourceDocument = {
+    id: "d1",
+    url: "https://example.test/doc.pdf",
+    title: "FY 2026 Adopted Budget",
+    filename: null,
+    ingested_at: "2026-06-20T15:30:00Z",
+    doc_type: "budget_pdf",
+    source_published_at: null,
+  };
+  const title = sourceTitle(
+    doc,
+    testCandidate("budget_indicators", "00000000-0000-0000-0000-000000000d01"),
+  );
+  if (title !== "FY 2026 Adopted Budget") {
+    throw new Error(`expected real title, got: ${title}`);
+  }
+});
+
+Deno.test("sourceTitle falls back to filename when title is missing", () => {
+  const doc: SourceDocument = {
+    id: "d1",
+    url: "https://example.test/doc.pdf",
+    title: null,
+    filename: "budget-2026.pdf",
+    ingested_at: "2026-06-20T15:30:00Z",
+    doc_type: "budget_pdf",
+    source_published_at: null,
+  };
+  const title = sourceTitle(
+    doc,
+    testCandidate("budget_indicators", "00000000-0000-0000-0000-000000000d01"),
+  );
+  if (title !== "budget-2026.pdf") {
+    throw new Error(`expected filename fallback, got: ${title}`);
+  }
+});
+
+Deno.test("sourceTitle never surfaces the raw table name when title/filename are both null", () => {
+  // Regression test: bos_summary/bos_minutes/budget_pdf documents currently
+  // have title=null and filename=null for every ingested row (a real
+  // ingestion gap — see PR description) — this previously leaked the raw
+  // Postgres table name (e.g. 'narrative_chunks') into user-facing citations.
+  const doc: SourceDocument = {
+    id: "d1",
+    url: "https://example.test/BOS_2026-06-09.pdf",
+    title: null,
+    filename: null,
+    ingested_at: "2026-06-09T12:00:00Z",
+    doc_type: "bos_summary",
+    source_published_at: null,
+  };
+  const title = sourceTitle(
+    doc,
+    testCandidate("narrative_chunks", "00000000-0000-0000-0000-000000000d02"),
+  );
+  if (title === "narrative_chunks") {
+    throw new Error("raw table name leaked into citation title");
+  }
+  if (title !== "Board Summary — 2026-06-09") {
+    throw new Error(`unexpected fallback title: ${title}`);
+  }
+});
+
+Deno.test("sourceTitle maps every known doc_type to a human-readable label", () => {
+  const cases: Array<[string, string]> = [
+    ["bos_summary", "Board Summary"],
+    ["bos_minutes", "Board Minutes"],
+    ["budget_pdf", "Budget Document"],
+    ["municode_api", "Municode Ordinance"],
+    ["encode_zoning", "Zoning Ordinance"],
+  ];
+  for (const [docType, label] of cases) {
+    const doc: SourceDocument = {
+      id: "d1",
+      url: "https://example.test/doc",
+      title: null,
+      filename: null,
+      ingested_at: "2026-06-09T12:00:00Z",
+      doc_type: docType,
+      source_published_at: null,
+    };
+    const title = sourceTitle(
+      doc,
+      testCandidate("narrative_chunks", "00000000-0000-0000-0000-000000000d02"),
+    );
+    if (title !== `${label} — 2026-06-09`) {
+      throw new Error(
+        `doc_type ${docType}: expected "${label} — 2026-06-09", got "${title}"`,
+      );
+    }
+  }
+});
+
+Deno.test("sourceTitle prefers source_published_at over ingested_at when both are present", () => {
+  const doc: SourceDocument = {
+    id: "d1",
+    url: "https://example.test/doc.pdf",
+    title: null,
+    filename: null,
+    ingested_at: "2026-07-15T00:54:03Z",
+    doc_type: "bos_summary",
+    source_published_at: "1995-08-07",
+  };
+  const title = sourceTitle(
+    doc,
+    testCandidate("narrative_chunks", "00000000-0000-0000-0000-000000000d02"),
+  );
+  if (title !== "Board Summary — 1995-08-07") {
+    throw new Error(`expected real document date to win, got: ${title}`);
+  }
+});
+
+Deno.test("sourceTitle uses section_title for ordinance_provisions before falling back", () => {
+  const title = sourceTitle(
+    undefined,
+    testCandidate(
+      "ordinance_provisions",
+      "00000000-0000-0000-0000-000000000d03",
+      { section_title: "Sect. 8-918" },
+    ),
+  );
+  if (title !== "Sect. 8-918") {
+    throw new Error(`expected section_title, got: ${title}`);
+  }
+});
+
+Deno.test("sourceTitle never surfaces the raw table name when no document row exists at all", () => {
+  // Covers a dangling document_id / lookup failure: fetchSourceDocuments()
+  // returns an empty map for that id, so doc is undefined here.
+  const title = sourceTitle(
+    undefined,
+    testCandidate("budget_indicators", "00000000-0000-0000-0000-000000000d01"),
+  );
+  if (title === "budget_indicators") {
+    throw new Error("raw table name leaked into citation title");
+  }
+  if (title !== "Budget Indicator") {
+    throw new Error(`unexpected no-document fallback: ${title}`);
   }
 });
 
