@@ -823,6 +823,25 @@ function budgetIndicatorCandidate(
   };
 }
 
+function narrativeChunkCandidate(
+  row: Record<string, unknown>,
+): EnrichedCandidate {
+  const id = row.id as string;
+  return {
+    key: `narrative_chunks:${id}`,
+    table: "narrative_chunks",
+    id,
+    row,
+    rankBm25: null,
+    rankVector: null,
+    rrfScore: Number.MAX_SAFE_INTEGER,
+    ancestors: [],
+    municode_node_id: undefined,
+    superseded_date: null,
+    hasAmendmentHistory: false,
+  };
+}
+
 async function fetchCurrentBudgetIndicatorRows(
   query: string,
 ): Promise<EnrichedCandidate[]> {
@@ -866,16 +885,66 @@ async function fetchCurrentBudgetIndicatorRows(
     });
 }
 
-async function prependCurrentBudgetIndicators(
+async function fetchCurrentNarrativeTaxRateRows(
+  query: string,
+): Promise<EnrichedCandidate[]> {
+  if (
+    !isCurrentStateQuery(query) || !/\btax\b/i.test(query) ||
+    !/\brate\b/i.test(query)
+  ) {
+    return [];
+  }
+
+  const { data, error: dbErr } = await db
+    .from("narrative_chunks")
+    .select(
+      "*, documents!inner(id, url, title, filename, ingested_at, source_published_at, fiscal_year)",
+    )
+    .or(
+      "content.ilike.%tax rate%,content.ilike.%TOT tax rate%,content.ilike.%Transient Occupancy Tax%",
+    )
+    .limit(300);
+
+  if (dbErr) {
+    console.error(
+      "current tax-rate narrative lookup error:",
+      dbErr.message,
+    );
+    return [];
+  }
+
+  return ((data ?? []) as Record<string, unknown>[])
+    .map((row) => {
+      const { documents: _documents, ...candidateRow } = row;
+      return {
+        candidate: narrativeChunkCandidate(candidateRow),
+        doc: row.documents as SourceDocument | undefined,
+      };
+    })
+    .filter(({ candidate, doc }) =>
+      isRelevantTaxRateCandidate(query, candidate, doc)
+    )
+    .sort((a, b) =>
+      currentStateScore(query, b.candidate, b.doc) -
+      currentStateScore(query, a.candidate, a.doc)
+    )
+    .slice(0, 3)
+    .map(({ candidate }) => candidate);
+}
+
+async function prependCurrentTaxRateAnchors(
   query: string,
   candidates: EnrichedCandidate[],
 ): Promise<EnrichedCandidate[]> {
   const currentIndicators = await fetchCurrentBudgetIndicatorRows(query);
-  if (currentIndicators.length === 0) return candidates;
+  const currentAnchors = currentIndicators.length > 0
+    ? currentIndicators
+    : await fetchCurrentNarrativeTaxRateRows(query);
+  if (currentAnchors.length === 0) return candidates;
 
-  const seen = new Set(currentIndicators.map((c) => c.key));
+  const seen = new Set(currentAnchors.map((c) => c.key));
   return [
-    ...currentIndicators,
+    ...currentAnchors,
     ...candidates.filter((candidate) => !seen.has(candidate.key)),
   ];
 }
@@ -2532,7 +2601,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const historical = isHistoricalOnlyQuery(query);
   const budgetAnchored = historical
     ? enriched
-    : await prependCurrentBudgetIndicators(query, enriched);
+    : await prependCurrentTaxRateAnchors(query, enriched);
   const { filtered: preFiltered, amendedNodeIds } = hardFilterSuperseded(
     budgetAnchored,
     historical,

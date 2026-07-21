@@ -428,6 +428,42 @@ function selectedCurrentBudgetIndicatorsForTest(
     .slice(0, 3);
 }
 
+function prependCurrentNarrativeTaxRateAnchorsForTest(
+  query: string,
+  candidates: EnrichedCandidate[],
+  narrativeRows: EnrichedCandidate[],
+  documents: Map<string, SourceDocument>,
+): EnrichedCandidate[] {
+  if (
+    !isCurrentStateQuery(query) || !/\btax\b/i.test(query) ||
+    !/\brate\b/i.test(query)
+  ) {
+    return candidates;
+  }
+
+  const anchors = narrativeRows
+    .filter((row) => {
+      const doc = typeof row.row.document_id === "string"
+        ? documents.get(row.row.document_id)
+        : undefined;
+      return isRelevantTaxRateCandidate(query, row, doc);
+    })
+    .sort((a, b) => {
+      const docA = typeof a.row.document_id === "string"
+        ? documents.get(a.row.document_id)
+        : undefined;
+      const docB = typeof b.row.document_id === "string"
+        ? documents.get(b.row.document_id)
+        : undefined;
+      return currentStateScore(query, b, docB) -
+        currentStateScore(query, a, docA);
+    })
+    .slice(0, 3);
+
+  const seen = new Set(anchors.map((c) => c.key));
+  return [...anchors, ...candidates.filter((c) => !seen.has(c.key))];
+}
+
 function fkCandidate(
   table: "vote_tallies" | "policy_decisions",
   row: Record<string, unknown>,
@@ -1476,6 +1512,18 @@ Deno.test("current-state narrative recency selects real transient occupancy tax 
   if (!String(ranked[0].row.content).includes("6 percent")) {
     throw new Error(
       "expected selected TOT narrative chunk to support 6 percent",
+    );
+  }
+
+  const anchored = prependCurrentNarrativeTaxRateAnchorsForTest(
+    "what is the current transient occupancy tax rate",
+    [staleTot],
+    [staleTot, currentTot],
+    documents,
+  );
+  if (anchored[0].id !== "019f4747-ee4b-7089-bcaf-4498bef4c586") {
+    throw new Error(
+      `expected current TOT narrative anchor first, got ${anchored[0].id}`,
     );
   }
 });
