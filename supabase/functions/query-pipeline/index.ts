@@ -676,7 +676,8 @@ function isAdoptedBudgetSource(
 ): boolean {
   const corpus = candidateCorpus(c, doc);
   return /\badopt(ed|ion)?\b/.test(corpus) &&
-    !/\b(proposed|advertised|mark[- ]?up|markup|draft)\b/.test(corpus);
+    !hasDraftQualifierNearRateMention(c) &&
+    !hasDraftSourceStatus(doc);
 }
 
 function parseDocumentFiscalYear(doc?: SourceDocument): number | null {
@@ -743,12 +744,27 @@ function hasDraftQualifierNearRateMention(
 
   for (const regex of [rateMention, valueThenRate]) {
     for (const match of content.matchAll(regex)) {
-      const index = match.index ?? 0;
-      windows.push(content.slice(Math.max(0, index - 200), index + 300));
+      windows.push(match[0]);
     }
   }
 
   return windows.some((window) => draftRegex.test(window));
+}
+
+function hasDraftSourceStatus(doc?: SourceDocument): boolean {
+  const sourceStatus = [doc?.title, doc?.filename, doc?.url]
+    .map(normalizedText)
+    .join(" ");
+  return /\b(proposed|advertised|mark[- ]?up|markup|draft)\b/.test(
+    sourceStatus,
+  );
+}
+
+function hasDraftQualifierForRateEvidence(
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): boolean {
+  return hasDraftQualifierNearRateMention(c) || hasDraftSourceStatus(doc);
 }
 
 function currentStateScore(
@@ -761,13 +777,8 @@ function currentStateScore(
   ) {
     const fiscalYear = asNumber(c.row.fiscal_year) ?? doc?.fiscal_year ?? 0;
     const adoptedBoost = isAdoptedBudgetSource(c, doc) ? 100 : 0;
-    const draftPenalty =
-      /\b(proposed|advertised|mark[- ]?up|markup|draft)\b/.test(
-          candidateCorpus(c, doc),
-        )
-        ? -100
-        : 0;
-    return 1000 + adoptedBoost + draftPenalty + fiscalYear;
+    const draftPenalty = hasDraftQualifierForRateEvidence(c, doc) ? -100 : 0;
+    return 2_000_000 + adoptedBoost + draftPenalty + fiscalYear;
   }
 
   if (
@@ -775,7 +786,7 @@ function currentStateScore(
   ) {
     const recencyScore = parseDocumentRecencyScore(doc);
     const adoptedBoost = isAdoptedBudgetSource(c, doc) ? 100 : 0;
-    const draftPenalty = hasDraftQualifierNearRateMention(c) ? -100 : 0;
+    const draftPenalty = hasDraftQualifierForRateEvidence(c, doc) ? -100 : 0;
     return 500 + adoptedBoost + draftPenalty +
       (recencyScore === null ? 0 : recencyScore);
   }
