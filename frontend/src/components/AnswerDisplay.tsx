@@ -63,8 +63,34 @@ export default function AnswerDisplay({ result }: Props) {
   const activeCitation =
     activeCitationIndex != null ? citations[activeCitationIndex - 1] : null;
 
+  const deepHistorical = result.deepHistoricalLookup;
+
   return (
     <div className="w-full max-w-2xl min-w-0 flex flex-col gap-4">
+      {/* Deep-historical slow-path disclosure — always shown when that path was attempted */}
+      {deepHistorical && (
+        <div
+          role="status"
+          className="break-words rounded-md border border-purple-300 bg-purple-50 px-4 py-3 text-sm text-purple-800"
+        >
+          <span className="block font-semibold sm:inline">🕵 Live Historical Lookup</span>{' '}
+          {deepHistorical.answered
+            ? `This question wasn't in the standard indexed corpus, so we ran an extended live search against `
+            : `This question wasn't in the standard indexed corpus. We ran an extended live search against `}
+          <a
+            href={deepHistorical.sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:text-purple-900"
+          >
+            {deepHistorical.sourceLabel}
+          </a>
+          {deepHistorical.answered
+            ? ' just now to answer it.'
+            : ' just now, but it did not find an answer there either.'}
+        </div>
+      )}
+
       {/* Answer */}
       <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
         <p className="break-words text-gray-800 whitespace-pre-wrap leading-relaxed">

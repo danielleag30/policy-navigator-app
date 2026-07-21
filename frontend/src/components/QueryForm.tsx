@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { QueryResponseData } from '@shared/types';
 import { SUPABASE_ANON_KEY, QUERY_PIPELINE_URL } from '../lib/env';
 import QueryInput from './QueryInput';
@@ -9,6 +9,19 @@ import EmptyState from './EmptyState';
 
 type Status = 'idle' | 'loading' | 'success' | 'error';
 type ErrorType = null | 'rate_limit' | 'exhausted' | 'generic';
+
+// Covers the deep-historical slow path's documented worst-case budget
+// (~167s: up to 100s Docling fetch + up to ~67s of retried Ollama calls —
+// see supabase/functions/query-pipeline/_deep-historical.ts and DEPS.md)
+// plus headroom. The normal path typically returns in well under 5s, so this
+// only changes how long the UI waits before giving up, never how fast a
+// normal response appears.
+const FETCH_TIMEOUT_MS = 190_000;
+// After this long with no response, hint that a deeper search may be running
+// — the client can't know in advance whether the slow path actually
+// triggered (that's only knowable from the response), so this is a
+// best-effort, honestly-worded heads up rather than a guarantee.
+const SLOW_PATH_HINT_DELAY_MS = 8_000;
 
 interface ErrorEnvelope {
   ok: false;
@@ -27,6 +40,16 @@ export default function QueryForm() {
   const [status, setStatus] = useState<Status>('idle');
   const [errorType, setErrorType] = useState<ErrorType>(null);
   const [result, setResult] = useState<QueryResponseData | null>(null);
+  const [showSlowPathHint, setShowSlowPathHint] = useState(false);
+
+  useEffect(() => {
+    if (status !== 'loading') {
+      setShowSlowPathHint(false);
+      return;
+    }
+    const hintTimer = setTimeout(() => setShowSlowPathHint(true), SLOW_PATH_HINT_DELAY_MS);
+    return () => clearTimeout(hintTimer);
+  }, [status]);
 
   async function handleSubmit(trimmedQuery: string) {
     setStatus('loading');
@@ -34,7 +57,7 @@ export default function QueryForm() {
     setResult(null);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20_000);
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
     try {
       const res = await fetch(QUERY_PIPELINE_URL, {
@@ -93,6 +116,14 @@ export default function QueryForm() {
       />
 
       {status === 'idle' && <EmptyState />}
+
+      {status === 'loading' && (
+        <p role="status" className="break-words text-sm text-gray-500">
+          {showSlowPathHint
+            ? 'Still searching — some questions require a deeper historical lookup, which can take up to two minutes. Checking now…'
+            : 'Searching…'}
+        </p>
+      )}
 
       {status === 'error' && errorType && (
         errorType === 'rate_limit' ? (

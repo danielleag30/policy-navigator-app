@@ -65,6 +65,27 @@ export interface QueryRequest {
   context?: Record<string, unknown>;
 }
 
+/**
+ * Disclosure attached to a response whenever the normal pre-ingested-corpus
+ * retrieval found nothing and the query-pipeline attempted the deep-historical
+ * slow path instead (see query-pipeline/_deep-historical.ts) — an extended-
+ * timeout, live, on-demand fetch against a real external historical archive,
+ * rather than either pre-ingesting decades of low-value archive or refusing
+ * outright. Always non-null when that slow path was attempted, whether or not
+ * it produced an answer, so the UI can disclose why the request took longer
+ * and where the answer (or lack of one) came from.
+ */
+export interface DeepHistoricalDisclosure {
+  /** True if the live lookup produced a real, page-cited answer; false if it was attempted but found nothing (never fabricated either way). */
+  answered: boolean;
+  /** Human-readable label of the archival source consulted, e.g. "Fairfax County Zoning Ordinance — 1945 Reprint (EnCode Archives, live historical lookup)". */
+  sourceLabel: string;
+  /** Direct URL of the source fetched live for this request — not a chunk from the pre-ingested corpus. */
+  sourceUrl: string;
+  /** ISO 8601 timestamp of when this live fetch was performed for this request. */
+  fetchedAt: string;
+}
+
 /** Successful query response data (wrapped in the shared success envelope). */
 export interface QueryResponseData {
   /** The generated answer text. */
@@ -92,4 +113,6 @@ export interface QueryResponseData {
   freshness: string | null;
   /** All caveats applicable to the assembled answer. */
   caveats: string[];
+  /** Non-null only when the deep-historical live-lookup slow path was attempted for this request. */
+  deepHistoricalLookup: DeepHistoricalDisclosure | null;
 }

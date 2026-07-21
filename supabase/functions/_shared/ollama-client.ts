@@ -46,11 +46,17 @@ export interface OllamaChatResult {
  *
  * @param messages   Conversation messages.
  * @param temperature Sampling temperature (0.0 = deterministic; 1.0 = creative).
+ * @param timeoutMsOverride Optional per-call timeout override, in ms. Only the
+ *   query-pipeline deep-historical slow path (see
+ *   query-pipeline/_deep-historical.ts) passes this — every other caller omits
+ *   it and gets the normal OLLAMA_TIMEOUT_MS-derived ceiling (default 15000ms)
+ *   unchanged. Never repurpose this to raise the ceiling for the normal path.
  * @returns { content, exhausted? } — never throws; exhausted=true means return OLLAMA_EXHAUSTED_MSG
  */
 export async function ollamaChat(
   messages: OllamaMessage[],
   temperature = 0.1,
+  timeoutMsOverride?: number,
 ): Promise<OllamaChatResult> {
   const baseUrl = Deno.env.get("OLLAMA_CLOUD_BASE_URL");
   if (!baseUrl) {
@@ -58,10 +64,13 @@ export async function ollamaChat(
     return { content: OLLAMA_EXHAUSTED_MSG, exhausted: true };
   }
 
-  const timeoutMs = parseInt(Deno.env.get("OLLAMA_TIMEOUT_MS") ?? "15000", 10);
+  const timeoutMs = timeoutMsOverride ??
+    parseInt(Deno.env.get("OLLAMA_TIMEOUT_MS") ?? "15000", 10);
   const endpoint = `${baseUrl.replace(/\/$/, "")}/api/chat`;
   const apiKey = Deno.env.get("OLLAMA_API_KEY");
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
   if (apiKey) {
     headers.Authorization = `Bearer ${apiKey}`;
   }
@@ -90,7 +99,11 @@ export async function ollamaChat(
 
       if (!resp.ok) {
         const text = await resp.text().catch(() => "");
-        console.error(`[ollama] HTTP ${resp.status} on attempt ${attempt}: ${text.slice(0, 200)}`);
+        console.error(
+          `[ollama] HTTP ${resp.status} on attempt ${attempt}: ${
+            text.slice(0, 200)
+          }`,
+        );
         if (attempt < MAX_RETRIES) {
           await _backoff(attempt);
           continue;
@@ -113,7 +126,11 @@ export async function ollamaChat(
     } catch (e) {
       clearTimeout(timer);
       const isTimeout = (e as Error)?.name === "AbortError";
-      console.error(`[ollama] ${isTimeout ? "timeout" : "fetch error"} on attempt ${attempt}`);
+      console.error(
+        `[ollama] ${
+          isTimeout ? "timeout" : "fetch error"
+        } on attempt ${attempt}`,
+      );
       if (attempt < MAX_RETRIES) {
         await _backoff(attempt);
         continue;
@@ -128,7 +145,9 @@ export async function ollamaChat(
 
 /** Exponential backoff: 500ms * 2^(attempt-1) */
 function _backoff(attempt: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, BASE_BACKOFF_MS * Math.pow(2, attempt - 1)));
+  return new Promise((resolve) =>
+    setTimeout(resolve, BASE_BACKOFF_MS * Math.pow(2, attempt - 1))
+  );
 }
 
 /** The clean user-facing exhaustion message — callers should return this verbatim. */
