@@ -16,7 +16,24 @@
  *   UNAUTHORIZED      → 401
  */
 
-const JSON_HEADERS: HeadersInit = { "Content-Type": "application/json" };
+// CORS: browsers preflight any cross-origin POST that carries an Authorization
+// or Content-Type header, so every response path — success, error, and the
+// OPTIONS preflight itself — must carry these or the browser aborts before the
+// real request is ever sent.
+export const CORS_HEADERS: HeadersInit = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+export function corsPreflightResponse(): Response {
+  return new Response(null, { status: 204, headers: CORS_HEADERS });
+}
+
+const JSON_HEADERS: HeadersInit = {
+  "Content-Type": "application/json",
+  ...CORS_HEADERS,
+};
 
 export interface SuccessEnvelope<T> {
   ok: true;
