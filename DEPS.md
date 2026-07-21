@@ -21,9 +21,9 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 | `RETRIEVAL_CANDIDATE_COUNT` | Local `.env.local` / Vercel project env | Edge Functions via `Deno.env.get()` | Retrieval tuning, configurable without code deploy. |
 | `RETRIEVAL_CONTEXT_COUNT` | Local `.env.local` / Vercel project env | Edge Functions via `Deno.env.get()` | Retrieval tuning, configurable without code deploy. |
 | `INCOMPLETE_SEARCH_FLOOR` | Local `.env.local` / Vercel project env | Edge Functions via `Deno.env.get()` | Retrieval tuning, configurable without code deploy. |
-| `ENCODE_ZONING_ENABLED` | Supabase Edge Function secret | `ingest-orchestrator/encode.ts` AND `query-pipeline/_deep-historical.ts` via `Deno.env.get()` | Human/legal sign-off gate for any request against EnCode's robots.txt-disallowed `/regs/` path — must be exactly `"true"`. Shared by both the recurring current-tree crawler and the deep-historical live-lookup slow path so a sign-off revocation shuts off both at once. Not previously recorded here; added for completeness alongside the two new vars below. |
-| `ENCODE_BASE_URL` | Local `.env.local` / Vercel project env | `ingest-orchestrator/encode.ts` AND `query-pipeline/_deep-historical.ts` via `Deno.env.get()` | EnCode zoning-ordinance site root. Defaults to `https://online.encodeplus.com/regs/fairfaxcounty-va` if unset (both files keep their own literal default — see `_deep-historical.ts` file header for why they don't cross-import it). |
-| `DEEP_HISTORICAL_DOCLING_TIMEOUT_MS` | Local `.env.local` / Vercel project env | `query-pipeline/_deep-historical.ts` via `Deno.env.get()` | Docling-wrapper fetch timeout for the deep-historical slow path only; default `100000` (deliberately matches `ingest-orchestrator`'s own `DOCLING_TIMEOUT_MS` constant — live-tested 2026-07-21: a cold HF Space instance took over 45s but succeeded well within 100s). Separate env var from `DOCLING_TIMEOUT_MS`, tunable independently. |
+| `ENCODE_ZONING_ENABLED` | Supabase Edge Function secret | `ingest-orchestrator/encode.ts`, `query-pipeline/_deep-historical.ts`, AND `encode-reprint-preingest/_preingest.ts` via `Deno.env.get()` | Human/legal sign-off gate for any request against EnCode's robots.txt-disallowed `/regs/` path — must be exactly `"true"`. Shared by the recurring current-tree crawler, the deep-historical live-lookup slow path, and the resumable OCR pre-ingestion job so a sign-off revocation shuts off every EnCode-touching path at once. |
+| `ENCODE_BASE_URL` | Local `.env.local` / Vercel project env | `ingest-orchestrator/encode.ts` AND `_shared/encode-zoning-reprints.ts` (`reprintDocUrl`, used by both `query-pipeline/_deep-historical.ts` and `encode-reprint-preingest`) via `Deno.env.get()` | EnCode zoning-ordinance site root. Defaults to `https://online.encodeplus.com/regs/fairfaxcounty-va` if unset (each file keeps its own literal default rather than cross-importing — see `_shared/encode-zoning-reprints.ts`'s file header). |
+| `DEEP_HISTORICAL_DOCLING_TIMEOUT_MS` | Local `.env.local` / Vercel project env | `query-pipeline/_deep-historical.ts` via `Deno.env.get()` | Docling-wrapper fetch timeout for the deep-historical slow path's live-OCR fallback only (the fast path below never touches this); default `110000` — bumped from the original `100000` once this call started hitting the OCR-enabled `/process-ocr` endpoint instead of `/process` (OCR is materially slower per page than native text extraction; see Tier 0/Tier 1 pre-ingestion work, 2026-07-21). Separate env var from `DOCLING_TIMEOUT_MS`, tunable independently. |
 | `DEEP_HISTORICAL_LLM_TIMEOUT_MS` | Local `.env.local` / Vercel project env | `query-pipeline/_deep-historical.ts` via `Deno.env.get()` | Per-attempt Ollama timeout for the deep-historical slow path only, passed as `ollamaChat`'s `timeoutMsOverride`; default `20000`. Does **not** change `OLLAMA_TIMEOUT_MS` (15000) used by every other call site. |
 | `VERCEL_DEPLOY_TOKEN` | Vercel secret / local `.env.local` if needed for tooling | Deployment tooling only | Used for frontend deployment automation, not runtime code. |
 | `ADMIN_SECRET` | Local `.env.local` / Vercel project env | Frontend route gate and `acknowledge-alert` Edge Function via `Deno.env.get()` | Dual-use secret; one value, two checks. |
@@ -44,27 +44,53 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 - `query-pipeline/_deep-historical.ts` (deep-historical slow path) Ollama
   temperature: `0.3` -- same rationale as the normal Answer Drafter (prose may
   vary slightly while staying grounded in the live-fetched excerpt text).
-- `ENCODE_ZONING_REPRINTS` in `query-pipeline/_deep-historical.ts` is a
-  hardcoded table of 18 EnCode Archives zoning-ordinance reprint labels/years/
+- `ENCODE_ZONING_REPRINTS` (moved to `_shared/encode-zoning-reprints.ts`,
+  re-exported unchanged from `query-pipeline/_deep-historical.ts` for
+  backward compatibility -- see that shared file's header for why it moved,
+  and `encode-reprint-preingest` for the other consumer) is a hardcoded
+  table of 18 EnCode Archives zoning-ordinance reprint labels/years/
   `doclibrary.aspx` GUIDs (1941-2021), confirmed live against
   `https://online.encodeplus.com/regs/fairfaxcounty-va/archivedialog.aspx`
   2026-07-21 -- same "manually verified, hardcoded rather than re-scraped"
   convention as `encode.ts`'s `ROOT_TOCID`/`ROOT_SECID`/
   `AMENDMENT_HISTORY_SECID`. Re-verify against the live page before trusting
   it if EnCode's archive contents ever change.
-- Deep-historical slow-path worst-case latency budget: up to
-  `DEEP_HISTORICAL_DOCLING_TIMEOUT_MS` (default 100s, single attempt, no
-  retry -- matches `ingest-orchestrator`'s own proven `DOCLING_TIMEOUT_MS`;
-  live-tested 2026-07-21 against the real HF Space and real EnCode archive,
-  see policy-navigator-06-execution-log.md, a cold instance needed >45s but
-  succeeded within 120s) for the Docling fetch, plus up to
+- Deep-historical fast-path lookup (`fetchPreingestedReprintBlocks`, reads
+  `encode_reprint_pages` once a reprint's `encode_reprint_preingest_state`
+  row reaches `status = 'complete'`) has no live-fetch timeout at all — a
+  normal DB query. Only a reprint the background job hasn't reached yet
+  falls through to the slow path below.
+- Deep-historical slow-path (live-OCR fallback) worst-case latency budget: up
+  to `DEEP_HISTORICAL_DOCLING_TIMEOUT_MS` (default 110s, single
+  whole-document OCR attempt, no retry -- bumped from the original 100s
+  non-OCR figure once this call started hitting the OCR-enabled
+  `/process-ocr` endpoint) for the Docling fetch, plus up to
   `DEEP_HISTORICAL_LLM_TIMEOUT_MS` (default 20s) per Ollama attempt,
   inheriting `ollamaChat`'s existing 3x retry + exponential backoff (~67s
-  worst case for the LLM step alone) -- roughly 167s worst case end to end.
-  The frontend's fetch timeout (`FETCH_TIMEOUT_MS` in `QueryForm.tsx`) is set
-  to 190s to cover this with headroom; the normal path is unaffected since it
-  typically returns in well under 5s regardless of how long the client is
-  willing to wait.
+  worst case for the LLM step alone) -- roughly 177s worst case end to end,
+  still under the frontend's 190s `FETCH_TIMEOUT_MS` (`QueryForm.tsx`)
+  budget. This is a best-effort attempt for a reprint the pre-ingestion job
+  hasn't finished yet; it degrades gracefully to a refusal (never a
+  fabrication) if OCR can't finish within the window, same NEVER-FABRICATE
+  guarantee as the rest of the module.
+- `encode-reprint-preingest/_preingest.ts`: `DEFAULT_PAGES_PER_CHUNK = 3`
+  (page-chunk size per OCR call — bounded so one chunk's OCR call reliably
+  fits inside one Edge Function invocation's soft deadline),
+  `DEFAULT_OCR_CHUNK_TIMEOUT_MS = 110000` (same OCR-endpoint cost rationale
+  as `DEEP_HISTORICAL_DOCLING_TIMEOUT_MS` above), `DEFAULT_PDFINFO_TIMEOUT_MS
+  = 30000`, `DEFAULT_LEASE_MINUTES = 5` (same atomic-claim lease shape as
+  `change-detection`'s `discovery_crawl_state` and `municode.ts`'s
+  `documents.resume_claim_expires_at`), 300ms polite delay between
+  successive Tier 0 wrapper calls within one invocation (same value as
+  `municode.ts`'s `REQUEST_DELAY_MS`).
+- `docling-wrapper/app.py`'s `/process-ocr` endpoint slices a requested page
+  range out of the source PDF with poppler-utils (`pdfseparate` +
+  `pdfunite`, already in the Dockerfile) before running the OCR-enabled
+  Docling converter, then remaps returned `page_no` values back to the
+  original document's numbering (a sliced sub-PDF's own page numbering
+  always restarts at 1). The default `/process` endpoint and its converter
+  instance (`do_ocr=False`) are completely untouched by this — a separate
+  `DocumentConverter` instance backs `/process-ocr` only.
 
 ## Application Dependencies
 
@@ -80,6 +106,7 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 | `hash.ts` | `supabase/functions/_shared/hash.ts` | Canonical SHA-256 `contentHash(input: string): Promise<string>`. All document deduplication imports from here — no other hashing for `content_hash` exists in the codebase. |
 | `response.ts` | `supabase/functions/_shared/response.ts` | Typed response envelope constructors. `success<T>(data)` → HTTP 200 `{ ok: true, data }`. `error(code, message, status?)` → HTTP error `{ ok: false, error: { code, message } }`. Named error codes: `RATE_LIMITED` (429), `OLLAMA_EXHAUSTED` (503), `INGESTION_FAILED` (500), `NOT_FOUND` (404), `UNAUTHORIZED` (401). All Edge Functions must import from here — no raw response objects. |
 | `db-client.ts` | `supabase/functions/_shared/db-client.ts` | Pre-instantiated service-role supabase-js client. Default export `db`. All Edge Functions import this rather than calling `createClient()` directly. Uses `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`; bypasses RLS; server-side only. |
+| `encode-zoning-reprints.ts` | `supabase/functions/_shared/encode-zoning-reprints.ts` | `ENCODE_ZONING_REPRINTS` (the 18-reprint table), `DeepHistoricalReprint` type, `reprintDocUrl()`, `selectReprintForYear()`, `EARLIEST_REPRINT_YEAR`. Single source of truth shared by `query-pipeline/_deep-historical.ts` (re-exports these unchanged) and `encode-reprint-preingest` — moved here once a second Edge Function needed the same table, since Edge Functions don't cross-import across sibling function directories. |
 
 ## Database Functions (SQL)
 
@@ -101,6 +128,8 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 | Table | Migration | Description |
 |---|---|---|
 | `documents` | `001_documents.sql` | Source record for every ingested document — PDFs (budget, BOS minutes/summaries, ordinances) and Municode API responses. Tracks URL, doc_type, status (`current`/`superseded`/`unknown`), content hash, and parse metadata. No hard deletes; supersession flips `status`. RLS enabled, no policies (service role bypasses). |
+| `encode_reprint_preingest_state` | `20260721130000_encode_reprint_preingest.sql` | Resumable cursor + progress for `encode-reprint-preingest`, one row per EnCode zoning reprint (`doc_library_id` PK). Tracks `status` (`pending`/`in_progress`/`complete`), `total_pages`, `next_page` (resume cursor), `pages_completed`, and the same atomic-claim `claim_expires_at` lease shape as `discovery_crawl_state`/`documents.resume_claim_expires_at`. Rows are upserted lazily by the Edge Function itself (`ensureStateRows`, sourced from `_shared/encode-zoning-reprints.ts`) rather than seeded by the migration. RLS enabled, no policies. |
+| `encode_reprint_pages` | `20260721130000_encode_reprint_preingest.sql` | Extracted OCR'd page text for pre-ingested EnCode zoning reprints, one row per `(doc_library_id, page_number)` that produced non-empty text (sparse by design — a genuinely blank OCR'd page advances the cursor above without a row here). Read by `query-pipeline/_deep-historical.ts`'s fast path (`fetchPreingestedReprintBlocks`) once the corresponding `encode_reprint_preingest_state` row reaches `status = 'complete'`. RLS enabled, no policies. |
 
 ## Supabase Project
 

@@ -33,6 +33,7 @@ import {
 } from "../_shared/types.ts";
 import {
   type DeepHistoricalOutcome,
+  type PreingestDb,
   runDeepHistoricalLookup,
   shouldAttemptDeepHistoricalLookup,
 } from "./_deep-historical.ts";
@@ -2162,6 +2163,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       // acceptable approximation for a log metric, not a hard invariant.
       llmCalls += 1;
       const outcome = await runDeepHistoricalLookup(
+        db as unknown as PreingestDb,
         query,
         deepHistoricalTrigger.reprint,
       );

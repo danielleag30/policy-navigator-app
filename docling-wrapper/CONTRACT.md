@@ -83,6 +83,79 @@ Convert a publicly-accessible PDF URL to an ordered array of text blocks.
 
 No stack traces are included in error responses.
 
+### POST /process-ocr
+
+OCR-enabled variant of `/process` — **opt-in only**, a separate route from
+`/process`. `/process` itself is completely unchanged (`do_ocr=False`
+always) and remains the only endpoint the recurring ingest-orchestrator poll
+path calls; it is already near its CPU/timeout ceiling on ordinary
+text-native PDFs in production and must never silently run OCR.
+
+Added for the deep-historical pre-ingestion job
+(`supabase/functions/encode-reprint-preingest`) and its live-query fallback
+(`query-pipeline/_deep-historical.ts`): all 18 EnCode historical
+zoning-ordinance reprints are scanned images with zero embedded text, so
+`/process`'s `do_ocr=False` always returns 0 blocks for them.
+
+#### Request
+
+```json
+{
+  "url": "https://example.gov/scanned-document.pdf",
+  "page_start": 5,
+  "page_end": 7
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|--------------|
+| `url` | string | ✅ | Publicly-accessible PDF URL. Redirects followed. 120 s fetch timeout. |
+| `page_start` | integer | no | 1-indexed, inclusive. Must be provided together with `page_end` or not at all. |
+| `page_end` | integer | no | 1-indexed, inclusive. Must be >= `page_start`. |
+
+When `page_start`/`page_end` are provided, the source PDF is first sliced
+with poppler-utils (`pdfseparate` + `pdfunite`) so the OCR pass only runs
+over the requested pages. Omit both to OCR the entire document.
+
+#### Response 200
+
+Same shape as `/process`'s response (see above). `page_no` values always
+reflect the ORIGINAL document's page numbers, even when a page range was
+sliced before conversion (a sliced sub-PDF's internal numbering restarts at
+1; the wrapper remaps it back).
+
+#### Error responses
+
+| Status | Body | Condition |
+|--------|------|-----------|
+| 422 | `{"detail": "..."}` | Missing `url`; only one of `page_start`/`page_end` given; `page_start` > `page_end` |
+| 500 | `{"detail": "string"}` | Fetch failure, poppler-utils slicing failure, or Docling conversion error |
+
+### POST /pdfinfo
+
+Cheap page-count lookup via poppler-utils `pdfinfo` — no Docling/OCR work at
+all. Lets a caller size a page-chunk loop against `/process-ocr` without
+paying for a conversion pass first.
+
+#### Request
+
+```json
+{"url": "https://example.gov/scanned-document.pdf"}
+```
+
+#### Response 200
+
+```json
+{"pages": 42}
+```
+
+#### Error responses
+
+| Status | Body | Condition |
+|--------|------|-----------|
+| 422 | `{"detail": "..."}` | Missing `url` |
+| 500 | `{"detail": "string"}` | Fetch failure or `pdfinfo` failure (corrupt PDF) |
+
 ### POST /embed
 
 Embed a batch of texts with the gte-small sentence-transformers model.
@@ -133,8 +206,9 @@ The contract itself is versioned by this file in git.
 
 ## Implementation notes
 
-- OCR is **disabled** (`do_ocr=False`) — native PDF text extraction only.
-- Table structure detection is **disabled** (`do_table_structure=False`) — CPU budget.
+- `/process`: OCR is **disabled** (`do_ocr=False`) — native PDF text extraction only.
+- `/process-ocr`: OCR is **enabled** (`do_ocr=True`), opt-in only via this separate route.
+- Table structure detection is **disabled** (`do_table_structure=False`) on both — CPU budget.
 - Only `TextItem` instances from `iterate_items(with_groups=False)` are emitted.
 - Empty-string blocks (after stripping) are silently dropped.
-- The converter instance is shared across requests (single worker).
+- Each converter instance (`/process`'s and `/process-ocr`'s) is shared across requests to its own route (single worker).

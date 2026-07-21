@@ -25,9 +25,11 @@
  * label year and remains the accurate historical record until the next
  * reprint in the list (or, for the last one, until zMOD's real effective date
  * 2023-05-10 — see project_policy_navigator memory / PR #101 for why that
- * date and not a 2021 one). ENCODE_ZONING_REPRINTS below is therefore a
- * hardcoded lookup table, not a live-scraped index — mirrors encode.ts's own
- * documented convention of hardcoding stable-but-manually-verified EnCode ids
+ * date and not a 2021 one). ENCODE_ZONING_REPRINTS (imported from
+ * _shared/encode-zoning-reprints.ts and re-exported below unchanged — see
+ * that file's header for why it moved out of here) is therefore a hardcoded
+ * lookup table, not a live-scraped index — mirrors encode.ts's own documented
+ * convention of hardcoding stable-but-manually-verified EnCode ids
  * (ROOT_TOCID/ROOT_SECID/AMENDMENT_HISTORY_SECID) rather than re-parsing
  * archivedialog.aspx's HTML on every request. Re-verify against the live page
  * before trusting this table if EnCode's archive contents ever change.
@@ -39,11 +41,19 @@
  * self-identifying ENCODE_BASE_URL/ENCODE_USER_AGENT env vars rather than a
  * separate flag, so a legal/human sign-off revocation shuts off both paths
  * together. No network request is made — not even the Docling call — unless
- * the gate is exactly "true". Edge Functions don't cross-import code between
- * sibling function directories (see DEPS.md / repo convention: shared code
- * lives in _shared/); the two default constants below are intentionally kept
- * in sync with encode.ts's DEFAULT_ENCODE_BASE_URL/DEFAULT_ENCODE_USER_AGENT
- * by hand rather than imported.
+ * the gate is exactly "true". The same gate also covers
+ * encode-reprint-preingest (the background OCR pre-ingestion job this module
+ * reads from on the fast path, see fetchPreingestedReprintBlocks below).
+ *
+ * FAST PATH (added alongside encode-reprint-preingest): before ever calling
+ * the Docling wrapper, runDeepHistoricalLookup checks whether the selected
+ * reprint has already been fully OCR'd by the background pre-ingestion job
+ * (encode_reprint_preingest_state.status = 'complete') and, if so, answers
+ * from the persisted encode_reprint_pages text instead — a fast DB lookup,
+ * no live OCR wait. Only a reprint the background job hasn't reached yet
+ * falls through to the live-OCR path below (now hitting docling-wrapper's
+ * opt-in /process-ocr endpoint, not the default do_ocr=False /process, which
+ * always returns 0 blocks for these scanned-image reprints).
  *
  * NEVER-FABRICATE GUARANTEE: this path has exactly the same "cannot provide
  * incorrect data" standard as the rest of the app. A failed fetch, a Docling
@@ -55,155 +65,30 @@
 import { generate as uuidv7 } from "@std/uuid/v7";
 import { type Chunk, chunkBlocks, type FlatBlock } from "../_shared/chunker.ts";
 import { ollamaChat } from "../_shared/ollama-client.ts";
+import {
+  type DeepHistoricalReprint,
+  EARLIEST_REPRINT_YEAR,
+  ENCODE_ZONING_REPRINTS,
+  reprintDocUrl,
+  selectReprintForYear,
+} from "../_shared/encode-zoning-reprints.ts";
 
 // ── Reprint table ─────────────────────────────────────────────────────────────
+//
+// Moved to _shared/encode-zoning-reprints.ts (re-exported below unchanged)
+// once the encode-reprint-preingest Edge Function needed the same table —
+// Edge Functions don't cross-import code between sibling function
+// directories (DEPS.md / repo convention), so this became genuinely shared
+// code. Every existing import of these symbols from this file keeps working.
+export {
+  type DeepHistoricalReprint,
+  ENCODE_ZONING_REPRINTS,
+  reprintDocUrl,
+  selectReprintForYear,
+};
 
-export interface DeepHistoricalReprint {
-  /** e.g. "1945 Reprint" — matches the EnCode Archives page label exactly. */
-  label: string;
-  /** The year this reprint documents the ordinance as amended through. */
-  year: number;
-  /** doclibrary.aspx GUID, confirmed live against archivedialog.aspx 2026-07-21. */
-  docLibraryId: string;
-}
-
-/** Ascending by year — selectReprintForYear relies on this ordering. */
-export const ENCODE_ZONING_REPRINTS: DeepHistoricalReprint[] = [
-  {
-    label: "1941 Original",
-    year: 1941,
-    docLibraryId: "bdc0931d-1f17-49e6-b108-b540145fdfa4",
-  },
-  {
-    label: "1945 Reprint",
-    year: 1945,
-    docLibraryId: "a5e9f7fb-e390-4860-8308-4e0316da937d",
-  },
-  {
-    label: "1954 Reprint",
-    year: 1954,
-    docLibraryId: "9c2751a3-13a6-4b10-a8f3-444e008235c5",
-  },
-  {
-    label: "1959 Original",
-    year: 1959,
-    docLibraryId: "d6061d67-a6b9-4da2-b183-fb17802483df",
-  },
-  {
-    label: "1971 Reprint",
-    year: 1971,
-    docLibraryId: "9f032fd2-2caa-4320-b2d5-a804b07f7732",
-  },
-  {
-    label: "1978 ZO",
-    year: 1978,
-    docLibraryId: "1c3cbaa1-4e61-45b0-a36c-f9dd164cd691",
-  },
-  {
-    label: "1982 Reprint",
-    year: 1982,
-    docLibraryId: "c776eed3-b79d-4d91-a662-ff54053a2fed",
-  },
-  {
-    label: "1985 Reprint",
-    year: 1985,
-    docLibraryId: "e440ac8d-95d0-4e5e-8397-2a18c6b12909",
-  },
-  {
-    label: "1987 Reprint",
-    year: 1987,
-    docLibraryId: "1127585a-181b-442d-9ed4-bb14ef66cc60",
-  },
-  {
-    label: "1988 Reprint",
-    year: 1988,
-    docLibraryId: "19a8f225-378a-4129-a5ba-54739e8b7f41",
-  },
-  {
-    label: "1989 Reprint",
-    year: 1989,
-    docLibraryId: "8aa9169d-1a7f-4345-a3f7-5bc1b97f248b",
-  },
-  {
-    label: "1990 Reprint",
-    year: 1990,
-    docLibraryId: "bd1f6f1e-d380-45df-8e96-8d457127ce2a",
-  },
-  {
-    label: "1995 Reprint",
-    year: 1995,
-    docLibraryId: "1fac8691-e5d0-494a-a192-4462984f7cbe",
-  },
-  {
-    label: "1997 Reprint",
-    year: 1997,
-    docLibraryId: "3188bed6-e657-4176-b5b2-530550c77088",
-  },
-  {
-    label: "2002 Reprint",
-    year: 2002,
-    docLibraryId: "3704c9f8-311c-4d76-a5ca-d77a390aa76b",
-  },
-  {
-    label: "2007 Reprint",
-    year: 2007,
-    docLibraryId: "d7ac248e-c2cc-47d2-8ce5-e66322974acb",
-  },
-  {
-    label: "2012 Reprint",
-    year: 2012,
-    docLibraryId: "d453470c-aad1-4d6e-bf81-838b6f2d7a6c",
-  },
-  {
-    label: "2017 Reprint",
-    year: 2017,
-    docLibraryId: "9bfb7ae6-4676-4047-b19b-9fa9e8eb210b",
-  },
-  {
-    label: "2021 Reprint",
-    year: 2021,
-    docLibraryId: "922528cd-6de4-4112-8678-79e8ed26a092",
-  },
-];
-
-const EARLIEST_REPRINT_YEAR = ENCODE_ZONING_REPRINTS[0].year; // 1941
 /** zMOD's real effective date (2023-05-10, see project memory / PR #101) supersedes every reprint above. */
 const CURRENT_ERA_BOUNDARY_YEAR = 2023;
-
-// Mirrors ingest-orchestrator/encode.ts's DEFAULT_ENCODE_BASE_URL (same
-// ENCODE_BASE_URL env var name — one secret update covers both paths). No
-// user-agent constant is needed here: unlike encode.ts's own crawler, this
-// module never issues the outbound HTTP request itself — the Docling wrapper
-// (HF_SPACES_DOCLING_URL) fetches the target URL server-side on our behalf.
-const DEFAULT_ENCODE_BASE_URL =
-  "https://online.encodeplus.com/regs/fairfaxcounty-va";
-
-export function reprintDocUrl(reprint: DeepHistoricalReprint): string {
-  const baseUrl = Deno.env.get("ENCODE_BASE_URL") ?? DEFAULT_ENCODE_BASE_URL;
-  return `${baseUrl}/doclibrary.aspx?id=${reprint.docLibraryId}`;
-}
-
-/**
- * Find the reprint whose coverage window includes `year`: the reprint with
- * the largest year <= the target year (a reprint documents the ordinance as
- * amended through its own year and stays accurate until superseded by the
- * next reprint in the list). Returns null if `year` predates every reprint
- * (EARLIEST_REPRINT_YEAR) — there's no source to attempt, so the caller must
- * not guess.
- */
-export function selectReprintForYear(
-  year: number,
-): DeepHistoricalReprint | null {
-  let selected: DeepHistoricalReprint | null = null;
-  for (const reprint of ENCODE_ZONING_REPRINTS) {
-    if (reprint.year <= year) {
-      selected = reprint;
-    } else {
-      break;
-    }
-  }
-  return selected;
-}
 
 // ── Trigger heuristic ────────────────────────────────────────────────────────
 
@@ -417,7 +302,7 @@ function validateDeepHistoricalDraft(
 function buildSystemPrompt(reprint: DeepHistoricalReprint): string {
   return `You are the Deep Historical Answer Drafter for a municipal policy Q&A system (Fairfax County, Virginia).
 
-The user's question could not be answered from the system's normal pre-indexed corpus, so real excerpt text was just fetched live from an official historical source: the "${reprint.label}" of the Fairfax County Zoning Ordinance (EnCode Archives), which documents the ordinance as amended through ${reprint.year}.
+The user's question could not be answered from the system's normal pre-indexed corpus, so real excerpt text was retrieved from an official historical source: the "${reprint.label}" of the Fairfax County Zoning Ordinance (EnCode Archives), which documents the ordinance as amended through ${reprint.year}.
 
 Use ONLY the provided excerpt text below. Do not use outside knowledge, and do not infer or guess at rules from other eras or other reprints.
 
@@ -448,13 +333,105 @@ ${userQuery}
 
 Source: Fairfax County Zoning Ordinance, "${reprint.label}" (documents the ordinance as amended through ${reprint.year}).
 
-Excerpts (${chunks.length} highest lexical-relevance sections from the live-fetched document, highest first):
+Excerpts (${chunks.length} highest lexical-relevance sections from the source document, highest first):
 ${excerptBlock}
 
 Output JSON only:`;
 }
 
-// ── Docling fetch ────────────────────────────────────────────────────────────
+// ── Pre-ingested fast path ───────────────────────────────────────────────────
+//
+// encode-reprint-preingest (supabase/functions/encode-reprint-preingest) is a
+// resumable background job that OCRs each of the 18 EnCode reprints ahead of
+// time and stores per-page text in encode_reprint_pages, keyed by
+// doc_library_id + page_number. When a reprint's preingest state reaches
+// status = 'complete', this module answers straight from that table instead
+// of paying for a live OCR fetch on every matching query.
+
+interface PreingestDbError {
+  message: string;
+}
+
+interface PreingestStateRow {
+  status: "pending" | "in_progress" | "complete";
+}
+
+interface PreingestPageRow {
+  page_number: number;
+  text: string;
+}
+
+/** Minimal shape this module needs from a supabase-js client — narrow on
+ * purpose so tests can pass an in-memory fake instead of a real db client. */
+export interface PreingestDb {
+  from(table: "encode_reprint_preingest_state"): {
+    select(columns: string): {
+      eq(column: "doc_library_id", value: string): {
+        maybeSingle(): PromiseLike<
+          { data: PreingestStateRow | null; error: PreingestDbError | null }
+        >;
+      };
+    };
+  };
+  from(table: "encode_reprint_pages"): {
+    select(columns: string): {
+      eq(column: "doc_library_id", value: string): {
+        order(column: string, opts: { ascending: boolean }): PromiseLike<
+          { data: PreingestPageRow[] | null; error: PreingestDbError | null }
+        >;
+      };
+    };
+  };
+}
+
+/**
+ * Fast path: read pre-ingested OCR'd page text for `reprint`. Returns null
+ * (never `[]`) when the reprint isn't fully pre-ingested yet — status must be
+ * exactly 'complete', not merely "some pages already landed" — so a partial
+ * background run can never produce a false "not in the documents" refusal
+ * just because the one page that would have answered the question hasn't
+ * been OCR'd yet; the caller falls back to the live-OCR slow path instead.
+ *
+ * Returned blocks are shaped 1:1 onto the Docling wrapper's FlatBlock
+ * contract (one block per page, page_no = page_number) so the exact same
+ * chunkBlocks()/citation pipeline below runs unchanged regardless of source.
+ */
+export async function fetchPreingestedReprintBlocks(
+  db: PreingestDb,
+  reprint: DeepHistoricalReprint,
+): Promise<FlatBlock[] | null> {
+  const { data: stateRow, error: stateErr } = await db
+    .from("encode_reprint_preingest_state")
+    .select("status")
+    .eq("doc_library_id", reprint.docLibraryId)
+    .maybeSingle();
+  if (stateErr) {
+    throw new Error(
+      `encode_reprint_preingest_state lookup failed for ${reprint.docLibraryId}: ${stateErr.message}`,
+    );
+  }
+  if (!stateRow || stateRow.status !== "complete") return null;
+
+  const { data: pages, error: pagesErr } = await db
+    .from("encode_reprint_pages")
+    .select("page_number, text")
+    .eq("doc_library_id", reprint.docLibraryId)
+    .order("page_number", { ascending: true });
+  if (pagesErr) {
+    throw new Error(
+      `encode_reprint_pages lookup failed for ${reprint.docLibraryId}: ${pagesErr.message}`,
+    );
+  }
+
+  return (pages ?? []).map((page, idx): FlatBlock => ({
+    text: page.text,
+    page_no: page.page_number,
+    bbox: null,
+    reading_order_index: idx,
+  }));
+}
+
+// ── Docling fetch (live-OCR fallback) ───────────────────────────────────────
 
 interface DoclingResponse {
   blocks: FlatBlock[];
@@ -462,6 +439,15 @@ interface DoclingResponse {
   docling_version: string;
 }
 
+/**
+ * Live-OCR fallback for a reprint the background job hasn't reached yet.
+ * Calls the Tier 0 opt-in /process-ocr endpoint (docling-wrapper) — NOT the
+ * default /process endpoint, which is always do_ocr=False and therefore
+ * always returns 0 blocks for these scanned-image reprints. This is a
+ * best-effort, whole-document OCR pass within the timeout budget below; it
+ * degrades gracefully to a refusal (never a fabrication) if OCR can't finish
+ * in time, same as every other exit in this module.
+ */
 async function fetchReprintBlocks(
   sourceUrl: string,
   timeoutMs: number,
@@ -474,7 +460,7 @@ async function fetchReprintBlocks(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const resp = await fetch(`${doclingUrl.replace(/\/$/, "")}/process`, {
+    const resp = await fetch(`${doclingUrl.replace(/\/$/, "")}/process-ocr`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: sourceUrl }),
@@ -524,59 +510,88 @@ export type DeepHistoricalOutcome =
     reason: string;
   };
 
-// 100s, matching ingest-orchestrator's own DOCLING_TIMEOUT_MS -- live-tested
-// 2026-07-21 against the real HF Space: a cold instance took >45s but
-// succeeded within 120s fetching the real "1945 Reprint" PDF, so this reuses
-// the codebase's already-proven value rather than a lower guess.
-const DEFAULT_DOCLING_TIMEOUT_MS = 100_000;
+// 110s -- bumped from the pre-OCR 100s default (which matched
+// ingest-orchestrator's non-OCR DOCLING_TIMEOUT_MS) now that this call hits
+// the OCR-enabled /process-ocr endpoint on fallback: OCR is materially
+// slower per page than native text extraction. Kept under the frontend's
+// documented 190s FETCH_TIMEOUT_MS budget together with the LLM leg below
+// (110s + ~67s worst-case Ollama retries = ~177s, DEPS.md) without needing a
+// frontend change. This is a best-effort whole-document OCR attempt for
+// reprints the background pre-ingestion job hasn't reached yet -- see
+// fetchReprintBlocks; the fast path below (fetchPreingestedReprintBlocks)
+// avoids this timeout entirely once a reprint is fully pre-ingested.
+const DEFAULT_DOCLING_TIMEOUT_MS = 110_000;
 const DEFAULT_LLM_TIMEOUT_MS = 20_000;
 
+function sourceLabelFor(
+  reprint: DeepHistoricalReprint,
+  usedFastPath: boolean,
+): string {
+  return usedFastPath
+    ? `Fairfax County Zoning Ordinance — ${reprint.label} (EnCode Archives, pre-ingested)`
+    : `Fairfax County Zoning Ordinance — ${reprint.label} (EnCode Archives, live historical lookup)`;
+}
+
 /**
- * Run the full slow path: fetch the selected reprint PDF via the existing
- * Docling wrapper, chunk it, lexically rank chunks against the query, and
- * draft a page-cited answer. Every non-"answered" exit is a refusal, never a
- * guess (see file header NEVER-FABRICATE GUARANTEE). Extended timeouts here
- * (default 100s Docling + up to 20s per Ollama attempt, independently
- * retried up to 3x by ollamaChat) intentionally exceed the normal path's 15s
- * OLLAMA_TIMEOUT_MS ceiling — see DEPS.md for the documented worst-case
- * budget. Only this call site passes a timeoutMsOverride to ollamaChat; the
- * normal path's calls are untouched.
+ * Run the full slow path: check the pre-ingested store first (fast path,
+ * see fetchPreingestedReprintBlocks) and fall back to a live OCR fetch via
+ * the Docling wrapper only if that reprint isn't fully pre-ingested yet.
+ * Either way, chunk the resulting blocks, lexically rank chunks against the
+ * query, and draft a page-cited answer. Every non-"answered" exit is a
+ * refusal, never a guess (see file header NEVER-FABRICATE GUARANTEE).
+ * Extended timeouts on the live-fetch fallback (default 110s Docling OCR +
+ * up to 20s per Ollama attempt, independently retried up to 3x by
+ * ollamaChat) intentionally exceed the normal path's 15s OLLAMA_TIMEOUT_MS
+ * ceiling — see DEPS.md for the documented worst-case budget. Only this call
+ * site passes a timeoutMsOverride to ollamaChat; the normal path's calls are
+ * untouched.
  */
 export async function runDeepHistoricalLookup(
+  db: PreingestDb,
   userQuery: string,
   reprint: DeepHistoricalReprint,
 ): Promise<DeepHistoricalOutcome> {
   const sourceUrl = reprintDocUrl(reprint);
-  const sourceLabel =
-    `Fairfax County Zoning Ordinance — ${reprint.label} (EnCode Archives, live historical lookup)`;
   const fetchedAt = new Date().toISOString();
 
-  const doclingTimeoutMs = parseInt(
-    Deno.env.get("DEEP_HISTORICAL_DOCLING_TIMEOUT_MS") ??
-      String(DEFAULT_DOCLING_TIMEOUT_MS),
-    10,
-  );
+  let blocks: FlatBlock[];
+  let usedFastPath: boolean;
+  const preingested = await fetchPreingestedReprintBlocks(db, reprint);
+  if (preingested !== null) {
+    blocks = preingested;
+    usedFastPath = true;
+    console.log(
+      `[deep-historical] fast path: ${blocks.length} pre-ingested page(s) for ${reprint.label}`,
+    );
+  } else {
+    usedFastPath = false;
+    const doclingTimeoutMs = parseInt(
+      Deno.env.get("DEEP_HISTORICAL_DOCLING_TIMEOUT_MS") ??
+        String(DEFAULT_DOCLING_TIMEOUT_MS),
+      10,
+    );
+    try {
+      blocks = await fetchReprintBlocks(sourceUrl, doclingTimeoutMs);
+    } catch (e) {
+      console.error(
+        `[deep-historical] Docling fetch failed: ${(e as Error).message}`,
+      );
+      return {
+        status: "failed",
+        sourceUrl,
+        sourceLabel: sourceLabelFor(reprint, usedFastPath),
+        fetchedAt,
+        reason: (e as Error).message,
+      };
+    }
+  }
+
+  const sourceLabel = sourceLabelFor(reprint, usedFastPath);
   const llmTimeoutMs = parseInt(
     Deno.env.get("DEEP_HISTORICAL_LLM_TIMEOUT_MS") ??
       String(DEFAULT_LLM_TIMEOUT_MS),
     10,
   );
-
-  let blocks: FlatBlock[];
-  try {
-    blocks = await fetchReprintBlocks(sourceUrl, doclingTimeoutMs);
-  } catch (e) {
-    console.error(
-      `[deep-historical] Docling fetch failed: ${(e as Error).message}`,
-    );
-    return {
-      status: "failed",
-      sourceUrl,
-      sourceLabel,
-      fetchedAt,
-      reason: (e as Error).message,
-    };
-  }
 
   if (blocks.length === 0) {
     return { status: "not_found", sourceUrl, sourceLabel, fetchedAt };
