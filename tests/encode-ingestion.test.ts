@@ -648,7 +648,8 @@ Deno.test("wiring: recently adopted zoning amendments page is an independent PDF
   );
   assert(
     source.allow_patterns.some((pattern: string) =>
-      pattern.includes("Zoning%20Ordinance/Adopted%20Amendments/")
+      pattern.startsWith("regex:") &&
+      pattern.includes("[Aa]dopted%20[Aa]mendments")
     ),
     "recently adopted source must allow county-hosted adopted amendment PDFs",
   );

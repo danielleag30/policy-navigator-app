@@ -111,12 +111,9 @@
       "allow_patterns": [
         "https://plus.fairfaxcounty.gov/CitizenAccess/ViewAttachment.aspx",
         "https://plus.fairfaxcounty.gov/CitizenAccess/urlrouting.ashx",
-        "https://www.fairfaxcounty.gov/planning-development/sites/planning-development/files/Assets/documents/Zoning%20Ordinance/Adopted%20Amendments/",
-        "https://www.fairfaxcounty.gov/planning-development/sites/planning-development/files/Assets/Documents/Zoning%20Ordinance/Adopted%20Amendments/",
-        "https://www.fairfaxcounty.gov/planning-development/sites/planning-development/files/Assets/documents/Zoning%20Ordinance/Proposed%20Amendments/",
-        "https://www.fairfaxcounty.gov/planning-development/sites/planning-development/files/assets/documents/zoning%20ordinance/proposed%20amendments/",
-        "https://www.fairfaxcounty.gov/planning-development/sites/planning-development/files/assets/documents/zoning-ordinance/amendments/",
-        "https://www.fairfaxcounty.gov/planning-development/sites/planning-development/files/Assets/Documents/zoning-ordinance/amendments/"
+        "regex:^https://www\\.fairfaxcounty\\.gov/planning-development/sites/planning-development/files/Assets/[Dd]ocuments/[Zz]oning%20[Oo]rdinance/[Aa]dopted%20[Aa]mendments(?:/|$)",
+        "regex:^https://www\\.fairfaxcounty\\.gov/planning-development/sites/planning-development/files/Assets/[Dd]ocuments/[Zz]oning%20[Oo]rdinance/[Pp]roposed%20[Aa]mendments(?:/|$)",
+        "regex:^https://www\\.fairfaxcounty\\.gov/planning-development/sites/planning-development/files/assets/documents/(zoning%20ordinance|zoning-ordinance)/(adopted|proposed)%20amendments(?:/|$)"
       ],
       "match_priority": 1,
       "examples": [

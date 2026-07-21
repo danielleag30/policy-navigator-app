@@ -341,6 +341,28 @@ Deno.test("matchesAllowPattern is false for a link matching no allow_pattern", (
   );
 });
 
+Deno.test("matchesAllowPattern supports regex: allow_patterns for case-varied county paths", () => {
+  const source: DiscoverySource = {
+    id: "zoning_recently_adopted_amendments",
+    doc_type: "bos_summary",
+    discovery_urls: [
+      "https://www.fairfaxcounty.gov/planning-development/zoning-ordinance/amendments/recently-adopted",
+    ],
+    discovery_depth: 1,
+    allow_patterns: [
+      "regex:^https://www\\.fairfaxcounty\\.gov/planning-development/sites/planning-development/files/Assets/[Dd]ocuments/[Zz]oning%20[Oo]rdinance/[Aa]dopted%20[Aa]mendments/",
+    ],
+  };
+
+  assert(
+    matchesAllowPattern(
+      "https://www.fairfaxcounty.gov/planning-development/sites/planning-development/files/Assets/Documents/zoning%20ordinance/adopted%20amendments/ZO-112_2-2024-7.pdf",
+      source,
+    ),
+    "regex allow_pattern must cover mixed-casing Drupal paths",
+  );
+});
+
 Deno.test("resolveOwnerSourceId returns null when a URL matches no source's allow_patterns", () => {
   assertEquals(
     resolveOwnerSourceId(IRRELEVANT_LINK, [budgetAdvertisedSource()]),
