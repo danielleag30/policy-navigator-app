@@ -186,8 +186,53 @@ function candidateCorpus(c: EnrichedCandidate, doc?: SourceDocument): string {
   ].map(normalizedText).join(" ");
 }
 
-function mentionsRealEstateTax(query: string): boolean {
-  return /\b(real estate|property)\b/i.test(query) && /\btax\b/i.test(query);
+const BUDGET_INDICATOR_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "at",
+  "county",
+  "current",
+  "currently",
+  "fairfax",
+  "for",
+  "in",
+  "is",
+  "latest",
+  "now",
+  "of",
+  "rate",
+  "the",
+  "this",
+  "today",
+  "va",
+  "value",
+  "virginia",
+  "what",
+  "whats",
+  "year",
+]);
+
+function budgetIndicatorQueryTerms(query: string): string[] {
+  const normalized = query.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  const terms = normalized.split(/\s+/).filter((term) =>
+    term.length > 2 && !BUDGET_INDICATOR_STOPWORDS.has(term) &&
+    !/^(19|20)\d{2}$/.test(term)
+  );
+  return [...new Set(terms)];
+}
+
+function matchesBudgetIndicatorQuery(
+  query: string,
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): boolean {
+  if (c.table !== "budget_indicators") return false;
+  const corpus = candidateCorpus(c, doc);
+  const terms = budgetIndicatorQueryTerms(query);
+  if (terms.length === 0) return true;
+  return terms.every((term) => corpus.includes(term));
 }
 
 function isRelevantTaxRateCandidate(
@@ -197,8 +242,9 @@ function isRelevantTaxRateCandidate(
 ): boolean {
   if (!/\btax\b/i.test(query) || !/\brate\b/i.test(query)) return false;
   const corpus = candidateCorpus(c, doc);
-  if (mentionsRealEstateTax(query)) {
-    return /\b(real estate|property)\b/.test(corpus) && /\btax\b/.test(corpus);
+  if (c.table === "budget_indicators") {
+    return /\btax\b/.test(corpus) && /\brate\b/.test(corpus) &&
+      matchesBudgetIndicatorQuery(query, c, doc);
   }
   return /\btax\b/.test(corpus) && /\brate\b/.test(corpus);
 }
@@ -284,6 +330,34 @@ function rerankCurrentStateCandidatesForTest(
     if (scoreDelta !== 0) return scoreDelta;
     return b.rrfScore - a.rrfScore;
   });
+}
+
+function selectedCurrentBudgetIndicatorsForTest(
+  query: string,
+  rows: EnrichedCandidate[],
+  documents: Map<string, SourceDocument>,
+): EnrichedCandidate[] {
+  if (
+    !isCurrentStateQuery(query) || !/\btax\b/i.test(query) ||
+    !/\brate\b/i.test(query)
+  ) {
+    return [];
+  }
+
+  return rows
+    .filter((row) => {
+      const doc = typeof row.row.document_id === "string"
+        ? documents.get(row.row.document_id)
+        : undefined;
+      return isAdoptedBudgetSource(row, doc) &&
+        isRelevantTaxRateCandidate(query, row, doc);
+    })
+    .sort((a, b) => {
+      const fyA = asNumber(a.row.fiscal_year) ?? 0;
+      const fyB = asNumber(b.row.fiscal_year) ?? 0;
+      return fyB - fyA;
+    })
+    .slice(0, 3);
 }
 
 function fkCandidate(
@@ -982,6 +1056,152 @@ Deno.test("current-state rerank prefers latest adopted real estate tax budget in
 
   if (ranked[0].id !== "fy2027-adopted") {
     throw new Error(`expected FY2027 adopted first, got ${ranked[0].id}`);
+  }
+});
+
+Deno.test("current-state budget indicator lookup selects current transient occupancy tax rate", () => {
+  const adoptedDocId = "00000000-0000-0000-0000-000000000212";
+  const oldDocId = "00000000-0000-0000-0000-000000000211";
+  const currentTot = testCandidate("budget_indicators", "tot-fy2027-adopted", {
+    document_id: adoptedDocId,
+    fiscal_year: 2027,
+    program: "Transient Occupancy Tax",
+    indicator_name: "Transient Occupancy Tax rate",
+    value_actual: 6,
+    unit: "percent",
+    raw_extracted_text:
+      "FY 2027 Adopted Budget: Transient Occupancy Tax rate is 6%, effective July 1, 2025.",
+  });
+  const staleTot = testCandidate("budget_indicators", "tot-old", {
+    document_id: oldDocId,
+    fiscal_year: 2024,
+    program: "Transient Occupancy Tax",
+    indicator_name: "Transient Occupancy Tax rate",
+    value_actual: 4,
+    unit: "percent",
+    raw_extracted_text: "Transient Occupancy Tax rate is 4%.",
+  });
+  const realEstate = testCandidate("budget_indicators", "real-estate", {
+    document_id: adoptedDocId,
+    fiscal_year: 2027,
+    program: "Real Estate Tax",
+    indicator_name: "Real Estate Tax rate",
+    value_actual: 1.12,
+    raw_extracted_text: "FY 2027 Adopted Budget Real Estate Tax rate.",
+  });
+
+  const documents = new Map<string, SourceDocument>([
+    [adoptedDocId, {
+      id: adoptedDocId,
+      url: "https://example.test/fy2027/adopted/general-fund-revenue.pdf",
+      title: "FY 2027 Adopted General Fund Revenue Overview",
+      filename: "FY2027_Adopted_General_Fund_Revenue_Overview.pdf",
+      ingested_at: "2026-07-20T00:00:00Z",
+      source_published_at: "2026-05-05",
+      fiscal_year: 2027,
+    }],
+    [oldDocId, {
+      id: oldDocId,
+      url: "https://example.test/old-tot.pdf",
+      title: "FY 2024 Adopted Budget",
+      filename: "FY2024_Adopted_Budget.pdf",
+      ingested_at: "2026-07-01T00:00:00Z",
+      source_published_at: "2023-05-05",
+      fiscal_year: 2024,
+    }],
+  ]);
+
+  const selected = selectedCurrentBudgetIndicatorsForTest(
+    "what is the current transient occupancy tax rate",
+    [staleTot, realEstate, currentTot],
+    documents,
+  );
+
+  if (selected[0]?.id !== "tot-fy2027-adopted") {
+    throw new Error(`expected current TOT first, got ${selected[0]?.id}`);
+  }
+  if (selected.some((candidate) => candidate.id === "real-estate")) {
+    throw new Error("transient occupancy query selected real estate tax row");
+  }
+});
+
+Deno.test("current-state budget indicator lookup selects current personal property tax rate", () => {
+  const adoptedDocId = "00000000-0000-0000-0000-000000000222";
+  const staleDocId = "00000000-0000-0000-0000-000000000221";
+  const currentPersonalProperty = testCandidate(
+    "budget_indicators",
+    "personal-property-fy2027-adopted",
+    {
+      document_id: adoptedDocId,
+      fiscal_year: 2027,
+      program: "Personal Property Tax",
+      indicator_name: "Personal Property Tax rate",
+      value_actual: 4.57,
+      unit: "dollars per $100 assessed value",
+      raw_extracted_text:
+        "FY 2027 Adopted Budget: Personal Property Tax rate is $4.57 per $100.",
+    },
+  );
+  const stalePersonalProperty = testCandidate(
+    "budget_indicators",
+    "personal-property-1993",
+    {
+      document_id: staleDocId,
+      fiscal_year: 1994,
+      program: "Personal Property Tax",
+      indicator_name: "Personal Property Tax rate",
+      value_actual: 4.57,
+      unit: "dollars per $100 assessed value",
+      raw_extracted_text:
+        "1993 BOS summary: Personal Property Tax rate is $4.57 per $100.",
+    },
+  );
+  const realEstate = testCandidate("budget_indicators", "real-estate", {
+    document_id: adoptedDocId,
+    fiscal_year: 2027,
+    program: "Real Estate Tax",
+    indicator_name: "Real Estate Tax rate",
+    value_actual: 1.12,
+    raw_extracted_text: "FY 2027 Adopted Budget Real Estate Tax rate.",
+  });
+
+  const documents = new Map<string, SourceDocument>([
+    [adoptedDocId, {
+      id: adoptedDocId,
+      url: "https://example.test/fy2027/adopted/general-fund-revenue.pdf",
+      title: "FY 2027 Adopted General Fund Revenue Overview",
+      filename: "FY2027_Adopted_General_Fund_Revenue_Overview.pdf",
+      ingested_at: "2026-07-20T00:00:00Z",
+      source_published_at: "2026-05-05",
+      fiscal_year: 2027,
+    }],
+    [staleDocId, {
+      id: staleDocId,
+      url: "https://example.test/1993-bos-summary.pdf",
+      title: "1993 Board Summary",
+      filename: "1993_BOS_Summary.pdf",
+      ingested_at: "2026-07-01T00:00:00Z",
+      source_published_at: "1993-04-01",
+      fiscal_year: 1994,
+    }],
+  ]);
+
+  const selected = selectedCurrentBudgetIndicatorsForTest(
+    "what is the current personal property tax rate",
+    [stalePersonalProperty, realEstate, currentPersonalProperty],
+    documents,
+  );
+
+  if (selected[0]?.id !== "personal-property-fy2027-adopted") {
+    throw new Error(
+      `expected current personal property first, got ${selected[0]?.id}`,
+    );
+  }
+  if (selected.some((candidate) => candidate.id === "personal-property-1993")) {
+    throw new Error("selected stale 1993 personal property tax row");
+  }
+  if (selected.some((candidate) => candidate.id === "real-estate")) {
+    throw new Error("personal property query selected real estate tax row");
   }
 });
 
