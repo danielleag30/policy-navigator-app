@@ -278,11 +278,28 @@ function isAdoptedBudgetSource(
     !/\b(proposed|advertised|mark[- ]?up|markup|draft)\b/.test(corpus);
 }
 
-function parseDocumentDate(doc?: SourceDocument): number | null {
+function parseDocumentFiscalYear(doc?: SourceDocument): number | null {
   if (!doc) return null;
+  const explicitFiscalYear = asNumber(doc.fiscal_year);
+  if (explicitFiscalYear !== null) return explicitFiscalYear;
+
+  const text = [doc.url, doc.title, doc.filename].filter(Boolean).join(" ");
+  const fiscalYear = text.match(
+    /\b(?:fy|fiscal[-_\s]*year[-_\s]*)(20\d{2})\b/i,
+  );
+  if (fiscalYear) return Number(fiscalYear[1]);
+
+  return null;
+}
+
+function parseDocumentRecencyScore(doc?: SourceDocument): number | null {
+  if (!doc) return null;
+  const fiscalYear = parseDocumentFiscalYear(doc);
+  if (fiscalYear !== null) return 1_000_000 + fiscalYear;
+
   if (doc.source_published_at) {
     const parsed = Date.parse(doc.source_published_at);
-    if (!Number.isNaN(parsed)) return parsed;
+    if (!Number.isNaN(parsed)) return parsed / 86_400_000;
   }
   const text = [doc.title, doc.filename, doc.url].filter(Boolean).join(" ");
   const iso = text.match(
@@ -292,7 +309,7 @@ function parseDocumentDate(doc?: SourceDocument): number | null {
     const parsed = Date.parse(
       `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`,
     );
-    if (!Number.isNaN(parsed)) return parsed;
+    if (!Number.isNaN(parsed)) return parsed / 86_400_000;
   }
 
   const named = text.match(
@@ -300,14 +317,35 @@ function parseDocumentDate(doc?: SourceDocument): number | null {
   );
   if (named) {
     const parsed = Date.parse(`${named[1]} ${named[2]}, ${named[3]}`);
-    if (!Number.isNaN(parsed)) return parsed;
+    if (!Number.isNaN(parsed)) return parsed / 86_400_000;
   }
 
   if (doc.ingested_at) {
     const parsed = Date.parse(doc.ingested_at);
-    if (!Number.isNaN(parsed)) return parsed;
+    if (!Number.isNaN(parsed)) return parsed / 86_400_000;
   }
   return null;
+}
+
+function hasDraftQualifierNearRateMention(
+  c: EnrichedCandidate,
+): boolean {
+  const content = candidateText(c);
+  const rateMention =
+    /\btax\s+rate\b[\s\S]{0,100}(?:\d+(?:\.\d+)?\s*(?:%|percent)|\$\s*\d+(?:\.\d+)?)/ig;
+  const valueThenRate =
+    /(?:\d+(?:\.\d+)?\s*(?:%|percent)|\$\s*\d+(?:\.\d+)?)[\s\S]{0,100}\btax\s+rate\b/ig;
+  const draftRegex = /\b(proposed|advertised|mark[- ]?up|markup|draft)\b/i;
+  const windows: string[] = [];
+
+  for (const regex of [rateMention, valueThenRate]) {
+    for (const match of content.matchAll(regex)) {
+      const index = match.index ?? 0;
+      windows.push(content.slice(Math.max(0, index - 200), index + 300));
+    }
+  }
+
+  return windows.some((window) => draftRegex.test(window));
 }
 
 function currentStateScore(
@@ -332,16 +370,11 @@ function currentStateScore(
   if (
     c.table === "narrative_chunks" && isRelevantTaxRateCandidate(query, c, doc)
   ) {
-    const docDate = parseDocumentDate(doc);
+    const recencyScore = parseDocumentRecencyScore(doc);
     const adoptedBoost = isAdoptedBudgetSource(c, doc) ? 100 : 0;
-    const draftPenalty =
-      /\b(proposed|advertised|mark[- ]?up|markup|draft)\b/.test(
-          candidateCorpus(c, doc),
-        )
-        ? -100
-        : 0;
+    const draftPenalty = hasDraftQualifierNearRateMention(c) ? -100 : 0;
     return 500 + adoptedBoost + draftPenalty +
-      (docDate === null ? 0 : docDate / 86_400_000);
+      (recencyScore === null ? 0 : recencyScore);
   }
 
   return 0;
@@ -1380,26 +1413,26 @@ Deno.test("compound current and historical real estate tax query still prefers c
 });
 
 Deno.test("current-state narrative recency selects real transient occupancy tax increase chunk", () => {
-  const revenueOverviewDocId = "00000000-0000-0000-0000-000000000212";
-  const staleDocId = "00000000-0000-0000-0000-000000000211";
+  const revenueOverviewDocId = "019f4747-3a67-7e01-bdb9-c186ec35fcd0";
+  const staleDocId = "019f7e45-6930-7ee8-b56a-089cb78d4697";
   const currentTot = testCandidate(
     "narrative_chunks",
     "019f4747-ee4b-7089-bcaf-4498bef4c586",
     {
       document_id: revenueOverviewDocId,
       content:
-        "FY2027 Advertised Budget General Fund Revenue Overview, page 26: a 2-percentage point increase in the FY 2026 TOT tax rate from 4 percent to 6 percent approved by the Board of Supervisors.",
+        "In FY 2026, TOT receipts are projected to increase 48.3 percent, which is primarily associated with a 2-percentage point increase in the FY 2026 TOT tax rate from 4 percent to 6 percent approved by the Board of Supervisors. Transient Occupancy Taxes are charged as part of a hotel bill and remitted by the hotel to the County. The Transient Occupancy Tax had been levied at 4 percent. Actual FY 2025 collections increased over the previous year as business travel continued to recover and hotel average daily rates increased. The remaining discussion covers revenue allocation assumptions, tourism promotion funding, visitor activity, and other General Fund planning context separate from the rate change sentence. Tourism-fund allocations were proposed in a separate planning discussion later in the document.",
     },
   );
   currentTot.rrfScore = 0.01;
 
   const staleTot = testCandidate(
     "narrative_chunks",
-    "tot-unchanged-since-2004",
+    "019f7e45-b2cd-706b-84de-2591108fa2bc",
     {
       document_id: staleDocId,
       content:
-        "Transient Occupancy Tax rate remained unchanged since 2004 at 4 percent.",
+        "Transient Occupancy Tax ($25.6 million) Fairfax County currently levies a 4% transient occupancy tax (2% for general purposes and 2% to promote tourism). The Transient Occupancy Tax rate has not been adjusted since 2004. Public hearing, approval by the Board of Supervisors and ordinance change Rates between 2 and 5% are earmarked for tourism promotion.",
     },
   );
   staleTot.rrfScore = 0.03;
@@ -1407,23 +1440,25 @@ Deno.test("current-state narrative recency selects real transient occupancy tax 
   const documents = new Map<string, SourceDocument>([
     [revenueOverviewDocId, {
       id: revenueOverviewDocId,
-      url: "https://example.test/fy2027/advertised/general-fund-revenue.pdf",
-      title: "FY2027 Advertised Budget General Fund Revenue Overview",
-      filename: "FY2027_Advertised_General_Fund_Revenue_Overview.pdf",
-      ingested_at: "2026-07-20T00:00:00Z",
+      url:
+        "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/fy2027/advertised/overview/General%20Fund%20Revenue%20Overview.pdf",
+      title: null,
+      filename: null,
+      ingested_at: "2026-07-09T14:27:58.183+00:00",
       doc_type: "budget_pdf",
-      source_published_at: "2026-02-18",
-      fiscal_year: 2027,
+      source_published_at: null,
+      fiscal_year: null,
     }],
     [staleDocId, {
       id: staleDocId,
-      url: "https://example.test/old-tot.pdf",
-      title: "Transient Occupancy Tax Historical Overview",
-      filename: "Transient_Occupancy_Tax_2004.pdf",
-      ingested_at: "2026-07-01T00:00:00Z",
-      doc_type: "budget_pdf",
-      source_published_at: "2004-07-01",
-      fiscal_year: 2005,
+      url:
+        "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/budget%20committee%20meeting/2024/sep-17/2024_Sept_17_BudgetComm_TaxingAuthority_Supplemental.pdf",
+      title: null,
+      filename: null,
+      ingested_at: "2026-07-20T06:45:05.968+00:00",
+      doc_type: "bos_minutes",
+      source_published_at: null,
+      fiscal_year: null,
     }],
   ]);
 

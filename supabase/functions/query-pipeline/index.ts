@@ -678,11 +678,28 @@ function isAdoptedBudgetSource(
     !/\b(proposed|advertised|mark[- ]?up|markup|draft)\b/.test(corpus);
 }
 
-function parseDocumentDate(doc?: SourceDocument): number | null {
+function parseDocumentFiscalYear(doc?: SourceDocument): number | null {
   if (!doc) return null;
+  const explicitFiscalYear = asNumber(doc.fiscal_year);
+  if (explicitFiscalYear !== null) return explicitFiscalYear;
+
+  const text = [doc.url, doc.title, doc.filename].filter(Boolean).join(" ");
+  const fiscalYear = text.match(
+    /\b(?:fy|fiscal[-_\s]*year[-_\s]*)(20\d{2})\b/i,
+  );
+  if (fiscalYear) return Number(fiscalYear[1]);
+
+  return null;
+}
+
+function parseDocumentRecencyScore(doc?: SourceDocument): number | null {
+  if (!doc) return null;
+  const fiscalYear = parseDocumentFiscalYear(doc);
+  if (fiscalYear !== null) return 1_000_000 + fiscalYear;
+
   if (doc.source_published_at) {
     const parsed = Date.parse(doc.source_published_at);
-    if (!Number.isNaN(parsed)) return parsed;
+    if (!Number.isNaN(parsed)) return parsed / 86_400_000;
   }
 
   const text = [doc.title, doc.filename, doc.url].filter(Boolean).join(" ");
@@ -693,7 +710,7 @@ function parseDocumentDate(doc?: SourceDocument): number | null {
     const parsed = Date.parse(
       `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`,
     );
-    if (!Number.isNaN(parsed)) return parsed;
+    if (!Number.isNaN(parsed)) return parsed / 86_400_000;
   }
 
   const named = text.match(
@@ -701,15 +718,36 @@ function parseDocumentDate(doc?: SourceDocument): number | null {
   );
   if (named) {
     const parsed = Date.parse(`${named[1]} ${named[2]}, ${named[3]}`);
-    if (!Number.isNaN(parsed)) return parsed;
+    if (!Number.isNaN(parsed)) return parsed / 86_400_000;
   }
 
   if (doc.ingested_at) {
     const parsed = Date.parse(doc.ingested_at);
-    if (!Number.isNaN(parsed)) return parsed;
+    if (!Number.isNaN(parsed)) return parsed / 86_400_000;
   }
 
   return null;
+}
+
+function hasDraftQualifierNearRateMention(
+  c: EnrichedCandidate,
+): boolean {
+  const content = candidateText(c);
+  const rateMention =
+    /\btax\s+rate\b[\s\S]{0,100}(?:\d+(?:\.\d+)?\s*(?:%|percent)|\$\s*\d+(?:\.\d+)?)/ig;
+  const valueThenRate =
+    /(?:\d+(?:\.\d+)?\s*(?:%|percent)|\$\s*\d+(?:\.\d+)?)[\s\S]{0,100}\btax\s+rate\b/ig;
+  const draftRegex = /\b(proposed|advertised|mark[- ]?up|markup|draft)\b/i;
+  const windows: string[] = [];
+
+  for (const regex of [rateMention, valueThenRate]) {
+    for (const match of content.matchAll(regex)) {
+      const index = match.index ?? 0;
+      windows.push(content.slice(Math.max(0, index - 200), index + 300));
+    }
+  }
+
+  return windows.some((window) => draftRegex.test(window));
 }
 
 function currentStateScore(
@@ -734,16 +772,11 @@ function currentStateScore(
   if (
     c.table === "narrative_chunks" && isRelevantTaxRateCandidate(query, c, doc)
   ) {
-    const docDate = parseDocumentDate(doc);
+    const recencyScore = parseDocumentRecencyScore(doc);
     const adoptedBoost = isAdoptedBudgetSource(c, doc) ? 100 : 0;
-    const draftPenalty =
-      /\b(proposed|advertised|mark[- ]?up|markup|draft)\b/.test(
-          candidateCorpus(c, doc),
-        )
-        ? -100
-        : 0;
+    const draftPenalty = hasDraftQualifierNearRateMention(c) ? -100 : 0;
     return 500 + adoptedBoost + draftPenalty +
-      (docDate === null ? 0 : docDate / 86_400_000);
+      (recencyScore === null ? 0 : recencyScore);
   }
 
   return 0;
