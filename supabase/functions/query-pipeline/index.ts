@@ -22,7 +22,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { generate as uuidv7 } from "@std/uuid/v7";
 import db from "../_shared/db-client.ts";
-import { error, success } from "../_shared/response.ts";
+import { corsPreflightResponse, error, success } from "../_shared/response.ts";
 import { ollamaChat } from "../_shared/ollama-client.ts";
 import { type AiSession } from "../_shared/embedder.ts";
 import {
@@ -2011,6 +2011,10 @@ async function returnLoggedSuccess(
 
 Deno.serve(async (req: Request): Promise<Response> => {
   const startedAt = performance.now();
+
+  if (req.method === "OPTIONS") {
+    return corsPreflightResponse();
+  }
 
   if (req.method !== "POST") {
     return error("NOT_FOUND", "Method not allowed", 405);
