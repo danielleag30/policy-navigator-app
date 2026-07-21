@@ -31,6 +31,11 @@ import {
   type QueryRequest,
   type QueryResponseData,
 } from "../_shared/types.ts";
+import {
+  type DeepHistoricalOutcome,
+  runDeepHistoricalLookup,
+  shouldAttemptDeepHistoricalLookup,
+} from "./_deep-historical.ts";
 
 declare const Supabase: {
   ai: { Session: new (model: string) => AiSession };
@@ -1877,6 +1882,83 @@ function assembleQueryResponse(
     freshnessTimestamp,
     freshness: freshnessNotice(freshnessTimestamp),
     caveats: finalCaveats(draft.answer, caveats),
+    deepHistoricalLookup: null,
+  };
+}
+
+/**
+ * Build a QueryResponseData for the deep-historical slow path (see
+ * _deep-historical.ts). Reuses the same withRequiredCaveats/formatCitation/
+ * freshnessNotice helpers as the normal path so the shape stays consistent —
+ * the only new surface is `deepHistoricalLookup`, which is always non-null
+ * here so the frontend can disclose that this response took the slow path.
+ * "not_found" and "failed" outcomes both render as a refusal: never fabricate
+ * just because the live lookup itself failed rather than came up genuinely
+ * empty.
+ */
+function assembleDeepHistoricalResponse(
+  outcome: DeepHistoricalOutcome,
+): QueryResponseData {
+  if (outcome.status === "answered") {
+    const caveats = [
+      `This answer required an extended live historical lookup against ${outcome.sourceLabel} (fetched just now) — it was not found in the standard pre-indexed corpus.`,
+    ];
+    const citation: CitationChunk = {
+      chunk_id: outcome.citationId,
+      source_url: outcome.sourceUrl,
+      source_title: outcome.sourceLabel,
+      page_number: outcome.page,
+      bbox: null,
+      retrieved_at: outcome.fetchedAt,
+      formatted: formatCitation(
+        outcome.sourceLabel,
+        outcome.page,
+        outcome.fetchedAt,
+      ),
+      rank: 1,
+    };
+
+    return {
+      answer: withRequiredCaveats(outcome.answer, caveats),
+      citations: [citation],
+      citationMap: {},
+      chunkText: { [outcome.citationId]: outcome.excerptText },
+      temporalFlag: true,
+      amendmentCaveat: null,
+      pendingChangeNotice: null,
+      incompleteSearchWarning: false,
+      freshnessTimestamp: outcome.fetchedAt,
+      freshness: freshnessNotice(outcome.fetchedAt),
+      caveats,
+      deepHistoricalLookup: {
+        answered: true,
+        sourceLabel: outcome.sourceLabel,
+        sourceUrl: outcome.sourceUrl,
+        fetchedAt: outcome.fetchedAt,
+      },
+    };
+  }
+
+  return {
+    answer: "not in the documents",
+    citations: [],
+    citationMap: {},
+    chunkText: {},
+    temporalFlag: true,
+    amendmentCaveat: null,
+    pendingChangeNotice: null,
+    incompleteSearchWarning: true,
+    freshnessTimestamp: null,
+    freshness: null,
+    caveats: [
+      `An extended live historical lookup against ${outcome.sourceLabel} was attempted but did not find an answer to this question.`,
+    ],
+    deepHistoricalLookup: {
+      answered: false,
+      sourceLabel: outcome.sourceLabel,
+      sourceUrl: outcome.sourceUrl,
+      fetchedAt: outcome.fetchedAt,
+    },
   };
 }
 
@@ -2012,6 +2094,39 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const maxScore = ranked[0]?.rrfScore ?? 0;
   if (maxScore < INCOMPLETE_SEARCH_FLOOR) {
+    // ── Deep-historical slow path (see _deep-historical.ts) ───────────────────
+    // Only attempted when the fast path found genuinely nothing AND the query
+    // names a year within EnCode's reprint coverage AND the EnCode compliance
+    // gate is on. Extended-timeout, explicitly-disclosed, never-fabricating —
+    // see file header there for the full design rationale.
+    const deepHistoricalTrigger = shouldAttemptDeepHistoricalLookup(
+      query,
+      maxScore,
+      INCOMPLETE_SEARCH_FLOOR,
+    );
+
+    if (deepHistoricalTrigger.attempt) {
+      // Approximate: this path has its own single-LLM-call budget, separate
+      // from LLM_TOTAL_CALL_CAP (which governs the Judge/Drafter/Verifier
+      // chain this path never enters). Counted here even on a pre-LLM
+      // failure (Docling error, zero relevant excerpts) for simplicity — an
+      // acceptable approximation for a log metric, not a hard invariant.
+      llmCalls += 1;
+      const outcome = await runDeepHistoricalLookup(
+        query,
+        deepHistoricalTrigger.reprint,
+      );
+      const deepHistoricalResponse = assembleDeepHistoricalResponse(outcome);
+      return await returnLoggedSuccess(deepHistoricalResponse, startedAt, {
+        ip,
+        queryText: query,
+        llmCalls,
+        temporalFlag: true,
+        verifierFlag: false,
+        incompleteSearch: outcome.status !== "answered",
+      });
+    }
+
     const incompleteResponse: QueryResponseData = {
       answer: "",
       citations: [] as CitationChunk[],
@@ -2024,6 +2139,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       freshnessTimestamp: null,
       freshness: null,
       caveats: [],
+      deepHistoricalLookup: null,
     };
     return await returnLoggedSuccess(incompleteResponse, startedAt, {
       ip,

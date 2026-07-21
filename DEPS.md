@@ -21,6 +21,10 @@ This file records the canonical runtime/configuration choices for Policy Navigat
 | `RETRIEVAL_CANDIDATE_COUNT` | Local `.env.local` / Vercel project env | Edge Functions via `Deno.env.get()` | Retrieval tuning, configurable without code deploy. |
 | `RETRIEVAL_CONTEXT_COUNT` | Local `.env.local` / Vercel project env | Edge Functions via `Deno.env.get()` | Retrieval tuning, configurable without code deploy. |
 | `INCOMPLETE_SEARCH_FLOOR` | Local `.env.local` / Vercel project env | Edge Functions via `Deno.env.get()` | Retrieval tuning, configurable without code deploy. |
+| `ENCODE_ZONING_ENABLED` | Supabase Edge Function secret | `ingest-orchestrator/encode.ts` AND `query-pipeline/_deep-historical.ts` via `Deno.env.get()` | Human/legal sign-off gate for any request against EnCode's robots.txt-disallowed `/regs/` path — must be exactly `"true"`. Shared by both the recurring current-tree crawler and the deep-historical live-lookup slow path so a sign-off revocation shuts off both at once. Not previously recorded here; added for completeness alongside the two new vars below. |
+| `ENCODE_BASE_URL` | Local `.env.local` / Vercel project env | `ingest-orchestrator/encode.ts` AND `query-pipeline/_deep-historical.ts` via `Deno.env.get()` | EnCode zoning-ordinance site root. Defaults to `https://online.encodeplus.com/regs/fairfaxcounty-va` if unset (both files keep their own literal default — see `_deep-historical.ts` file header for why they don't cross-import it). |
+| `DEEP_HISTORICAL_DOCLING_TIMEOUT_MS` | Local `.env.local` / Vercel project env | `query-pipeline/_deep-historical.ts` via `Deno.env.get()` | Docling-wrapper fetch timeout for the deep-historical slow path only; default `100000` (deliberately matches `ingest-orchestrator`'s own `DOCLING_TIMEOUT_MS` constant — live-tested 2026-07-21: a cold HF Space instance took over 45s but succeeded well within 100s). Separate env var from `DOCLING_TIMEOUT_MS`, tunable independently. |
+| `DEEP_HISTORICAL_LLM_TIMEOUT_MS` | Local `.env.local` / Vercel project env | `query-pipeline/_deep-historical.ts` via `Deno.env.get()` | Per-attempt Ollama timeout for the deep-historical slow path only, passed as `ollamaChat`'s `timeoutMsOverride`; default `20000`. Does **not** change `OLLAMA_TIMEOUT_MS` (15000) used by every other call site. |
 | `VERCEL_DEPLOY_TOKEN` | Vercel secret / local `.env.local` if needed for tooling | Deployment tooling only | Used for frontend deployment automation, not runtime code. |
 | `ADMIN_SECRET` | Local `.env.local` / Vercel project env | Frontend route gate and `acknowledge-alert` Edge Function via `Deno.env.get()` | Dual-use secret; one value, two checks. |
 | `KEEPALIVE_HEALTH_URL` | GitHub Actions repo secret | `.github/workflows/keep-alive.yml` via `${{ secrets.KEEPALIVE_HEALTH_URL }}` | Full URL of the deployed `keepalive-health` Edge Function: `https://ahaurkifxzqsrhwjshbj.supabase.co/functions/v1/keepalive-health`. NOT in `.env.local` — only needed by CI. |
@@ -37,6 +41,30 @@ This file records the canonical runtime/configuration choices for Policy Navigat
   rationale as the Temporal Judge and Verifier.
 - UUID v7 generation uses `@std/uuid/v7`.
 - SHA-256 is the canonical `content_hash` algorithm.
+- `query-pipeline/_deep-historical.ts` (deep-historical slow path) Ollama
+  temperature: `0.3` -- same rationale as the normal Answer Drafter (prose may
+  vary slightly while staying grounded in the live-fetched excerpt text).
+- `ENCODE_ZONING_REPRINTS` in `query-pipeline/_deep-historical.ts` is a
+  hardcoded table of 18 EnCode Archives zoning-ordinance reprint labels/years/
+  `doclibrary.aspx` GUIDs (1941-2021), confirmed live against
+  `https://online.encodeplus.com/regs/fairfaxcounty-va/archivedialog.aspx`
+  2026-07-21 -- same "manually verified, hardcoded rather than re-scraped"
+  convention as `encode.ts`'s `ROOT_TOCID`/`ROOT_SECID`/
+  `AMENDMENT_HISTORY_SECID`. Re-verify against the live page before trusting
+  it if EnCode's archive contents ever change.
+- Deep-historical slow-path worst-case latency budget: up to
+  `DEEP_HISTORICAL_DOCLING_TIMEOUT_MS` (default 100s, single attempt, no
+  retry -- matches `ingest-orchestrator`'s own proven `DOCLING_TIMEOUT_MS`;
+  live-tested 2026-07-21 against the real HF Space and real EnCode archive,
+  see policy-navigator-06-execution-log.md, a cold instance needed >45s but
+  succeeded within 120s) for the Docling fetch, plus up to
+  `DEEP_HISTORICAL_LLM_TIMEOUT_MS` (default 20s) per Ollama attempt,
+  inheriting `ollamaChat`'s existing 3x retry + exponential backoff (~67s
+  worst case for the LLM step alone) -- roughly 167s worst case end to end.
+  The frontend's fetch timeout (`FETCH_TIMEOUT_MS` in `QueryForm.tsx`) is set
+  to 190s to cover this with headroom; the normal path is unaffected since it
+  typically returns in well under 5s regardless of how long the client is
+  willing to wait.
 
 ## Application Dependencies
 

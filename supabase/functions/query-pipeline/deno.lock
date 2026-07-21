@@ -1,0 +1,17 @@
+{
+  "version": "5",
+  "specifiers": {
+    "jsr:@std/uuid@1.1.1": "1.1.1"
+  },
+  "jsr": {
+    "@std/uuid@1.1.1": {
+      "integrity": "7b49060282d90f72fec64952f8c7a2914cbe6fdba3eca665f8cedc90830154a7"
+    }
+  },
+  "workspace": {
+    "dependencies": [
+      "jsr:@std/uuid@1.1.1",
+      "npm:@supabase/supabase-js@2"
+    ]
+  }
+}
