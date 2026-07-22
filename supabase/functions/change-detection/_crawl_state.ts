@@ -85,6 +85,7 @@ export interface CrawlErrorEntry {
 export interface CrawlStateRow {
   source_id: string;
   doc_type: DocType;
+  budget_stage?: "advertised" | "adopted" | null;
   status: "idle" | "in_progress";
   resume_state: DiscoveryResumeState | Record<string, never>;
   claim_expires_at: string | null;
@@ -343,6 +344,7 @@ async function scanCandidateUrl(
   db: CrawlStateDb,
   url: string,
   docType: DocType,
+  budgetStage: "advertised" | "adopted" | null,
   deps: {
     fetchHead: HeadFetcher;
     fetchHash: HashFetcher;
@@ -372,6 +374,7 @@ async function scanCandidateUrl(
     id: deps.newId(),
     url,
     docType,
+    budgetStage,
     nowIso: deps.nowIso(),
   });
   if (!pendingId) return { url, action: "active_ingestion_exists" };
@@ -608,12 +611,18 @@ export async function runDiscoverySourceCycle(
       scanBatch,
       scanBatchSize,
       (url: string) =>
-        scanCandidateUrl(deps.db, url, deps.source.doc_type, {
-          fetchHead: deps.fetchHead,
-          fetchHash: deps.fetchHash,
-          newId,
-          nowIso,
-        }).catch((e: Error): ScanResult => ({
+        scanCandidateUrl(
+          deps.db,
+          url,
+          deps.source.doc_type,
+          deps.source.budget_stage ?? null,
+          {
+            fetchHead: deps.fetchHead,
+            fetchHash: deps.fetchHash,
+            newId,
+            nowIso,
+          },
+        ).catch((e: Error): ScanResult => ({
           url,
           action: "error",
           message: e.message,

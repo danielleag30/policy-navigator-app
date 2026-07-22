@@ -226,6 +226,7 @@ export interface SourceDocument {
   filename: string | null;
   ingested_at: string;
   doc_type: string | null;
+  budget_stage?: "advertised" | "adopted" | null;
   source_published_at: string | null;
   fiscal_year: number | null;
 }
@@ -711,6 +712,11 @@ function isRelevantTaxRateCandidate(
     return /\btax\b/.test(corpus) && /\brate\b/.test(corpus) &&
       matchesBudgetIndicatorQuery(query, c, doc);
   }
+  if (c.table === "ordinance_provisions") {
+    return /\btax\b/.test(corpus) &&
+      (/\brate\b/.test(corpus) || /percent|%/.test(corpus)) &&
+      matchesBudgetIndicatorQuery(query, c, doc);
+  }
   return /\btax\b/.test(corpus) && /\brate\b/.test(corpus);
 }
 
@@ -718,6 +724,8 @@ function isAdoptedBudgetSource(
   c: EnrichedCandidate,
   doc?: SourceDocument,
 ): boolean {
+  if (doc?.budget_stage === "adopted") return true;
+  if (doc?.budget_stage === "advertised") return false;
   const corpus = candidateCorpus(c, doc);
   if (!hasDraftSourceStatus(doc) && hasFinalAdoptedRateSignal(c)) {
     return true;
@@ -942,6 +950,23 @@ export function structuredCurrentValueScore(
     budgetIndicatorTiebreakScore(c, doc);
 }
 
+export function ordinanceCurrentValueScore(
+  query: string,
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): number {
+  if (c.table !== "ordinance_provisions") return 0;
+  if (c.row.is_current !== true) return 0;
+  if (!isRelevantTaxRateCandidate(query, c, doc)) return 0;
+  if (extractCurrentValueFromOrdinance(query, c) === null) return 0;
+
+  const effectiveDate = asText(c.row.effective_date);
+  const effectiveScore = effectiveDate
+    ? Date.parse(effectiveDate) / 86_400_000
+    : 0;
+  return 3_000_000 + (Number.isFinite(effectiveScore) ? effectiveScore : 0);
+}
+
 function subjectWindows(
   query: string,
   text: string,
@@ -968,6 +993,52 @@ function subjectWindows(
 function hasFutureOrProposalSignal(text: string): boolean {
   return /\b(?:propos(?:e|ed|al)|advertised|draft|to be approved|would|could|fy\s*20(?:2[89]|[3-9]\d))\b/i
     .test(text);
+}
+
+export function extractCurrentValueFromOrdinance(
+  query: string,
+  c: EnrichedCandidate,
+): string | null {
+  if (c.table !== "ordinance_provisions" || c.row.is_current !== true) {
+    return null;
+  }
+  if (
+    !/\btax\b/i.test(query) || !/\b(rate|levy|occupancy|tot)\b/i.test(query)
+  ) {
+    return null;
+  }
+
+  const text = candidateText(c);
+  const lower = normalizedText(text);
+  if (
+    !/\btax\b/.test(lower) ||
+    !(/\btransient occupancy\b/.test(lower) || /\btot\b/.test(lower)) ||
+    !matchesBudgetIndicatorQuery(query, c)
+  ) {
+    return null;
+  }
+
+  const percentages = [
+    ...text.matchAll(/\b(\d+(?:\.\d+)?)\s*(?:%|percent)\b/gi),
+  ]
+    .map((match) => Number(match[1]))
+    .filter((value) => Number.isFinite(value) && value > 0 && value <= 100);
+  const unique = [...new Set(percentages)];
+  if (unique.length === 0) return null;
+
+  const total = unique.reduce((sum, value) => sum + value, 0);
+  if (total > 0 && total <= 20 && unique.length > 1) {
+    return `${
+      Number.isInteger(total)
+        ? total
+        : total.toFixed(4).replace(/0+$/, "").replace(/\.$/, "")
+    }%`;
+  }
+  if (unique.length === 1) {
+    const value = unique[0];
+    return `${Number.isInteger(value) ? value : value.toString()}%`;
+  }
+  return null;
 }
 
 export function extractCurrentValueFromNarrative(
@@ -1080,6 +1151,7 @@ function currentStateScore(
   doc?: SourceDocument,
 ): number {
   return structuredCurrentValueScore(query, c, doc) ||
+    ordinanceCurrentValueScore(query, c, doc) ||
     narrativeCurrentValueScore(query, c, doc);
 }
 
@@ -1157,7 +1229,7 @@ async function fetchCurrentBudgetIndicatorRows(
   const { data, error: dbErr } = await db
     .from("budget_indicators")
     .select(
-      "*, documents!inner(id, url, title, filename, ingested_at, source_published_at, fiscal_year)",
+      "*, documents!inner(id, url, title, filename, ingested_at, budget_stage, source_published_at, fiscal_year)",
     )
     .not("value_actual", "is", null)
     .order("fiscal_year", { ascending: false })
@@ -1217,7 +1289,7 @@ async function fetchCurrentNarrativeValueRows(
   let request = db
     .from("narrative_chunks")
     .select(
-      "*, documents!inner(id, url, title, filename, ingested_at, source_published_at, fiscal_year)",
+      "*, documents!inner(id, url, title, filename, ingested_at, budget_stage, source_published_at, fiscal_year)",
     )
     .limit(100);
   if (terms.includes("transient") && terms.includes("occupancy")) {
@@ -1760,7 +1832,7 @@ async function fetchSourceDocuments(
   const { data, error: dbErr } = await db
     .from("documents")
     .select(
-      "id, url, title, filename, ingested_at, doc_type, source_published_at, fiscal_year",
+      "id, url, title, filename, ingested_at, doc_type, budget_stage, source_published_at, fiscal_year",
     )
     .in("id", documentIds);
 
@@ -2071,12 +2143,16 @@ export function deterministicCurrentValueDraft(
 
   const value = candidate.table === "budget_indicators"
     ? formatBudgetValue(candidate.row.value_actual, candidate.row.unit)
+    : candidate.table === "ordinance_provisions"
+    ? extractCurrentValueFromOrdinance(query, candidate)
     : extractCurrentValueFromNarrative(query, candidate);
   if (value === null) return null;
 
   const label = candidate.table === "budget_indicators"
     ? asText(candidate.row.program) ?? asText(candidate.row.indicator_name) ??
       "The current value"
+    : candidate.table === "ordinance_provisions"
+    ? asText(candidate.row.section_title) ?? "The current tax rate"
     : budgetIndicatorQueryTerms(query).join(" ") || "The current value";
   const claim = `${label} is ${value}`;
   const inlineCitation = `[chunk_id=${chunk.chunk_id}; page=${
@@ -2128,9 +2204,7 @@ export function resolveDeterministicCurrentValue(
         : undefined;
       return {
         candidate,
-        score: candidate.table === "budget_indicators"
-          ? structuredCurrentValueScore(query, candidate, doc)
-          : narrativeCurrentValueScore(query, candidate, doc),
+        score: currentStateScore(query, candidate, doc),
       };
     })
     .filter(({ score }) => score > 0)
@@ -2139,7 +2213,8 @@ export function resolveDeterministicCurrentValue(
     );
 
   const structured = scored.find(({ candidate, score }) =>
-    candidate.table === "budget_indicators" && score >= 2_000_000
+    (candidate.table === "budget_indicators" && score >= 2_000_000) ||
+    (candidate.table === "ordinance_provisions" && score >= 3_000_000)
   );
   if (structured) return structured.candidate;
 
