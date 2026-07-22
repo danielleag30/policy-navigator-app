@@ -2,6 +2,7 @@ export interface ClaimedPendingIngestion {
   id: string;
   url: string;
   doc_type: string;
+  budget_stage?: "advertised" | "adopted" | null;
   attempts: number | null;
   status: string;
 }

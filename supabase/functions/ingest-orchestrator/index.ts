@@ -37,6 +37,7 @@ import { extractAndPersist } from "../_shared/extractor.ts";
 import {
   computeDocumentDateMetadata,
   type DocumentDateDb,
+  effectiveDateForBudgetIndicator,
 } from "../_shared/document-date.ts";
 import {
   type AiSession,
@@ -242,6 +243,7 @@ async function pdfBranch(
   pendingIngestionId: string,
   sourceUrl: string,
   docType: string,
+  budgetStage: "advertised" | "adopted" | null,
   deadlineMs?: number,
 ): Promise<PdfBranchResult> {
   const doclingUrl = Deno.env.get("HF_SPACES_DOCLING_URL");
@@ -355,6 +357,7 @@ async function pdfBranch(
       id: uuidv7(),
       content_hash: hash,
       doc_type: docType,
+      budget_stage: budgetStage,
       url: sourceUrl,
       status: "unknown",
       ingested_at: new Date().toISOString(),
@@ -707,7 +710,7 @@ async function claimPendingIngestionById(
 ): Promise<ClaimNextResult> {
   let fetchQuery = db
     .from("pending_ingestions")
-    .select("id, url, doc_type, attempts, status")
+    .select("id, url, doc_type, budget_stage, attempts, status")
     .eq("id", pendingIngestionId)
     .eq("status", "pending");
 
@@ -764,7 +767,7 @@ async function claimPendingIngestionById(
   }
 
   const { data: claimed, error: processingErr } = await claimQuery
-    .select("id, url, doc_type, attempts, status")
+    .select("id, url, doc_type, budget_stage, attempts, status")
     .maybeSingle();
   if (processingErr) {
     throw new Error(
@@ -849,6 +852,7 @@ async function processClaimedIngestion(
         pendingIngestionId,
         row.url,
         row.doc_type,
+        row.budget_stage ?? null,
         softDeadlineMs,
       );
 
@@ -898,6 +902,24 @@ async function processClaimedIngestion(
           row.url,
         );
 
+      if (isBudgetDoc) {
+        const { effectiveDate, effectiveDateSource } =
+          effectiveDateForBudgetIndicator(row.budget_stage ?? null, fiscalYear);
+        const { error: indicatorDateErr } = await db
+          .from("budget_indicators")
+          .update({
+            effective_date: effectiveDate,
+            effective_date_source: effectiveDateSource,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("document_id", documentId);
+        if (indicatorDateErr) {
+          throw new Error(
+            `Budget indicator effective-date update failed: ${indicatorDateErr.message}`,
+          );
+        }
+      }
+
       // ── Task 2-6: finalize Document row ──────────────────────────────────
       // Only reached after all embedding functions above have succeeded
       // (none threw), guaranteeing every chunk-bearing row is non-null.
@@ -906,6 +928,7 @@ async function processClaimedIngestion(
         .update({
           docling_version: doclingVersion,
           status: "current",
+          budget_stage: row.budget_stage ?? null,
           source_published_at: sourcePublishedAt,
           fiscal_year: fiscalYear,
           updated_at: new Date().toISOString(),

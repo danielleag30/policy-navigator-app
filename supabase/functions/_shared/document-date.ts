@@ -80,7 +80,11 @@ const MONTH_ALT = Object.keys(MONTHS)
 
 // ── Date validation ────────────────────────────────────────────────────────
 
-function toIsoDateOrNull(year: number, month: number, day: number): string | null {
+function toIsoDateOrNull(
+  year: number,
+  month: number,
+  day: number,
+): string | null {
   if (year < 1985 || year > 2035) return null;
   if (month < 1 || month > 12) return null;
   if (day < 1 || day > 31) return null;
@@ -92,9 +96,9 @@ function toIsoDateOrNull(year: number, month: number, day: number): string | nul
   ) {
     return null; // rejects e.g. Feb 30
   }
-  return `${year.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${
-    day.toString().padStart(2, "0")
-  }`;
+  return `${year.toString().padStart(4, "0")}-${
+    month.toString().padStart(2, "0")
+  }-${day.toString().padStart(2, "0")}`;
 }
 
 // ── URL fiscal-year extraction (budget_pdf: 100% coverage, e.g. /fy2027/) ──
@@ -109,7 +113,10 @@ export function parseFiscalYearFromUrl(url: string): number | null {
 
 // ── URL date extraction ─────────────────────────────────────────────────────
 
-function nearestYearFolder(segments: string[], beforeIndex: number): number | null {
+function nearestYearFolder(
+  segments: string[],
+  beforeIndex: number,
+): number | null {
   for (let i = beforeIndex - 1; i >= 0; i--) {
     if (/^\d{4}$/.test(segments[i])) {
       const y = parseInt(segments[i], 10);
@@ -233,7 +240,9 @@ export function parseDateFromUrl(url: string): string | null {
 
 // ── Mode helpers (guard against one misextracted chunk skewing the result) ─
 
-export function pickBestDate(dates: Array<string | null | undefined>): string | null {
+export function pickBestDate(
+  dates: Array<string | null | undefined>,
+): string | null {
   const counts = new Map<string, number>();
   for (const d of dates) {
     if (!d) continue;
@@ -246,7 +255,11 @@ export function pickBestDate(dates: Array<string | null | undefined>): string | 
   if (counts.size === 0) return null;
   let best: string | null = null;
   let bestCount = -1;
-  for (const [iso, count] of [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+  for (
+    const [iso, count] of [...counts.entries()].sort((a, b) =>
+      a[0].localeCompare(b[0])
+    )
+  ) {
     if (count > bestCount) {
       best = iso;
       bestCount = count;
@@ -255,7 +268,9 @@ export function pickBestDate(dates: Array<string | null | undefined>): string | 
   return best;
 }
 
-export function pickBestFiscalYear(years: Array<number | null | undefined>): number | null {
+export function pickBestFiscalYear(
+  years: Array<number | null | undefined>,
+): number | null {
   const counts = new Map<number, number>();
   for (const y of years) {
     if (y === null || y === undefined) continue;
@@ -300,7 +315,9 @@ interface PolicyDecisionsTable {
       column: "document_id",
       value: string,
     ): PromiseLike<
-      QueryResult<Array<{ meeting_date: string | null; fiscal_year: number | null }>>
+      QueryResult<
+        Array<{ meeting_date: string | null; fiscal_year: number | null }>
+      >
     >;
   };
 }
@@ -313,6 +330,24 @@ export interface DocumentDateDb {
 export interface DocumentDateMetadata {
   sourcePublishedAt: string | null;
   fiscalYear: number | null;
+}
+
+export function effectiveDateForBudgetIndicator(
+  budgetStage: "advertised" | "adopted" | null | undefined,
+  fiscalYear: number | null | undefined,
+): { effectiveDate: string | null; effectiveDateSource: "default" | null } {
+  if (
+    budgetStage !== "adopted" || fiscalYear === null || fiscalYear === undefined
+  ) {
+    return { effectiveDate: null, effectiveDateSource: null };
+  }
+  if (!Number.isInteger(fiscalYear) || fiscalYear < 2000 || fiscalYear > 2050) {
+    return { effectiveDate: null, effectiveDateSource: null };
+  }
+  return {
+    effectiveDate: `${fiscalYear - 1}-07-01`,
+    effectiveDateSource: "default",
+  };
 }
 
 /**
@@ -345,15 +380,21 @@ export async function computeDocumentDateMetadata(
   let extractedFiscalYears: Array<number | null> = [];
 
   if (isBosType) {
-    const [{ data: vt, error: vtErr }, { data: pd, error: pdErr }] = await Promise.all([
-      db.from("vote_tallies").select("meeting_date").eq("document_id", documentId),
-      db.from("policy_decisions").select("meeting_date, fiscal_year").eq(
-        "document_id",
-        documentId,
-      ),
-    ]);
+    const [{ data: vt, error: vtErr }, { data: pd, error: pdErr }] =
+      await Promise.all([
+        db.from("vote_tallies").select("meeting_date").eq(
+          "document_id",
+          documentId,
+        ),
+        db.from("policy_decisions").select("meeting_date, fiscal_year").eq(
+          "document_id",
+          documentId,
+        ),
+      ]);
     if (vtErr) throw new Error(`vote_tallies lookup failed: ${vtErr.message}`);
-    if (pdErr) throw new Error(`policy_decisions lookup failed: ${pdErr.message}`);
+    if (pdErr) {
+      throw new Error(`policy_decisions lookup failed: ${pdErr.message}`);
+    }
     extractedDates = [
       ...(vt ?? []).map((r) => r.meeting_date),
       ...(pd ?? []).map((r) => r.meeting_date),
