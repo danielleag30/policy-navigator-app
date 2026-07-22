@@ -4,7 +4,24 @@
  * Run with:  deno test supabase/functions/query-pipeline/rrf_test.ts
  */
 
-// ── Inline the testable logic (no Deno/Supabase runtime deps) ────────────────
+Deno.env.set(
+  "SUPABASE_URL",
+  Deno.env.get("SUPABASE_URL") ?? "http://localhost:54321",
+);
+Deno.env.set(
+  "SUPABASE_SERVICE_ROLE_KEY",
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "test-service-role-key",
+);
+
+const {
+  deterministicCurrentValueDraft,
+  extractCurrentValueFromNarrative,
+  formatBudgetValue,
+  resolveDeterministicCurrentValue,
+  structuredCurrentValueScore,
+} = await import("./index.ts");
+
+// ── Local harness for RRF and response-assembly tests ────────────────────────
 
 const RRF_K = 60;
 const JUDGE_OUTPUT_LIMIT = 8;
@@ -49,6 +66,7 @@ interface SourceDocument {
   title: string | null;
   filename: string | null;
   ingested_at: string;
+  doc_type: string | null;
   source_published_at: string | null;
   fiscal_year: number | null;
 }
@@ -161,7 +179,12 @@ function isCurrentStateQuery(query: string): boolean {
 }
 
 function normalizedText(value: unknown): string {
-  return typeof value === "string" ? value.toLowerCase() : "";
+  return typeof value === "string"
+    ? value.toLowerCase().replace(/(?<=\d),(?=\d)/g, "").replace(
+      /[^a-z0-9]+/g,
+      " ",
+    ).trim()
+    : "";
 }
 
 function asNumber(value: unknown): number | null {
@@ -460,27 +483,7 @@ function currentStateScore(
   c: EnrichedCandidate,
   doc?: SourceDocument,
 ): number {
-  if (
-    c.table === "budget_indicators" && isRelevantTaxRateCandidate(query, c, doc)
-  ) {
-    const fiscalYear = asNumber(c.row.fiscal_year) ?? doc?.fiscal_year ?? 0;
-    const adoptedBoost = isAdoptedBudgetSource(c, doc) ? 100 : 0;
-    const draftPenalty = hasDraftQualifierForRateEvidence(c, doc) ? -100 : 0;
-    return 2_000_000 + adoptedBoost + draftPenalty + fiscalYear +
-      budgetIndicatorTiebreakScore(c, doc);
-  }
-
-  if (
-    c.table === "narrative_chunks" && isRelevantTaxRateCandidate(query, c, doc)
-  ) {
-    const recencyScore = parseDocumentRecencyScore(doc);
-    const adoptedBoost = isAdoptedBudgetSource(c, doc) ? 100 : 0;
-    const draftPenalty = hasDraftQualifierForRateEvidence(c, doc) ? -100 : 0;
-    return 500 + adoptedBoost + draftPenalty +
-      (recencyScore === null ? 0 : recencyScore);
-  }
-
-  return 0;
+  return structuredCurrentValueScore(query, c, doc);
 }
 
 function compareCurrentStateCandidates(
@@ -499,44 +502,6 @@ function compareCurrentStateCandidates(
     if (scoreDelta !== 0) return scoreDelta;
     return b.rrfScore - a.rrfScore;
   };
-}
-
-function decisiveCurrentBudgetWinnerForTest(
-  query: string,
-  candidates: EnrichedCandidate[],
-  documents: Map<string, SourceDocument>,
-): EnrichedCandidate | null {
-  if (!isCurrentStateQuery(query)) return null;
-
-  const scored = candidates
-    .filter((c) => c.table === "budget_indicators")
-    .map((candidate) => {
-      const doc = typeof candidate.row.document_id === "string"
-        ? documents.get(candidate.row.document_id)
-        : undefined;
-      return {
-        candidate,
-        score: currentStateScore(query, candidate, doc),
-      };
-    })
-    .filter(({ score }) => score >= 2_000_000)
-    .sort((a, b) =>
-      b.score - a.score || b.candidate.rrfScore - a.candidate.rrfScore
-    );
-
-  if (scored.length === 0) return null;
-  const [top, runnerUp] = scored;
-  if (runnerUp && top.score - runnerUp.score < 100) return null;
-  return top.candidate;
-}
-
-function pinCurrentBudgetWinnerForTest(
-  filteredCandidates: EnrichedCandidate[],
-  pinned: EnrichedCandidate | null,
-): EnrichedCandidate[] {
-  if (!pinned) return filteredCandidates;
-  const withoutPinned = filteredCandidates.filter((c) => c.key !== pinned.key);
-  return [pinned, ...withoutPinned].slice(0, JUDGE_OUTPUT_LIMIT);
 }
 
 function rerankCurrentStateCandidatesForTest(
@@ -1824,7 +1789,7 @@ Deno.test("current-state budget indicator lookup rejects non-rate values from ra
   }
 });
 
-Deno.test("current-state budget winner is pinned when Temporal Judge omits it", () => {
+Deno.test("current-value resolver selects adopted structured row before Temporal Judge", () => {
   const query = "what is the current real estate tax rate";
   const adoptedDocId = "00000000-0000-0000-0000-000000000401";
   const advertisedDocId = "00000000-0000-0000-0000-000000000402";
@@ -1882,25 +1847,16 @@ Deno.test("current-state budget winner is pinned when Temporal Judge omits it", 
     }],
   ]);
 
-  const pinned = decisiveCurrentBudgetWinnerForTest(
+  const resolved = resolveDeterministicCurrentValue(
     query,
     [staleNarrative, other, adoptedWinner],
     documents,
   );
-  const filtered = pinCurrentBudgetWinnerForTest([staleNarrative], pinned);
 
-  if (pinned?.id !== "adopted-winner") {
+  if (resolved?.id !== "adopted-winner") {
     throw new Error(
-      `expected adopted winner to be decisive, got ${pinned?.id}`,
+      `expected adopted winner to resolve directly, got ${resolved?.id}`,
     );
-  }
-  if (filtered[0]?.id !== "adopted-winner") {
-    throw new Error(`expected pinned winner first, got ${filtered[0]?.id}`);
-  }
-  if (
-    filtered.some((candidate) => candidate.id === "adopted-winner") === false
-  ) {
-    throw new Error("pinned winner was not restored after judge omission");
   }
 });
 
@@ -1954,20 +1910,25 @@ Deno.test("current-state narrative recency selects real transient occupancy tax 
     }],
   ]);
 
-  const ranked = rerankCurrentStateCandidatesForTest(
+  const resolved = resolveDeterministicCurrentValue(
     "what is the current transient occupancy tax rate",
     [staleTot, currentTot],
     documents,
   );
 
-  if (ranked[0].id !== "019f4747-ee4b-7089-bcaf-4498bef4c586") {
+  if (resolved?.id !== "019f4747-ee4b-7089-bcaf-4498bef4c586") {
     throw new Error(
-      `expected real current TOT narrative chunk first, got ${ranked[0].id}`,
+      `expected real current TOT narrative chunk first, got ${resolved?.id}`,
     );
   }
-  if (!String(ranked[0].row.content).includes("6 percent")) {
+  if (
+    extractCurrentValueFromNarrative(
+      "what is the current transient occupancy tax rate",
+      resolved,
+    ) !== "6 percent"
+  ) {
     throw new Error(
-      "expected selected TOT narrative chunk to support 6 percent",
+      "expected selected TOT narrative chunk to extract 6 percent",
     );
   }
 });
@@ -2075,22 +2036,440 @@ Deno.test("current-state budget indicator lookup selects current personal proper
     }],
   ]);
 
-  const selected = selectedCurrentBudgetIndicatorsForTest(
+  const resolved = resolveDeterministicCurrentValue(
     "what is the current personal property tax rate",
     [stalePersonalProperty, realEstate, currentPersonalProperty],
     documents,
   );
 
-  if (selected[0]?.id !== "personal-property-fy2027-adopted") {
+  if (resolved?.id !== "personal-property-fy2027-adopted") {
     throw new Error(
-      `expected current personal property first, got ${selected[0]?.id}`,
+      `expected current personal property first, got ${resolved?.id}`,
     );
   }
-  if (selected.some((candidate) => candidate.id === "personal-property-1993")) {
-    throw new Error("selected stale 1993 personal property tax row");
+});
+
+Deno.test("current-value resolver handles known current tax cases as one suite", () => {
+  const adoptedDocId = "00000000-0000-0000-0000-000000000601";
+  const narrativeDocId = "00000000-0000-0000-0000-000000000602";
+  const documents = new Map<string, SourceDocument>([
+    [adoptedDocId, {
+      id: adoptedDocId,
+      url: "https://example.test/fy2027/adopted/fy2027-adopted-package.pdf",
+      title: "FY 2027 Adopted Package",
+      filename: "fy2027-adopted-package.pdf",
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: null,
+      fiscal_year: null,
+    }],
+    [narrativeDocId, {
+      id: narrativeDocId,
+      url:
+        "https://example.test/fy2027/adopted/general-fund-revenue-overview.pdf",
+      title: "FY 2027 Adopted General Fund Revenue Overview",
+      filename: "General Fund Revenue Overview.pdf",
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: null,
+      fiscal_year: null,
+    }],
+  ]);
+
+  const cases = [
+    {
+      query: "what is the current real estate tax rate",
+      expectedId: "real-estate-current",
+      expectedValue: 1.12,
+    },
+    {
+      query: "what is the current personal property tax rate",
+      expectedId: "personal-property-current",
+      expectedValue: 4.57,
+    },
+    {
+      query: "what is the current transient occupancy tax rate",
+      expectedId: "tot-current",
+      expectedValue: "6 percent",
+    },
+  ];
+
+  const candidates = [
+    testCandidate("budget_indicators", "real-estate-current", {
+      document_id: adoptedDocId,
+      fiscal_year: 2027,
+      program: "Real Estate Tax",
+      indicator_name: "Real Estate Tax rate",
+      value_actual: 1.12,
+      unit: "dollars per $100 of assessed value",
+      raw_extracted_text:
+        "The Real Estate Tax rate to be approved by the Board will decrease from $1.1225 per $100 of assessed value to $1.12 per $100 of assessed value.",
+    }),
+    testCandidate("budget_indicators", "personal-property-current", {
+      document_id: adoptedDocId,
+      fiscal_year: 2027,
+      program: "Personal Property Tax",
+      indicator_name: "Personal Property Tax rate",
+      value_actual: 4.57,
+      unit: "dollars per $100 of assessed value",
+      raw_extracted_text:
+        "The Personal Property Tax rate will remain at $4.57 per $100 of assessed value for most classes of personal property.",
+    }),
+    testCandidate("narrative_chunks", "tot-current", {
+      document_id: narrativeDocId,
+      content:
+        "In FY 2026, TOT receipts are projected to increase 48.3 percent, primarily associated with a 2-percentage point increase in the FY 2026 TOT tax rate from 4 percent to 6 percent approved by the Board of Supervisors. Transient Occupancy Taxes are charged as part of a hotel bill.",
+    }),
+  ];
+
+  for (const testCase of cases) {
+    const resolved = resolveDeterministicCurrentValue(
+      testCase.query,
+      candidates,
+      documents,
+    );
+    if (resolved?.id !== testCase.expectedId) {
+      throw new Error(
+        `${testCase.query}: expected ${testCase.expectedId}, got ${resolved?.id}`,
+      );
+    }
+    const value = resolved.table === "budget_indicators"
+      ? resolved.row.value_actual
+      : extractCurrentValueFromNarrative(testCase.query, resolved);
+    if (value !== testCase.expectedValue) {
+      throw new Error(
+        `${testCase.query}: expected ${testCase.expectedValue}, got ${value}`,
+      );
+    }
   }
-  if (selected.some((candidate) => candidate.id === "real-estate")) {
-    throw new Error("personal property query selected real estate tax row");
+});
+
+Deno.test("formatBudgetValue formats structured current-value facts", () => {
+  if (
+    formatBudgetValue(1.12, "dollars per $100 of assessed value") !==
+      "$1.12 per $100 of assessed value"
+  ) {
+    throw new Error("expected per-$100 dollar rate formatting");
+  }
+  if (formatBudgetValue(6, "percent") !== "6 percent") {
+    throw new Error("expected percent formatting");
+  }
+  if (
+    formatBudgetValue("4.57", "dollars per $100 assessed value") !==
+      "$4.57 per $100 assessed value"
+  ) {
+    throw new Error("expected string numeric dollar-rate formatting");
+  }
+  if (formatBudgetValue(null, "dollars") !== null) {
+    throw new Error("expected null for missing structured value");
+  }
+});
+
+Deno.test("deterministicCurrentValueDraft builds structured and narrative answers with citations", () => {
+  const structuredDocId = "00000000-0000-0000-0000-000000000611";
+  const narrativeDocId = "00000000-0000-0000-0000-000000000612";
+  const documents = new Map<string, SourceDocument>([
+    [structuredDocId, {
+      id: structuredDocId,
+      url: "https://example.test/fy2027/adopted/rates.pdf",
+      title: "FY 2027 Adopted Rates",
+      filename: "rates.pdf",
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: null,
+      fiscal_year: 2027,
+    }],
+    [narrativeDocId, {
+      id: narrativeDocId,
+      url: "https://example.test/fy2027/adopted/revenue.pdf",
+      title: "FY 2027 Adopted Revenue",
+      filename: "revenue.pdf",
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: null,
+      fiscal_year: 2027,
+    }],
+  ]);
+  const structured = testCandidate("budget_indicators", "real-estate-draft", {
+    document_id: structuredDocId,
+    page_number_start: 12,
+    fiscal_year: 2027,
+    program: "Real Estate Tax",
+    indicator_name: "Real Estate Tax rate",
+    value_actual: 1.12,
+    unit: "dollars per $100 of assessed value",
+    raw_extracted_text:
+      "The FY 2027 Adopted Real Estate Tax rate is $1.12 per $100 of assessed value.",
+  });
+  const narrative = testCandidate("narrative_chunks", "tot-draft", {
+    document_id: narrativeDocId,
+    page_number_start: 8,
+    content:
+      "In FY 2026, the TOT tax rate increased from 4 percent to 6 percent approved by the Board of Supervisors. Transient Occupancy Taxes are charged as part of a hotel bill.",
+  });
+
+  const structuredDraft = deterministicCurrentValueDraft(
+    "what is the current real estate tax rate",
+    structured,
+    documents,
+  );
+  if (
+    !structuredDraft?.answer.includes(
+      "Real Estate Tax is $1.12 per $100 of assessed value.",
+    )
+  ) {
+    throw new Error(`unexpected structured draft: ${structuredDraft?.answer}`);
+  }
+  if (structuredDraft.answer.includes("source-date review")) {
+    throw new Error(
+      "structured deterministic draft should not carry narrative source-date caveat",
+    );
+  }
+  if (structuredDraft.citations[0]?.source_title !== "FY 2027 Adopted Rates") {
+    throw new Error(
+      "structured draft citation did not use source document title",
+    );
+  }
+
+  const narrativeDraft = deterministicCurrentValueDraft(
+    "what is the current transient occupancy tax rate",
+    narrative,
+    documents,
+  );
+  if (
+    !narrativeDraft?.answer.includes("transient occupancy tax is 6 percent.")
+  ) {
+    throw new Error(`unexpected narrative draft: ${narrativeDraft?.answer}`);
+  }
+  if (!narrativeDraft.answer.includes("source-date review")) {
+    throw new Error(
+      "narrative deterministic draft must carry source-date caveat",
+    );
+  }
+  if (narrativeDraft.citations[0]?.page_number !== 8) {
+    throw new Error("narrative draft citation did not preserve page number");
+  }
+});
+
+Deno.test("narrative current-value extraction rejects proposed future rates", () => {
+  const proposed = testCandidate("narrative_chunks", "tot-proposed", {
+    content:
+      "Staff discussed a proposal to raise the transient occupancy tax from 6 percent to 8 percent; the FY2028 advertised plan to be approved after public hearings.",
+  });
+
+  const extracted = extractCurrentValueFromNarrative(
+    "what is the current transient occupancy tax rate",
+    proposed,
+  );
+  if (extracted !== null) {
+    throw new Error(
+      `expected proposed future rate to be rejected, got ${extracted}`,
+    );
+  }
+});
+
+Deno.test("narrative current-value extraction does not bridge historical from-to pairs to unrelated current language", () => {
+  const historical = testCandidate(
+    "narrative_chunks",
+    "tot-historical-bridge",
+    {
+      content:
+        "In 2015 the rate went from 5 percent to 6 percent. The county currently levies a separate meals tax rate.",
+    },
+  );
+
+  const extracted = extractCurrentValueFromNarrative(
+    "what is the current transient occupancy tax rate",
+    historical,
+  );
+  if (extracted !== null) {
+    throw new Error(
+      `expected unrelated current language to be rejected, got ${extracted}`,
+    );
+  }
+});
+
+Deno.test("narrative current-value extraction stays scoped to the query subject", () => {
+  const mixed = testCandidate("narrative_chunks", "mixed-rates", {
+    content:
+      "The current real estate tax rate is $1.12 per $100 of assessed value. The stormwater services rate remains $0.0325 per $100 of assessed value under the adopted budget.",
+  });
+
+  const extracted = extractCurrentValueFromNarrative(
+    "what is the current stormwater rate",
+    mixed,
+  );
+  if (extracted !== "$0.0325 per $100 of assessed value") {
+    throw new Error(`expected stormwater rate, got ${extracted}`);
+  }
+});
+
+Deno.test("current-value resolver handles sampled adopted budget indicator rows", () => {
+  const adoptedDocId = "00000000-0000-0000-0000-000000000701";
+  const documents = new Map<string, SourceDocument>([
+    [adoptedDocId, {
+      id: adoptedDocId,
+      url:
+        "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/fy2027/adopted/overview/Summary%20of%20Non-General%20Fund%20Tax%20Rates.pdf",
+      title: "Summary of Non-General Fund Tax Rates",
+      filename: "Summary of Non-General Fund Tax Rates.pdf",
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: null,
+      fiscal_year: null,
+    }],
+  ]);
+  const sharedText =
+    "SUMMARY OF SELECTED NON-GENERAL FUND TAX RATES FY 2018 - FY 2027. FY 2027 Adopted values include Sewer Charge (per 1,000 gal.) $9.88, Leaf Collection (Fund 40130) $0.019, Refuse Disposal per ton (Fund 40150) $98, Commercial & Industrial Tax for Transportation Projects (Fund 40010) $0.125, and Stormwater Services (Fund 40100) $0.0325 per $100 of assessed value.";
+  const candidates = [
+    testCandidate("budget_indicators", "commercial-industrial-tax", {
+      document_id: adoptedDocId,
+      fiscal_year: 2027,
+      program:
+        "Commercial & Industrial Tax for Transportation Projects (Fund 40010)",
+      indicator_name: "Commercial & Industrial Tax for Transportation Projects",
+      value_actual: 0.125,
+      unit: "dollars per $100 of assessed value",
+      raw_extracted_text: sharedText,
+    }),
+    testCandidate("budget_indicators", "leaf-collection", {
+      document_id: adoptedDocId,
+      fiscal_year: 2027,
+      program: "Leaf Collection (Fund 40130)",
+      indicator_name: "Leaf Collection",
+      value_actual: 0.019,
+      unit: "dollars per $100 of assessed value",
+      raw_extracted_text: sharedText,
+    }),
+    testCandidate("budget_indicators", "refuse-disposal", {
+      document_id: adoptedDocId,
+      fiscal_year: 2027,
+      program: "Refuse Disposal per ton (Fund 40150)",
+      indicator_name: "Refuse Disposal per ton",
+      value_actual: 98,
+      unit: "dollars",
+      raw_extracted_text: sharedText,
+    }),
+    testCandidate("budget_indicators", "stormwater-rate", {
+      document_id: adoptedDocId,
+      fiscal_year: 2027,
+      program: "Stormwater Program",
+      indicator_name: "Stormwater rate per $100 of assessed value",
+      value_actual: 0.0325,
+      unit: "dollars",
+      raw_extracted_text:
+        "The FY 2027 rate remains the same as the FY 2026 Adopted Budget Plan level of $0.0325 per $100 of assessed value.",
+    }),
+    testCandidate("budget_indicators", "sewer-service-charge", {
+      document_id: adoptedDocId,
+      fiscal_year: 2027,
+      program: "Sewer Service Charges",
+      indicator_name: "Sewer Service Charge Per 1,000 gallons of water",
+      value_actual: 9.88,
+      unit: "dollars",
+      raw_extracted_text:
+        "The Sewer Service Charge increased from $9.33 to $9.88 per 1,000 gallons of water consumed.",
+    }),
+  ];
+
+  const cases = [
+    [
+      "what is the current commercial industrial tax for transportation projects",
+      "commercial-industrial-tax",
+      0.125,
+    ],
+    ["what is the current leaf collection rate", "leaf-collection", 0.019],
+    ["what is the current refuse disposal per ton rate", "refuse-disposal", 98],
+    ["what is the current stormwater rate", "stormwater-rate", 0.0325],
+    [
+      "what is the current sewer service charge per 1000 gallons",
+      "sewer-service-charge",
+      9.88,
+    ],
+  ] as const;
+
+  for (const [query, expectedId, expectedValue] of cases) {
+    const resolved = resolveDeterministicCurrentValue(
+      query,
+      candidates,
+      documents,
+    );
+    if (resolved?.id !== expectedId) {
+      throw new Error(`${query}: expected ${expectedId}, got ${resolved?.id}`);
+    }
+    if (resolved.row.value_actual !== expectedValue) {
+      throw new Error(
+        `${query}: expected ${expectedValue}, got ${resolved.row.value_actual}`,
+      );
+    }
+  }
+});
+
+Deno.test("current-value resolver ignores future-year projections for current questions", () => {
+  const docId = "00000000-0000-0000-0000-000000000801";
+  const documents = new Map<string, SourceDocument>([
+    [docId, {
+      id: docId,
+      url: "https://example.test/fy2027/adopted/volume2/69000.pdf",
+      title: "FY 2027 Adopted Wastewater Overview",
+      filename: "69000.pdf",
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: null,
+      fiscal_year: null,
+    }],
+  ]);
+  const current = testCandidate("budget_indicators", "sewer-fy2027", {
+    document_id: docId,
+    fiscal_year: 2027,
+    program: "Sewer Service",
+    indicator_name: "Sewer Service Charge Per 1,000 gallons of water",
+    value_actual: 9.88,
+    unit: "dollars",
+    raw_extracted_text:
+      "2027 $9.88 2028 $10.78 2029 $11.75 2030 $12.81 2031 $13.69.",
+  });
+  const future = testCandidate("budget_indicators", "sewer-fy2031", {
+    document_id: docId,
+    fiscal_year: 2031,
+    program: "Sewer Service",
+    indicator_name: "Sewer Service Charge Per 1,000 gallons of water",
+    value_actual: 13.69,
+    unit: "dollars",
+    raw_extracted_text:
+      "2027 $9.88 2028 $10.78 2029 $11.75 2030 $12.81 2031 $13.69.",
+  });
+  const priorAdopted = testCandidate("budget_indicators", "sewer-fy2026", {
+    document_id: docId,
+    fiscal_year: 2026,
+    program: "Sewer Service",
+    indicator_name: "Sewer Service Charge Per 1,000 gallons of water",
+    value_actual: 9.33,
+    unit: "dollars",
+    raw_extracted_text:
+      "The FY 2026 Adopted Sewer Service Charge was $9.33 per 1,000 gallons of water consumed.",
+  });
+
+  const resolved = resolveDeterministicCurrentValue(
+    "what is the current sewer service charge per 1000 gallons",
+    [future, current],
+    documents,
+  );
+
+  if (resolved?.id !== "sewer-fy2027") {
+    throw new Error(`expected FY2027 current row, got ${resolved?.id}`);
+  }
+
+  const rolloverResolved = resolveDeterministicCurrentValue(
+    "what is the current sewer service charge per 1000 gallons",
+    [future, priorAdopted],
+    documents,
+  );
+
+  if (rolloverResolved?.id !== "sewer-fy2026") {
+    throw new Error(
+      `expected latest adopted FY at or before current FY, got ${rolloverResolved?.id}`,
+    );
   }
 });
 
