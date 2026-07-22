@@ -83,7 +83,7 @@ Deno.test("real resolver: current ordinance_provisions wins transient occupancy 
     is_current: true,
     effective_date: "2026-04-28",
     content:
-      "Transient occupancy tax levy. There is imposed a tax of 3 percent, plus an additional 2 percent, plus an additional 1 percent.",
+      "Transient occupancy tax levy. There is imposed a tax equivalent to three percent, plus an additional two percent, plus an additional one percent.",
   });
 
   const query = "what is the current transient occupancy tax rate";
@@ -111,7 +111,10 @@ Deno.test("real resolver: current ordinance_provisions wins transient occupancy 
     ]),
   );
 
-  assert(score >= 3_000_000, "TOT ordinance must receive deterministic ordinance score");
+  assert(
+    score >= 3_000_000,
+    "TOT ordinance must receive deterministic ordinance score",
+  );
   assertEquals(extractCurrentValueFromOrdinance(query, tot), "6%");
   assertEquals(winner?.id, "tot-current");
 });
@@ -124,7 +127,7 @@ Deno.test("real resolver: TOT ordinance scores 0 for real estate and personal pr
     is_current: true,
     effective_date: "2026-04-28",
     content:
-      "Transient occupancy tax levy. There is imposed a tax of 3 percent, plus an additional 2 percent, plus an additional 1 percent.",
+      "Transient occupancy tax levy. There is imposed a tax equivalent to three percent, plus an additional two percent, plus an additional one percent.",
   });
   const doc = sourceDocument("municode", {
     doc_type: "municode_api",
@@ -133,11 +136,19 @@ Deno.test("real resolver: TOT ordinance scores 0 for real estate and personal pr
   });
 
   assertEquals(
-    ordinanceCurrentValueScore("what is the current real estate tax rate", tot, doc),
+    ordinanceCurrentValueScore(
+      "what is the current real estate tax rate",
+      tot,
+      doc,
+    ),
     0,
   );
   assertEquals(
-    ordinanceCurrentValueScore("what is the current personal property tax rate", tot, doc),
+    ordinanceCurrentValueScore(
+      "what is the current personal property tax rate",
+      tot,
+      doc,
+    ),
     0,
   );
 });
@@ -150,7 +161,8 @@ Deno.test("real resolver: adopted budget_stage outranks advertised budget indica
     indicator_name: "Real Estate Tax rate",
     value_actual: 1.1225,
     unit: "per $100 of assessed value",
-    raw_extracted_text: "Real Estate Tax rate 1.1225 per $100 of assessed value",
+    raw_extracted_text:
+      "Real Estate Tax rate 1.1225 per $100 of assessed value",
   }, 0.9);
   const adopted = candidate("budget_indicators", "adopted-rate", {
     document_id: "adopted-doc",
@@ -159,7 +171,8 @@ Deno.test("real resolver: adopted budget_stage outranks advertised budget indica
     indicator_name: "Real Estate Tax rate",
     value_actual: 1.12,
     unit: "per $100 of assessed value",
-    raw_extracted_text: "Adopted Real Estate Tax rate 1.1200 per $100 of assessed value",
+    raw_extracted_text:
+      "Adopted Real Estate Tax rate 1.1200 per $100 of assessed value",
   }, 0.1);
   const docs = new Map<string, SourceDocument>([
     [

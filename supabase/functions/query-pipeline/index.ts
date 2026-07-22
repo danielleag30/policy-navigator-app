@@ -995,6 +995,24 @@ function hasFutureOrProposalSignal(text: string): boolean {
     .test(text);
 }
 
+function parsePercentValue(raw: string): number | null {
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric)) return numeric;
+  const wordValues: Record<string, number> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+  };
+  return wordValues[raw.toLowerCase()] ?? null;
+}
+
 export function extractCurrentValueFromOrdinance(
   query: string,
   c: EnrichedCandidate,
@@ -1019,10 +1037,14 @@ export function extractCurrentValueFromOrdinance(
   }
 
   const percentages = [
-    ...text.matchAll(/\b(\d+(?:\.\d+)?)\s*(?:%|percent)\b/gi),
+    ...text.matchAll(
+      /\b(\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:%|percent)\b/gi,
+    ),
   ]
-    .map((match) => Number(match[1]))
-    .filter((value) => Number.isFinite(value) && value > 0 && value <= 100);
+    .map((match) => parsePercentValue(match[1]))
+    .filter((value): value is number =>
+      value !== null && Number.isFinite(value) && value > 0 && value <= 100
+    );
   const unique = [...new Set(percentages)];
   if (unique.length === 0) return null;
 
@@ -1219,6 +1241,23 @@ function narrativeCandidate(row: Record<string, unknown>): EnrichedCandidate {
   };
 }
 
+function ordinanceCandidate(row: Record<string, unknown>): EnrichedCandidate {
+  const id = row.id as string;
+  return {
+    key: `ordinance_provisions:${id}`,
+    table: "ordinance_provisions",
+    id,
+    row,
+    rankBm25: null,
+    rankVector: null,
+    rrfScore: Number.MAX_SAFE_INTEGER,
+    ancestors: [],
+    municode_node_id: asText(row.municode_node_id) ?? undefined,
+    superseded_date: null,
+    hasAmendmentHistory: false,
+  };
+}
+
 async function fetchCurrentBudgetIndicatorRows(
   query: string,
 ): Promise<EnrichedCandidate[]> {
@@ -1328,17 +1367,58 @@ async function fetchCurrentNarrativeValueRows(
     });
 }
 
+async function fetchCurrentOrdinanceValueRows(
+  query: string,
+): Promise<EnrichedCandidate[]> {
+  if (
+    !isCurrentStateQuery(query) || isHistoricalQuery(query) ||
+    !/\btax\b/i.test(query) ||
+    !/\b(rate|levy|occupancy|tot)\b/i.test(query)
+  ) {
+    return [];
+  }
+
+  const terms = budgetIndicatorQueryTerms(query);
+  if (!(terms.includes("transient") && terms.includes("occupancy"))) {
+    return [];
+  }
+
+  const { data, error: dbErr } = await db
+    .from("ordinance_provisions")
+    .select("*")
+    .eq("municode_node_id", "FACOCO_CH4TAFI_ART13TROCTA_S4-13-2LEAMTA")
+    .eq("is_current", true)
+    .limit(1);
+
+  if (dbErr) {
+    console.error("current ordinance value lookup error:", dbErr.message);
+    return [];
+  }
+
+  return ((data ?? []) as Record<string, unknown>[])
+    .map(ordinanceCandidate)
+    .filter((candidate) => ordinanceCurrentValueScore(query, candidate) > 0);
+}
+
 async function prependCurrentBudgetIndicators(
   query: string,
   candidates: EnrichedCandidate[],
 ): Promise<EnrichedCandidate[]> {
+  const currentOrdinances = await fetchCurrentOrdinanceValueRows(query);
   const currentIndicators = await fetchCurrentBudgetIndicatorRows(query);
   const currentNarratives = await fetchCurrentNarrativeValueRows(query);
-  if (currentIndicators.length === 0 && currentNarratives.length === 0) {
+  if (
+    currentOrdinances.length === 0 && currentIndicators.length === 0 &&
+    currentNarratives.length === 0
+  ) {
     return candidates;
   }
 
-  const anchors = [...currentIndicators, ...currentNarratives];
+  const anchors = [
+    ...currentOrdinances,
+    ...currentIndicators,
+    ...currentNarratives,
+  ];
   const seen = new Set(anchors.map((c) => c.key));
   return [
     ...anchors,
