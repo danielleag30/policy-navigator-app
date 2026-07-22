@@ -936,6 +936,27 @@ function decisiveCurrentBudgetWinner(
   return top.candidate;
 }
 
+function matchesBudgetIndicatorStructuredSubject(
+  query: string,
+  c: EnrichedCandidate,
+): boolean {
+  const terms = budgetIndicatorQueryTerms(query);
+  if (terms.length === 0) return true;
+
+  const structuredCorpus = [
+    c.row.program,
+    c.row.indicator_name,
+    c.row.department,
+  ].map(normalizedText).join(" ");
+  const hasTotSynonym = /\btot\b/.test(structuredCorpus) &&
+    terms.includes("transient") && terms.includes("occupancy");
+
+  return terms.every((term) =>
+    structuredCorpus.includes(term) ||
+    (hasTotSynonym && (term === "transient" || term === "occupancy"))
+  );
+}
+
 function directCurrentBudgetIndicatorCandidate(
   query: string,
   candidates: EnrichedCandidate[],
@@ -943,17 +964,19 @@ function directCurrentBudgetIndicatorCandidate(
 ): EnrichedCandidate | null {
   if (!isCurrentStateQuery(query) || isHistoricalQuery(query)) return null;
 
-  const top = candidates[0];
-  if (!top || top.table !== "budget_indicators") return null;
+  return candidates.find((candidate) => {
+    if (candidate.table !== "budget_indicators") return false;
+    if (!matchesBudgetIndicatorStructuredSubject(query, candidate)) {
+      return false;
+    }
 
-  const doc = typeof top.row.document_id === "string"
-    ? documents.get(top.row.document_id)
-    : undefined;
-  if (!isAdoptedBudgetSource(top, doc)) return null;
-  if (!isRelevantTaxRateCandidate(query, top, doc)) return null;
-  if (currentStateScore(query, top, doc) < 2_000_000) return null;
-
-  return top;
+    const doc = typeof candidate.row.document_id === "string"
+      ? documents.get(candidate.row.document_id)
+      : undefined;
+    if (!isAdoptedBudgetSource(candidate, doc)) return false;
+    if (!isRelevantTaxRateCandidate(query, candidate, doc)) return false;
+    return currentStateScore(query, candidate, doc) >= 2_000_000;
+  }) ?? null;
 }
 
 function pinCurrentBudgetWinner(
