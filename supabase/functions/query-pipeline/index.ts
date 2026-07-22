@@ -936,6 +936,26 @@ function decisiveCurrentBudgetWinner(
   return top.candidate;
 }
 
+function directCurrentBudgetIndicatorCandidate(
+  query: string,
+  candidates: EnrichedCandidate[],
+  documents: Map<string, SourceDocument>,
+): EnrichedCandidate | null {
+  if (!isCurrentStateQuery(query) || isHistoricalQuery(query)) return null;
+
+  const top = candidates[0];
+  if (!top || top.table !== "budget_indicators") return null;
+
+  const doc = typeof top.row.document_id === "string"
+    ? documents.get(top.row.document_id)
+    : undefined;
+  if (!isAdoptedBudgetSource(top, doc)) return null;
+  if (!isRelevantTaxRateCandidate(query, top, doc)) return null;
+  if (currentStateScore(query, top, doc) < 2_000_000) return null;
+
+  return top;
+}
+
 function pinCurrentBudgetWinner(
   filteredCandidates: EnrichedCandidate[],
   pinned: EnrichedCandidate | null,
@@ -1805,6 +1825,79 @@ function refusalDraft(): AnswerDraftResult {
     citations: [],
     citationMap: {},
     chunkText: {},
+  };
+}
+
+function formatBudgetValue(value: unknown, unit: unknown): string | null {
+  const unitText = typeof unit === "string" ? unit.trim() : "";
+  const numericValue = asNumber(value);
+  const textValue = typeof value === "string" && value.trim() !== ""
+    ? value.trim()
+    : null;
+
+  if (numericValue === null && textValue === null) return null;
+
+  const valueText = numericValue === null
+    ? textValue!
+    : Number.isInteger(numericValue)
+    ? String(numericValue)
+    : String(numericValue);
+  const perHundredUnit = unitText.replace(/^dollars?\s+/i, "");
+  const prefixedValue = /\bper\s+\$?100\b/i.test(unitText)
+    ? `$${valueText}`
+    : valueText;
+
+  return perHundredUnit ? `${prefixedValue} ${perHundredUnit}` : prefixedValue;
+}
+
+function directBudgetIndicatorDraft(
+  candidate: EnrichedCandidate,
+  documents: Map<string, SourceDocument>,
+): AnswerDraftResult | null {
+  const [chunk] = buildAnnotatedDrafterChunks([candidate], documents);
+  if (!chunk) return null;
+
+  const value = formatBudgetValue(
+    candidate.row.value_actual,
+    candidate.row.unit,
+  );
+  if (value === null) return null;
+
+  const label = asText(candidate.row.program) ??
+    asText(candidate.row.indicator_name) ??
+    "The current tax rate";
+  const claim = `${label} is ${value}`;
+  const inlineCitation = `[chunk_id=${chunk.chunk_id}; page=${
+    chunk.page === null ? "null" : chunk.page
+  }; bbox=${formatUnknown(chunk.bbox)}]`;
+
+  const citationMap: Record<string, CitationMapEntry> = {
+    [claim]: {
+      chunk_id: chunk.chunk_id,
+      page: chunk.page,
+      bbox: chunk.bbox,
+    },
+  };
+  const citation: CitationChunk = {
+    chunk_id: chunk.chunk_id,
+    source_url: chunk.source_url,
+    source_title: chunk.source_title,
+    page_number: chunk.page,
+    bbox: chunk.bbox,
+    retrieved_at: chunk.source_ingested_at,
+    formatted: formatCitation(
+      chunk.source_title,
+      chunk.page,
+      chunk.source_ingested_at,
+    ),
+    rank: 1,
+  };
+
+  return {
+    answer: `${claim}. ${inlineCitation}`,
+    citations: [citation],
+    citationMap,
+    chunkText: { [chunk.chunk_id]: chunk.text },
   };
 }
 
@@ -2725,6 +2818,36 @@ Deno.serve(async (req: Request): Promise<Response> => {
     currentAwareCandidates,
     currentAwareDocuments,
   );
+  const directCurrentBudgetCandidate = directCurrentBudgetIndicatorCandidate(
+    query,
+    currentAwareCandidates,
+    currentAwareDocuments,
+  );
+
+  if (directCurrentBudgetCandidate !== null) {
+    const directDraft = directBudgetIndicatorDraft(
+      directCurrentBudgetCandidate,
+      currentAwareDocuments,
+    );
+    if (directDraft !== null) {
+      const responseData = assembleQueryResponse(
+        directDraft,
+        false,
+        null,
+        null,
+        false,
+        [],
+      );
+      return await returnLoggedSuccess(responseData, startedAt, {
+        ip,
+        queryText: query,
+        llmCalls,
+        temporalFlag: false,
+        verifierFlag: false,
+        incompleteSearch: false,
+      });
+    }
+  }
 
   const pendingChanges = await fetchPendingChanges(currentAwareCandidates);
 

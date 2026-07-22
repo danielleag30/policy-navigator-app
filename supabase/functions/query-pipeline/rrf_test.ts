@@ -530,6 +530,26 @@ function decisiveCurrentBudgetWinnerForTest(
   return top.candidate;
 }
 
+function directCurrentBudgetIndicatorCandidateForTest(
+  query: string,
+  candidates: EnrichedCandidate[],
+  documents: Map<string, SourceDocument>,
+): EnrichedCandidate | null {
+  if (!isCurrentStateQuery(query) || isHistoricalQuery(query)) return null;
+
+  const top = candidates[0];
+  if (!top || top.table !== "budget_indicators") return null;
+
+  const doc = typeof top.row.document_id === "string"
+    ? documents.get(top.row.document_id)
+    : undefined;
+  if (!isAdoptedBudgetSource(top, doc)) return null;
+  if (!isRelevantTaxRateCandidate(query, top, doc)) return null;
+  if (currentStateScore(query, top, doc) < 2_000_000) return null;
+
+  return top;
+}
+
 function pinCurrentBudgetWinnerForTest(
   filteredCandidates: EnrichedCandidate[],
   pinned: EnrichedCandidate | null,
@@ -570,6 +590,21 @@ function selectedCurrentBudgetIndicatorsForTest(
     })
     .sort(compareCurrentStateCandidates(query, documents))
     .slice(0, 3);
+}
+
+function directOrJudgePathForTest(
+  query: string,
+  candidates: EnrichedCandidate[],
+  documents: Map<string, SourceDocument>,
+  runJudge: () => "judge",
+): "direct" | "judge" {
+  const directCandidate = directCurrentBudgetIndicatorCandidateForTest(
+    query,
+    candidates,
+    documents,
+  );
+  if (directCandidate !== null) return "direct";
+  return runJudge();
 }
 
 function fkCandidate(
@@ -1901,6 +1936,129 @@ Deno.test("current-state budget winner is pinned when Temporal Judge omits it", 
     filtered.some((candidate) => candidate.id === "adopted-winner") === false
   ) {
     throw new Error("pinned winner was not restored after judge omission");
+  }
+});
+
+Deno.test("current-state budget indicator direct path skips Temporal Judge for top adopted structured row", () => {
+  const query = "what is the current real estate tax rate";
+  const adoptedDocId = "00000000-0000-0000-0000-000000000501";
+  const altDocId = "00000000-0000-0000-0000-000000000502";
+  const topAdopted = testCandidate("budget_indicators", "real-estate-112", {
+    document_id: adoptedDocId,
+    fiscal_year: 2027,
+    program: "Real Estate Tax",
+    indicator_name: "Real Estate Tax rate",
+    value_actual: 1.12,
+    unit: "per $100 of assessed value",
+    raw_extracted_text:
+      "FY 2027 Adopted Budget: Real Estate Tax rate is $1.12 per $100 of assessed value.",
+  });
+  topAdopted.rrfScore = Number.MAX_SAFE_INTEGER;
+
+  const closeRunnerUp = testCandidate(
+    "budget_indicators",
+    "real-estate-11225",
+    {
+      document_id: adoptedDocId,
+      fiscal_year: 2027,
+      program: "Real Estate Tax",
+      indicator_name: "Real Estate Tax rate",
+      value_actual: 1.1225,
+      unit: "per $100 of assessed value",
+      raw_extracted_text:
+        "FY 2027 Adopted Budget: Real Estate Tax rate is $1.1225 per $100 of assessed value.",
+    },
+  );
+
+  const documents = new Map<string, SourceDocument>([
+    [adoptedDocId, {
+      id: adoptedDocId,
+      url: "https://example.test/fy2027/adopted/summary.pdf",
+      title: "FY 2027 Adopted Budget Summary",
+      filename: "summary.pdf",
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: "2026-05-05",
+      fiscal_year: 2027,
+    }],
+    [altDocId, {
+      id: altDocId,
+      url: "https://example.test/fy2027/adopted/revenue.pdf",
+      title: "FY 2027 Adopted General Fund Revenue Overview",
+      filename: "revenue.pdf",
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: "2026-05-05",
+      fiscal_year: 2027,
+    }],
+  ]);
+
+  const decisive = decisiveCurrentBudgetWinnerForTest(
+    query,
+    [topAdopted, closeRunnerUp],
+    documents,
+  );
+  if (decisive !== null) {
+    throw new Error("test setup must reproduce the old strict-threshold null");
+  }
+
+  let judgeCalls = 0;
+  const path = directOrJudgePathForTest(
+    query,
+    [topAdopted, closeRunnerUp],
+    documents,
+    () => {
+      judgeCalls += 1;
+      return "judge";
+    },
+  );
+
+  if (path !== "direct") {
+    throw new Error(`expected direct path, got ${path}`);
+  }
+  if (judgeCalls !== 0) {
+    throw new Error(`Temporal Judge should be skipped; calls=${judgeCalls}`);
+  }
+});
+
+Deno.test("current-state budget indicator direct path preserves compound current plus historical queries", () => {
+  const query =
+    "what is the current real estate tax rate and what was it in 2024";
+  const docId = "00000000-0000-0000-0000-000000000503";
+  const currentRow = testCandidate("budget_indicators", "real-estate-current", {
+    document_id: docId,
+    fiscal_year: 2027,
+    program: "Real Estate Tax",
+    indicator_name: "Real Estate Tax rate",
+    value_actual: 1.12,
+    unit: "per $100 of assessed value",
+    raw_extracted_text:
+      "FY 2027 Adopted Budget: Real Estate Tax rate is $1.12 per $100 of assessed value.",
+  });
+
+  const documents = new Map<string, SourceDocument>([
+    [docId, {
+      id: docId,
+      url: "https://example.test/fy2027/adopted/summary.pdf",
+      title: "FY 2027 Adopted Budget Summary",
+      filename: "summary.pdf",
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: "2026-05-05",
+      fiscal_year: 2027,
+    }],
+  ]);
+
+  let judgeCalls = 0;
+  const path = directOrJudgePathForTest(query, [currentRow], documents, () => {
+    judgeCalls += 1;
+    return "judge";
+  });
+
+  if (path !== "judge" || judgeCalls !== 1) {
+    throw new Error(
+      "compound current plus historical query must use judge path",
+    );
   }
 });
 
