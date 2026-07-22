@@ -1860,7 +1860,7 @@ Deno.test("current-value resolver selects adopted structured row before Temporal
   }
 });
 
-Deno.test("current-state narrative recency selects real transient occupancy tax increase chunk", () => {
+Deno.test("current-state narrative extraction identifies real transient occupancy tax increase chunk without bypass", () => {
   const revenueOverviewDocId = "019f4747-3a67-7e01-bdb9-c186ec35fcd0";
   const staleDocId = "019f7e45-6930-7ee8-b56a-089cb78d4697";
   const currentTot = testCandidate(
@@ -1910,25 +1910,23 @@ Deno.test("current-state narrative recency selects real transient occupancy tax 
     }],
   ]);
 
+  const extracted = extractCurrentValueFromNarrative(
+    "what is the current transient occupancy tax rate",
+    currentTot,
+  );
+  if (extracted !== "6 percent") {
+    throw new Error(
+      `expected real current TOT narrative chunk to extract 6 percent, got ${extracted}`,
+    );
+  }
   const resolved = resolveDeterministicCurrentValue(
     "what is the current transient occupancy tax rate",
     [staleTot, currentTot],
     documents,
   );
-
-  if (resolved?.id !== "019f4747-ee4b-7089-bcaf-4498bef4c586") {
+  if (resolved !== null) {
     throw new Error(
-      `expected real current TOT narrative chunk first, got ${resolved?.id}`,
-    );
-  }
-  if (
-    extractCurrentValueFromNarrative(
-      "what is the current transient occupancy tax rate",
-      resolved,
-    ) !== "6 percent"
-  ) {
-    throw new Error(
-      "expected selected TOT narrative chunk to extract 6 percent",
+      `expected narrative-only current value to fall through Judge/Drafter, got ${resolved.id}`,
     );
   }
 });
@@ -2087,11 +2085,6 @@ Deno.test("current-value resolver handles known current tax cases as one suite",
       expectedId: "personal-property-current",
       expectedValue: 4.57,
     },
-    {
-      query: "what is the current transient occupancy tax rate",
-      expectedId: "tot-current",
-      expectedValue: "6 percent",
-    },
   ];
 
   const candidates = [
@@ -2141,6 +2134,26 @@ Deno.test("current-value resolver handles known current tax cases as one suite",
         `${testCase.query}: expected ${testCase.expectedValue}, got ${value}`,
       );
     }
+  }
+
+  const narrativeOnlyResolved = resolveDeterministicCurrentValue(
+    "what is the current transient occupancy tax rate",
+    candidates,
+    documents,
+  );
+  if (narrativeOnlyResolved !== null) {
+    throw new Error(
+      `expected narrative-only current tax case to fall through, got ${narrativeOnlyResolved.id}`,
+    );
+  }
+  const narrativeValue = extractCurrentValueFromNarrative(
+    "what is the current transient occupancy tax rate",
+    candidates[2],
+  );
+  if (narrativeValue !== "6 percent") {
+    throw new Error(
+      `expected narrative extraction to remain available, got ${narrativeValue}`,
+    );
   }
 });
 

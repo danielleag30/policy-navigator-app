@@ -909,6 +909,19 @@ function isRelevantStructuredCurrentValueCandidate(
   if (/\btax\b/i.test(query) && /\brate\b/i.test(query)) {
     return isRelevantTaxRateCandidate(query, c, doc);
   }
+  if (/\b(rate|fee|charge)\b/i.test(query)) {
+    const structuredValueKind = [
+      c.row.indicator_name,
+      c.row.unit,
+      c.row.raw_extracted_text,
+    ].map(normalizedText).join(" ");
+    if (
+      !/\b(rate|fee|charge|per\s+\$?100|per\s+(?:home|unit|ton|1,?000|gallon))\b/
+        .test(structuredValueKind)
+    ) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -2129,10 +2142,7 @@ export function resolveDeterministicCurrentValue(
   );
   if (structured) return structured.candidate;
 
-  const narrative = scored.find(({ candidate, score }) =>
-    candidate.table === "narrative_chunks" && score >= 2_000
-  );
-  return narrative?.candidate ?? null;
+  return null;
 }
 
 async function runAnswerDrafter(
