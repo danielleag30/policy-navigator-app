@@ -35,6 +35,10 @@ import {
 } from "../_shared/chunker.ts";
 import { extractAndPersist } from "../_shared/extractor.ts";
 import {
+  computeDocumentDateMetadata,
+  type DocumentDateDb,
+} from "../_shared/document-date.ts";
+import {
   type AiSession,
   generateEmbeddingsHttpBatched,
   persistEmbeddings,
@@ -880,6 +884,20 @@ async function processClaimedIngestion(
       }
       await embedNarrativeChunks(documentId, embedUrl);
 
+      // Real source_published_at / fiscal_year (see _shared/document-date.ts):
+      // URL-derived date/fiscal-year first, LLM-extracted meeting_date as
+      // fallback for bos_minutes/bos_summary. Runs after the vote_tallies/
+      // policy_decisions rows above exist so the extraction fallback has
+      // real data to read. Never fabricated — null when no real signal
+      // exists, same as documents.status leaves those fields today.
+      const { sourcePublishedAt, fiscalYear } =
+        await computeDocumentDateMetadata(
+          db as unknown as DocumentDateDb,
+          documentId,
+          row.doc_type,
+          row.url,
+        );
+
       // ── Task 2-6: finalize Document row ──────────────────────────────────
       // Only reached after all embedding functions above have succeeded
       // (none threw), guaranteeing every chunk-bearing row is non-null.
@@ -888,6 +906,8 @@ async function processClaimedIngestion(
         .update({
           docling_version: doclingVersion,
           status: "current",
+          source_published_at: sourcePublishedAt,
+          fiscal_year: fiscalYear,
           updated_at: new Date().toISOString(),
         })
         .eq("id", documentId);
