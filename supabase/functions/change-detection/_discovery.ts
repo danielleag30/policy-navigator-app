@@ -39,6 +39,7 @@ export type DocType =
 export interface DiscoverySource {
   id: string;
   doc_type: DocType;
+  budget_stage?: "advertised" | "adopted" | null;
   label?: string;
   discovery_urls: string[];
   discovery_depth: number;
@@ -74,6 +75,7 @@ export interface DiscoverySource {
 export interface ApiSource {
   id?: string;
   doc_type: DocType;
+  budget_stage?: "advertised" | "adopted" | null;
   label?: string;
   base_url: string;
   url_patterns: string[];
@@ -140,6 +142,16 @@ export function validateSeedConfig(value: unknown): SeedConfig {
     }
     if (typeof raw.doc_type !== "string") {
       throw new Error(`seed source at index ${idx} is missing doc_type`);
+    }
+    if (
+      raw.budget_stage !== undefined &&
+      raw.budget_stage !== null &&
+      raw.budget_stage !== "advertised" &&
+      raw.budget_stage !== "adopted"
+    ) {
+      throw new Error(
+        `seed source at index ${idx} has invalid budget_stage`,
+      );
     }
 
     const hasDiscoveryShape = Array.isArray(raw.discovery_urls);

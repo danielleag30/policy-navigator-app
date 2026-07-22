@@ -18,6 +18,7 @@ import { generate as uuidv7 } from "@std/uuid/v7";
 import { ollamaChat } from "./ollama-client.ts";
 import db from "./db-client.ts";
 import type { IndividualVote } from "./types.ts";
+import { canonicalizeBudgetIndicatorName } from "./budget-indicator.ts";
 
 // ── ChunkLike: local mirror of chunker.ts Chunk (avoids heavy bundler dep) ───
 // This must stay in sync with the Chunk interface in chunker.ts.
@@ -168,7 +169,9 @@ interface VoteTallyLlm {
   vote_no?: number;
   vote_abstain?: number;
   vote_absent?: number;
-  individual_votes?: Array<{ supervisor_name: string; district: string; vote: string }>;
+  individual_votes?: Array<
+    { supervisor_name: string; district: string; vote: string }
+  >;
 }
 
 async function tryExtractVoteTallies(
@@ -185,11 +188,15 @@ async function tryExtractVoteTallies(
   );
 
   if (result.exhausted) {
-    console.warn(`[extractor] VoteTally LLM exhausted on chunk ${chunkSequence}`);
+    console.warn(
+      `[extractor] VoteTally LLM exhausted on chunk ${chunkSequence}`,
+    );
     return [];
   }
 
-  const parsed = safeParseJson<{ found: boolean; vote_tallies?: VoteTallyLlm[] }>(
+  const parsed = safeParseJson<
+    { found: boolean; vote_tallies?: VoteTallyLlm[] }
+  >(
     result.content,
   );
   if (!parsed?.found || !parsed.vote_tallies?.length) return [];
@@ -217,7 +224,9 @@ async function tryExtractVoteTallies(
   const { data, error } = await (db.from("vote_tallies").insert(rows).select("id") as any);
 
   if (error) {
-    console.error(`[extractor] vote_tallies insert error on chunk ${chunkSequence}: ${error.message}`);
+    console.error(
+      `[extractor] vote_tallies insert error on chunk ${chunkSequence}: ${error.message}`,
+    );
     return [];
   }
   // deno-lint-ignore no-explicit-any
@@ -251,11 +260,15 @@ async function tryExtractPolicyDecisions(
   );
 
   if (result.exhausted) {
-    console.warn(`[extractor] PolicyDecision LLM exhausted on chunk ${chunkSequence}`);
+    console.warn(
+      `[extractor] PolicyDecision LLM exhausted on chunk ${chunkSequence}`,
+    );
     return false;
   }
 
-  const parsed = safeParseJson<{ found: boolean; policy_decisions?: PolicyDecisionLlm[] }>(
+  const parsed = safeParseJson<
+    { found: boolean; policy_decisions?: PolicyDecisionLlm[] }
+  >(
     result.content,
   );
   if (!parsed?.found || !parsed.policy_decisions?.length) return false;
@@ -283,7 +296,9 @@ async function tryExtractPolicyDecisions(
 
   const { error } = await db.from("policy_decisions").insert(rows);
   if (error) {
-    console.error(`[extractor] policy_decisions insert error on chunk ${chunkSequence}: ${error.message}`);
+    console.error(
+      `[extractor] policy_decisions insert error on chunk ${chunkSequence}: ${error.message}`,
+    );
     return false;
   }
   return true;
@@ -314,11 +329,15 @@ async function tryExtractBudgetIndicators(
   );
 
   if (result.exhausted) {
-    console.warn(`[extractor] BudgetIndicator LLM exhausted on chunk ${chunkSequence}`);
+    console.warn(
+      `[extractor] BudgetIndicator LLM exhausted on chunk ${chunkSequence}`,
+    );
     return false;
   }
 
-  const parsed = safeParseJson<{ found: boolean; indicators?: BudgetIndicatorLlm[] }>(
+  const parsed = safeParseJson<
+    { found: boolean; indicators?: BudgetIndicatorLlm[] }
+  >(
     result.content,
   );
   if (!parsed?.found || !parsed.indicators?.length) return false;
@@ -330,7 +349,7 @@ async function tryExtractBudgetIndicators(
     fiscal_year: ind.fiscal_year,
     department: ind.department ?? null,
     program: ind.program ?? null,
-    indicator_name: ind.indicator_name ?? "",
+    indicator_name: canonicalizeBudgetIndicatorName(ind.indicator_name ?? ""),
     value_actual: ind.value_actual ?? null,
     value_target: ind.value_target ?? null,
     value_prior_year: ind.value_prior_year ?? null,
@@ -344,7 +363,9 @@ async function tryExtractBudgetIndicators(
 
   const { error } = await db.from("budget_indicators").insert(rows);
   if (error) {
-    console.error(`[extractor] budget_indicators insert error on chunk ${chunkSequence}: ${error.message}`);
+    console.error(
+      `[extractor] budget_indicators insert error on chunk ${chunkSequence}: ${error.message}`,
+    );
     return false;
   }
   return true;
@@ -369,7 +390,9 @@ async function writeNarrativeChunk(
     bbox_end: chunk.bbox_end,
   });
   if (error) {
-    console.error(`[extractor] narrative_chunks insert error on chunk ${chunkSequence}: ${error.message}`);
+    console.error(
+      `[extractor] narrative_chunks insert error on chunk ${chunkSequence}: ${error.message}`,
+    );
   }
 }
 
@@ -412,7 +435,9 @@ export async function extractAndPersist(
 
     // Soft deadline: bulk-insert all remaining chunks as narrative_chunks so
     // the pipeline can still embed and finalize within the wall-clock limit.
-    if (deadlineMs !== undefined && Date.now() >= deadlineMs - DEADLINE_BUFFER_MS) {
+    if (
+      deadlineMs !== undefined && Date.now() >= deadlineMs - DEADLINE_BUFFER_MS
+    ) {
       const remainingChunks = chunks.slice(idx);
       if (remainingChunks.length > 0) {
         const rows = remainingChunks.map((c, offset) => ({
@@ -428,9 +453,13 @@ export async function extractAndPersist(
           bbox_start: c.bbox_start,
           bbox_end: c.bbox_end,
         }));
-        const { error: deadlineErr } = await db.from("narrative_chunks").insert(rows);
+        const { error: deadlineErr } = await db.from("narrative_chunks").insert(
+          rows,
+        );
         if (deadlineErr) {
-          throw new Error(`deadline bulk-insert narrative_chunks: ${deadlineErr.message}`);
+          throw new Error(
+            `deadline bulk-insert narrative_chunks: ${deadlineErr.message}`,
+          );
         }
         console.warn(
           `[extractor] soft deadline hit at chunk ${chunkSequence}/${chunks.length}; inserted ${remainingChunks.length} remaining as narrative_chunks`,
@@ -445,7 +474,11 @@ export async function extractAndPersist(
     try {
       if (isBosType) {
         // BOS minutes / summary: VoteTally + PolicyDecision
-        const tallyIds = await tryExtractVoteTallies(documentId, chunk, chunkSequence);
+        const tallyIds = await tryExtractVoteTallies(
+          documentId,
+          chunk,
+          chunkSequence,
+        );
         if (tallyIds.length > 0) hasStructured = true;
 
         const linkedTallyId = tallyIds.length > 0 ? tallyIds[0] : null;

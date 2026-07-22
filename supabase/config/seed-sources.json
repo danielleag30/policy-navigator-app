@@ -66,6 +66,7 @@
     {
       "id": "budget_pdf_advertised",
       "doc_type": "budget_pdf",
+      "budget_stage": "advertised",
       "label": "FY Budget PDFs — Advertised",
       "discovery_urls": [
         "https://www.fairfaxcounty.gov/budget/advertised-budget-plan"
@@ -84,6 +85,7 @@
     {
       "id": "budget_pdf_adopted",
       "doc_type": "budget_pdf",
+      "budget_stage": "adopted",
       "label": "FY Budget PDFs — Adopted",
       "discovery_urls": [
         "https://www.fairfaxcounty.gov/budget/current-year-adopted-budget-plan"

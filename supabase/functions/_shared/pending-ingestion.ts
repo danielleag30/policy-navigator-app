@@ -22,6 +22,7 @@ export interface PendingIngestionInsert {
   id: string;
   url: string;
   doc_type: string;
+  budget_stage?: "advertised" | "adopted" | null;
   detected_at: string;
   status: "pending";
 }
@@ -51,12 +52,19 @@ export interface PendingIngestionDb {
  */
 export async function createPendingIngestionIfAbsent(
   db: PendingIngestionDb,
-  params: { id: string; url: string; docType: string; nowIso: string },
+  params: {
+    id: string;
+    url: string;
+    docType: string;
+    budgetStage?: "advertised" | "adopted" | null;
+    nowIso: string;
+  },
 ): Promise<string | null> {
   const { error: insertErr } = await db.from("pending_ingestions").insert({
     id: params.id,
     url: params.url,
     doc_type: params.docType,
+    budget_stage: params.budgetStage ?? null,
     detected_at: params.nowIso,
     status: "pending",
   });
