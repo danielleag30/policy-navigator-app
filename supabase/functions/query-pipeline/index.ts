@@ -87,7 +87,7 @@ const VERSION_HISTORY_INCOMPLETE_CAVEAT = "Version history may be incomplete";
 const UNVERIFIED_CAVEAT =
   "Caveat: This answer could not be fully verified against the cited source text.";
 const CURRENT_VALUE_FALLBACK_CAVEAT =
-  "Caveat: I could not deterministically identify a current adopted value, so this answer may need source-date review.";
+  "Caveat: This narrative-derived current value may need source-date review.";
 
 // ── Chunk-bearing tables ──────────────────────────────────────────────────────
 
@@ -197,7 +197,7 @@ async function vectorForTable(
 
 // ── RRF merge ─────────────────────────────────────────────────────────────────
 
-interface RankedCandidate {
+export interface RankedCandidate {
   key: string; // '{table}:{id}' — table-qualified dedup key
   table: ChunkTable;
   id: string;
@@ -207,7 +207,7 @@ interface RankedCandidate {
   rrfScore: number; // 1/(K+rank_bm25) + 1/(K+rank_vector), missing leg = 0
 }
 
-interface EnrichedCandidate extends RankedCandidate {
+export interface EnrichedCandidate extends RankedCandidate {
   ancestors: Array<
     { municode_node_id: string; title: string; node_depth: number }
   >;
@@ -219,7 +219,7 @@ interface EnrichedCandidate extends RankedCandidate {
   hasAmendmentHistory: boolean;
 }
 
-interface SourceDocument {
+export interface SourceDocument {
   id: string;
   url: string;
   title: string | null;
@@ -243,7 +243,7 @@ interface AnnotatedDrafterChunk {
   metadata: string[];
 }
 
-interface AnswerDraftResult {
+export interface AnswerDraftResult {
   answer: string;
   citations: CitationChunk[];
   citationMap: Record<string, CitationMapEntry>;
@@ -889,7 +889,7 @@ function hasFinalAdoptedRateSignal(c: EnrichedCandidate): boolean {
   return finalAdoptedRateTextScore(c) >= 550;
 }
 
-function currentFiscalYear(now = new Date()): number {
+export function currentFiscalYear(now = new Date()): number {
   const calendarYear = now.getUTCFullYear();
   return now.getUTCMonth() >= 6 ? calendarYear + 1 : calendarYear;
 }
@@ -912,7 +912,7 @@ function isRelevantStructuredCurrentValueCandidate(
   return true;
 }
 
-function structuredCurrentValueScore(
+export function structuredCurrentValueScore(
   query: string,
   c: EnrichedCandidate,
   doc?: SourceDocument,
@@ -922,23 +922,58 @@ function structuredCurrentValueScore(
   if (!isAdoptedBudgetSource(c, doc)) return 0;
 
   const fiscalYear = asNumber(c.row.fiscal_year) ?? doc?.fiscal_year ?? 0;
-  if (fiscalYear !== currentFiscalYear()) return 0;
+  if (fiscalYear > currentFiscalYear()) return 0;
   const draftPenalty = hasDraftQualifierForRateEvidence(c, doc) ? -100 : 0;
   return 2_000_000 + 100 + draftPenalty + fiscalYear +
     budgetIndicatorTiebreakScore(c, doc);
 }
 
-function extractCurrentValueFromNarrative(c: EnrichedCandidate): string | null {
+function subjectWindows(
+  query: string,
+  text: string,
+  radius = 260,
+): string[] {
+  const normalizedQueryTerms = budgetIndicatorQueryTerms(query);
+  const terms = normalizedQueryTerms.length > 0 ? normalizedQueryTerms : [];
+  const lowerText = text.toLowerCase();
+  const windows: string[] = [];
+
+  for (const term of terms) {
+    let index = lowerText.indexOf(term);
+    while (index !== -1) {
+      windows.push(
+        text.slice(index, Math.min(text.length, index + radius)),
+      );
+      index = lowerText.indexOf(term, index + term.length);
+    }
+  }
+
+  return windows.length > 0 ? windows : [text.slice(0, radius * 2)];
+}
+
+function hasFutureOrProposalSignal(text: string): boolean {
+  return /\b(?:propos(?:e|ed|al)|advertised|draft|to be approved|would|could|fy\s*20(?:2[89]|[3-9]\d))\b/i
+    .test(text);
+}
+
+export function extractCurrentValueFromNarrative(
+  query: string,
+  c: EnrichedCandidate,
+): string | null {
   const text = candidateText(c);
   const value = String
     .raw`(?:\$\s*)?\d+(?:\.\d+)?\s*(?:%|percent|per\s+\$?100(?:\s+of\s+assessed\s+value)?)`;
+  const scopedText = subjectWindows(query, text).join("\n");
+
   const adoptedIncrease = new RegExp(
     String
       .raw`\b(?:adopted|approved)\b[\s\S]{0,180}\b(?:increase|increased)\b[\s\S]{0,180}\bfrom\s+(${value})[\s\S]{0,80}\bto\s+(${value})`,
     "i",
   );
-  const adoptedIncreaseMatch = text.match(adoptedIncrease);
-  if (adoptedIncreaseMatch) {
+  const adoptedIncreaseMatch = scopedText.match(adoptedIncrease);
+  if (
+    adoptedIncreaseMatch && !hasFutureOrProposalSignal(adoptedIncreaseMatch[0])
+  ) {
     return adoptedIncreaseMatch[2].replace(/\s+/g, " ").trim();
   }
 
@@ -947,16 +982,28 @@ function extractCurrentValueFromNarrative(c: EnrichedCandidate): string | null {
       .raw`\bfrom\s+(${value})[\s\S]{0,80}\bto\s+(${value})[\s\S]{0,160}\b(?:approved|adopted|current|currently|lev(?:y|ied|ies))\b`,
     "i",
   );
-  const fromToMatch = text.match(fromTo);
-  if (fromToMatch) return fromToMatch[2].replace(/\s+/g, " ").trim();
+  const fromToMatch = scopedText.match(fromTo);
+  if (fromToMatch && !hasFutureOrProposalSignal(fromToMatch[0])) {
+    return fromToMatch[2].replace(/\s+/g, " ").trim();
+  }
+
+  const rateValue = new RegExp(
+    String
+      .raw`\b(?:tax\s+)?rate\b[\s\S]{0,40}?\b(?:is|remains?|remained|at|of)\b[\s\S]{0,40}?(${value})`,
+    "i",
+  );
+  const rateValueMatch = scopedText.match(rateValue);
+  if (rateValueMatch && !hasFutureOrProposalSignal(rateValueMatch[0])) {
+    return rateValueMatch[1].replace(/\s+/g, " ").trim();
+  }
 
   const currentValue = new RegExp(
     String
       .raw`\b(?:current(?:ly)?|adopted|approved|lev(?:y|ied|ies))\b[\s\S]{0,160}?\b(?:tax\s+)?rate\b[\s\S]{0,80}?(${value})`,
     "i",
   );
-  const currentValueMatch = text.match(currentValue);
-  if (currentValueMatch) {
+  const currentValueMatch = scopedText.match(currentValue);
+  if (currentValueMatch && !hasFutureOrProposalSignal(currentValueMatch[0])) {
     return currentValueMatch[1].replace(/\s+/g, " ").trim();
   }
 
@@ -965,8 +1012,8 @@ function extractCurrentValueFromNarrative(c: EnrichedCandidate): string | null {
       .raw`(${value})[\s\S]{0,100}?\b(?:current(?:ly)?|adopted|approved|lev(?:y|ied|ies))\b[\s\S]{0,80}?\b(?:tax\s+)?rate\b`,
     "i",
   );
-  const valueCurrentMatch = text.match(valueCurrent);
-  if (valueCurrentMatch) {
+  const valueCurrentMatch = scopedText.match(valueCurrent);
+  if (valueCurrentMatch && !hasFutureOrProposalSignal(valueCurrentMatch[0])) {
     return valueCurrentMatch[1].replace(/\s+/g, " ").trim();
   }
 
@@ -980,7 +1027,7 @@ function narrativeCurrentValueScore(
 ): number {
   if (c.table !== "narrative_chunks") return 0;
   if (!matchesBudgetIndicatorQuery(query, c, doc)) return 0;
-  if (extractCurrentValueFromNarrative(c) === null) return 0;
+  if (extractCurrentValueFromNarrative(query, c) === null) return 0;
 
   const text = normalizedText(candidateText(c));
   let score = 1_000;
@@ -1968,7 +2015,10 @@ function refusalDraft(): AnswerDraftResult {
   };
 }
 
-function formatBudgetValue(value: unknown, unit: unknown): string | null {
+export function formatBudgetValue(
+  value: unknown,
+  unit: unknown,
+): string | null {
   const unitText = typeof unit === "string" ? unit.trim() : "";
   const numericValue = asNumber(value);
   const textValue = typeof value === "string" && value.trim() !== ""
@@ -1990,7 +2040,7 @@ function formatBudgetValue(value: unknown, unit: unknown): string | null {
   return perHundredUnit ? `${prefixedValue} ${perHundredUnit}` : prefixedValue;
 }
 
-function deterministicCurrentValueDraft(
+export function deterministicCurrentValueDraft(
   query: string,
   candidate: EnrichedCandidate,
   documents: Map<string, SourceDocument>,
@@ -2000,7 +2050,7 @@ function deterministicCurrentValueDraft(
 
   const value = candidate.table === "budget_indicators"
     ? formatBudgetValue(candidate.row.value_actual, candidate.row.unit)
-    : extractCurrentValueFromNarrative(candidate);
+    : extractCurrentValueFromNarrative(query, candidate);
   if (value === null) return null;
 
   const label = candidate.table === "budget_indicators"
@@ -2013,7 +2063,11 @@ function deterministicCurrentValueDraft(
   }; bbox=${formatUnknown(chunk.bbox)}]`;
 
   return {
-    answer: `${claim}. ${inlineCitation}`,
+    answer: candidate.table === "narrative_chunks"
+      ? withRequiredCaveats(`${claim}. ${inlineCitation}`, [
+        CURRENT_VALUE_FALLBACK_CAVEAT,
+      ])
+      : `${claim}. ${inlineCitation}`,
     citations: [{
       chunk_id: chunk.chunk_id,
       source_url: chunk.source_url,
@@ -2039,7 +2093,7 @@ function deterministicCurrentValueDraft(
   };
 }
 
-function resolveDeterministicCurrentValue(
+export function resolveDeterministicCurrentValue(
   query: string,
   candidates: EnrichedCandidate[],
   documents: Map<string, SourceDocument>,
@@ -2805,332 +2859,336 @@ async function returnLoggedSuccess(
 
 // ── Main handler ──────────────────────────────────────────────────────────────
 
-Deno.serve(async (req: Request): Promise<Response> => {
-  const startedAt = performance.now();
+if (import.meta.main) {
+  Deno.serve(async (req: Request): Promise<Response> => {
+    const startedAt = performance.now();
 
-  if (req.method === "OPTIONS") {
-    return corsPreflightResponse();
-  }
+    if (req.method === "OPTIONS") {
+      return corsPreflightResponse();
+    }
 
-  if (req.method !== "POST") {
-    return error("NOT_FOUND", "Method not allowed", 405);
-  }
+    if (req.method !== "POST") {
+      return error("NOT_FOUND", "Method not allowed", 405);
+    }
 
-  let query: string;
-  try {
-    const body = (await req.json()) as QueryRequest;
-    if (typeof body?.query !== "string" || !body.query.trim()) {
+    let query: string;
+    try {
+      const body = (await req.json()) as QueryRequest;
+      if (typeof body?.query !== "string" || !body.query.trim()) {
+        return error(
+          "NOT_FOUND",
+          "Request body must contain a non-empty `query` string.",
+          400,
+        );
+      }
+      query = body.query.trim();
+    } catch {
+      return error("NOT_FOUND", "Invalid JSON body.", 400);
+    }
+
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+      req.headers.get("x-real-ip") ??
+      "unknown";
+    let llmCalls = 0;
+
+    // ── Step 1: Rate limit ──────────────────────────────────────────────────────
+
+    const allowed = await isWithinRateLimit(ip);
+    if (!allowed) {
       return error(
-        "NOT_FOUND",
-        "Request body must contain a non-empty `query` string.",
-        400,
+        "RATE_LIMITED",
+        "Too many requests. Please wait before retrying.",
+        429,
       );
     }
-    query = body.query.trim();
-  } catch {
-    return error("NOT_FOUND", "Invalid JSON body.", 400);
-  }
 
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    req.headers.get("x-real-ip") ??
-    "unknown";
-  let llmCalls = 0;
-
-  // ── Step 1: Rate limit ──────────────────────────────────────────────────────
-
-  const allowed = await isWithinRateLimit(ip);
-  if (!allowed) {
-    return error(
-      "RATE_LIMITED",
-      "Too many requests. Please wait before retrying.",
-      429,
-    );
-  }
-
-  // Increment bucket BEFORE retrieval — every non-429 request must write a row.
-  const bucketWritten = await writeBucket(ip);
-  if (!bucketWritten) {
-    return error(
-      "INGESTION_FAILED",
-      "Service temporarily unavailable. Please retry.",
-      503,
-    );
-  }
-
-  // ── Step 2: Embed query (Supabase AI Session — gte-small, 384d) ────────────
-
-  const session = new Supabase.ai.Session("gte-small");
-
-  let queryEmbedding: number[];
-  try {
-    queryEmbedding = await session.run(query, {
-      mean_pool: true,
-      normalize: true,
-    });
-  } catch (embedErr) {
-    console.error("embedding error:", embedErr);
-    return error("INGESTION_FAILED", "Failed to embed query.", 500);
-  }
-
-  // ── Step 3: Parallel BM25 + vector retrieval across all five tables ─────────
-
-  const [bm25Raw, vectorRaw] = await Promise.all([
-    Promise.all(CHUNK_TABLES.map((t) => bm25ForTable(t, query))),
-    Promise.all(CHUNK_TABLES.map((t) => vectorForTable(t, queryEmbedding))),
-  ]);
-
-  const bm25Results = new Map<ChunkTable, Record<string, unknown>[]>(
-    CHUNK_TABLES.map((t, i) => [t, bm25Raw[i]]),
-  );
-  const vectorResults = new Map<ChunkTable, Record<string, unknown>[]>(
-    CHUNK_TABLES.map((t, i) => [t, vectorRaw[i]]),
-  );
-
-  // ── Step 4: RRF merge ───────────────────────────────────────────────────────
-
-  const ranked = rrfMerge(bm25Results, vectorResults);
-
-  // ── INCOMPLETE_SEARCH_FLOOR gate ────────────────────────────────────────────
-
-  const maxScore = ranked[0]?.rrfScore ?? 0;
-  if (maxScore < INCOMPLETE_SEARCH_FLOOR) {
-    // ── Deep-historical slow path (see _deep-historical.ts) ───────────────────
-    // Only attempted when the fast path found genuinely nothing AND the query
-    // names a year within EnCode's reprint coverage AND the EnCode compliance
-    // gate is on. Extended-timeout, explicitly-disclosed, never-fabricating —
-    // see file header there for the full design rationale.
-    const deepHistoricalTrigger = shouldAttemptDeepHistoricalLookup(
-      query,
-      maxScore,
-      INCOMPLETE_SEARCH_FLOOR,
-    );
-
-    if (deepHistoricalTrigger.attempt) {
-      // Approximate: this path has its own single-LLM-call budget, separate
-      // from LLM_TOTAL_CALL_CAP (which governs the Judge/Drafter/Verifier
-      // chain this path never enters). Counted here even on a pre-LLM
-      // failure (Docling error, zero relevant excerpts) for simplicity — an
-      // acceptable approximation for a log metric, not a hard invariant.
-      llmCalls += 1;
-      const outcome = await runDeepHistoricalLookup(
-        db as unknown as PreingestDb,
-        query,
-        deepHistoricalTrigger.reprint,
+    // Increment bucket BEFORE retrieval — every non-429 request must write a row.
+    const bucketWritten = await writeBucket(ip);
+    if (!bucketWritten) {
+      return error(
+        "INGESTION_FAILED",
+        "Service temporarily unavailable. Please retry.",
+        503,
       );
-      const deepHistoricalResponse = assembleDeepHistoricalResponse(outcome);
-      return await returnLoggedSuccess(deepHistoricalResponse, startedAt, {
-        ip,
-        queryText: query,
-        llmCalls,
-        temporalFlag: true,
-        verifierFlag: false,
-        incompleteSearch: outcome.status !== "answered",
+    }
+
+    // ── Step 2: Embed query (Supabase AI Session — gte-small, 384d) ────────────
+
+    const session = new Supabase.ai.Session("gte-small");
+
+    let queryEmbedding: number[];
+    try {
+      queryEmbedding = await session.run(query, {
+        mean_pool: true,
+        normalize: true,
       });
+    } catch (embedErr) {
+      console.error("embedding error:", embedErr);
+      return error("INGESTION_FAILED", "Failed to embed query.", 500);
     }
 
-    const incompleteResponse: QueryResponseData = {
-      answer: "",
-      citations: [] as CitationChunk[],
-      citationMap: {},
-      chunkText: {},
-      temporalFlag: false,
-      amendmentCaveat: null,
-      pendingChangeNotice: null,
-      incompleteSearchWarning: true,
-      freshnessTimestamp: null,
-      freshness: null,
-      caveats: [],
-      deepHistoricalLookup: null,
-    };
-    return await returnLoggedSuccess(incompleteResponse, startedAt, {
-      ip,
-      queryText: query,
-      llmCalls,
-      temporalFlag: false,
-      verifierFlag: false,
-      incompleteSearch: true,
-    });
-  }
+    // ── Step 3: Parallel BM25 + vector retrieval across all five tables ─────────
 
-  // ── Step 5 (task 2-8): Ancestor enrichment ─────────────────────────────────
-  // Feed top JUDGE_CONTEXT_COUNT candidates (not just 8) so the judge has full
-  // temporal coverage before filtering down to ≤8.
+    const [bm25Raw, vectorRaw] = await Promise.all([
+      Promise.all(CHUNK_TABLES.map((t) => bm25ForTable(t, query))),
+      Promise.all(CHUNK_TABLES.map((t) => vectorForTable(t, queryEmbedding))),
+    ]);
 
-  const topN = ranked.slice(0, JUDGE_CONTEXT_COUNT);
-  const enriched = await enrichWithAncestors(topN);
-
-  // ── Step 6 (task 2-9): Temporal Judge ──────────────────────────────────────
-
-  const historical = isHistoricalOnlyQuery(query);
-  const budgetAnchored = historical
-    ? enriched
-    : await prependCurrentBudgetIndicators(query, enriched);
-  const { filtered: preFiltered, amendedNodeIds } = hardFilterSuperseded(
-    budgetAnchored,
-    historical,
-  );
-
-  // Tag each remaining candidate so the judge sees has_amendment_history=true
-  // for sections where a superseded peer was removed by the pre-filter.
-  const taggedCandidates = preFiltered.map((c) => ({
-    ...c,
-    hasAmendmentHistory: c.table === "ordinance_provisions" &&
-      c.municode_node_id !== undefined &&
-      amendedNodeIds.has(c.municode_node_id),
-  }));
-
-  const currentAwareCandidates = await rerankCurrentStateCandidates(
-    query,
-    taggedCandidates,
-  );
-  const currentAwareDocuments = await fetchSourceDocuments(
-    currentAwareCandidates,
-  );
-  const deterministicCurrentValue = resolveDeterministicCurrentValue(
-    query,
-    currentAwareCandidates,
-    currentAwareDocuments,
-  );
-
-  if (deterministicCurrentValue !== null) {
-    const directDraft = deterministicCurrentValueDraft(
-      query,
-      deterministicCurrentValue,
-      currentAwareDocuments,
+    const bm25Results = new Map<ChunkTable, Record<string, unknown>[]>(
+      CHUNK_TABLES.map((t, i) => [t, bm25Raw[i]]),
     );
-    if (directDraft !== null) {
-      const responseData = assembleQueryResponse(
-        directDraft,
-        false,
-        null,
-        null,
-        false,
-        [],
+    const vectorResults = new Map<ChunkTable, Record<string, unknown>[]>(
+      CHUNK_TABLES.map((t, i) => [t, vectorRaw[i]]),
+    );
+
+    // ── Step 4: RRF merge ───────────────────────────────────────────────────────
+
+    const ranked = rrfMerge(bm25Results, vectorResults);
+
+    // ── INCOMPLETE_SEARCH_FLOOR gate ────────────────────────────────────────────
+
+    const maxScore = ranked[0]?.rrfScore ?? 0;
+    if (maxScore < INCOMPLETE_SEARCH_FLOOR) {
+      // ── Deep-historical slow path (see _deep-historical.ts) ───────────────────
+      // Only attempted when the fast path found genuinely nothing AND the query
+      // names a year within EnCode's reprint coverage AND the EnCode compliance
+      // gate is on. Extended-timeout, explicitly-disclosed, never-fabricating —
+      // see file header there for the full design rationale.
+      const deepHistoricalTrigger = shouldAttemptDeepHistoricalLookup(
+        query,
+        maxScore,
+        INCOMPLETE_SEARCH_FLOOR,
       );
-      return await returnLoggedSuccess(responseData, startedAt, {
+
+      if (deepHistoricalTrigger.attempt) {
+        // Approximate: this path has its own single-LLM-call budget, separate
+        // from LLM_TOTAL_CALL_CAP (which governs the Judge/Drafter/Verifier
+        // chain this path never enters). Counted here even on a pre-LLM
+        // failure (Docling error, zero relevant excerpts) for simplicity — an
+        // acceptable approximation for a log metric, not a hard invariant.
+        llmCalls += 1;
+        const outcome = await runDeepHistoricalLookup(
+          db as unknown as PreingestDb,
+          query,
+          deepHistoricalTrigger.reprint,
+        );
+        const deepHistoricalResponse = assembleDeepHistoricalResponse(outcome);
+        return await returnLoggedSuccess(deepHistoricalResponse, startedAt, {
+          ip,
+          queryText: query,
+          llmCalls,
+          temporalFlag: true,
+          verifierFlag: false,
+          incompleteSearch: outcome.status !== "answered",
+        });
+      }
+
+      const incompleteResponse: QueryResponseData = {
+        answer: "",
+        citations: [] as CitationChunk[],
+        citationMap: {},
+        chunkText: {},
+        temporalFlag: false,
+        amendmentCaveat: null,
+        pendingChangeNotice: null,
+        incompleteSearchWarning: true,
+        freshnessTimestamp: null,
+        freshness: null,
+        caveats: [],
+        deepHistoricalLookup: null,
+      };
+      return await returnLoggedSuccess(incompleteResponse, startedAt, {
         ip,
         queryText: query,
         llmCalls,
         temporalFlag: false,
         verifierFlag: false,
-        incompleteSearch: false,
+        incompleteSearch: true,
       });
     }
-  }
 
-  const pendingChanges = await fetchPendingChanges(currentAwareCandidates);
+    // ── Step 5 (task 2-8): Ancestor enrichment ─────────────────────────────────
+    // Feed top JUDGE_CONTEXT_COUNT candidates (not just 8) so the judge has full
+    // temporal coverage before filtering down to ≤8.
 
-  llmCalls += 1;
-  const judgeResult = await runTemporalJudge(
-    query,
-    currentAwareCandidates,
-    pendingChanges,
-  );
+    const topN = ranked.slice(0, JUDGE_CONTEXT_COUNT);
+    const enriched = await enrichWithAncestors(topN);
 
-  // AC 7: On Ollama exhaustion, return clean error — never silently fall back
-  // to the unfiltered chunk set.
-  if (judgeResult === null) {
-    return error(
-      "OLLAMA_EXHAUSTED",
-      "Unable to process your query right now. Please try again in a moment.",
+    // ── Step 6 (task 2-9): Temporal Judge ──────────────────────────────────────
+
+    const historical = isHistoricalOnlyQuery(query);
+    const budgetAnchored = historical
+      ? enriched
+      : await prependCurrentBudgetIndicators(query, enriched);
+    const { filtered: preFiltered, amendedNodeIds } = hardFilterSuperseded(
+      budgetAnchored,
+      historical,
     );
-  }
 
-  const filteredCandidates = judgeResult.filteredCandidates;
-  const { pendingChangeNotice } = judgeResult;
-  // AC3: pre-filter removing superseded chunks IS temporal reasoning — force flag even
-  // if the LLM judge didn't set it independently.
-  const temporalFlag = judgeResult.temporalFlag || amendedNodeIds.size > 0;
+    // Tag each remaining candidate so the judge sees has_amendment_history=true
+    // for sections where a superseded peer was removed by the pre-filter.
+    const taggedCandidates = preFiltered.map((c) => ({
+      ...c,
+      hasAmendmentHistory: c.table === "ordinance_provisions" &&
+        c.municode_node_id !== undefined &&
+        amendedNodeIds.has(c.municode_node_id),
+    }));
 
-  // ── Step 7 (task 2-10): Scripted FK traversal ─────────────────────────────
+    const currentAwareCandidates = await rerankCurrentStateCandidates(
+      query,
+      taggedCandidates,
+    );
+    const currentAwareDocuments = await fetchSourceDocuments(
+      currentAwareCandidates,
+    );
+    const deterministicCurrentValue = resolveDeterministicCurrentValue(
+      query,
+      currentAwareCandidates,
+      currentAwareDocuments,
+    );
 
-  const fkTraversal = await traverseForeignKeys(filteredCandidates);
-  if (!fkTraversal.ok) {
-    return error("INGESTION_FAILED", fkTraversal.message, 500);
-  }
+    if (deterministicCurrentValue !== null) {
+      const directDraft = deterministicCurrentValueDraft(
+        query,
+        deterministicCurrentValue,
+        currentAwareDocuments,
+      );
+      if (directDraft !== null) {
+        const responseData = assembleQueryResponse(
+          directDraft,
+          false,
+          null,
+          null,
+          false,
+          deterministicCurrentValue.table === "narrative_chunks"
+            ? [CURRENT_VALUE_FALLBACK_CAVEAT]
+            : [],
+        );
+        return await returnLoggedSuccess(responseData, startedAt, {
+          ip,
+          queryText: query,
+          llmCalls,
+          temporalFlag: false,
+          verifierFlag: false,
+          incompleteSearch: false,
+        });
+      }
+    }
 
-  const finalContext = fkTraversal.candidates;
+    const pendingChanges = await fetchPendingChanges(currentAwareCandidates);
 
-  // ── Step 8 (task 2-10): Completeness check ────────────────────────────────
-
-  const completeness = applyCompletenessCheck(
-    finalContext,
-    temporalFlag,
-    judgeResult.amendmentCaveat,
-  );
-
-  // ── Step 9 (task 2-11): Answer Drafter LLM call ──────────────────────────
-  // Keep the drafter context at the build-plan ceiling. FK traversal appends
-  // linked rows after the selected context, so lower-priority overflow rows are
-  // excluded here rather than expanding the answer prompt beyond 8 chunks.
-
-  const drafterContext = finalContext.slice(0, JUDGE_OUTPUT_LIMIT);
-  const drafterChunks = await prepareDrafterChunks(drafterContext);
-  const answerCaveats = caveatList(
-    completeness.amendmentCaveat,
-    pendingChangeNotice,
-    completeness.incompleteSearchWarning,
-  );
-  if (isCurrentStateQuery(query) && !isHistoricalQuery(query)) {
-    answerCaveats.push(CURRENT_VALUE_FALLBACK_CAVEAT);
-  }
-  if (drafterChunks.length > 0) {
     llmCalls += 1;
-  }
-  const draft = await runAnswerDrafter(
-    query,
-    drafterChunks,
-    answerCaveats,
-  );
-
-  if (draft === null) {
-    return error(
-      "OLLAMA_EXHAUSTED",
-      "Unable to process your query right now. Please try again in a moment.",
+    const judgeResult = await runTemporalJudge(
+      query,
+      currentAwareCandidates,
+      pendingChanges,
     );
-  }
 
-  // ── Step 10 (task 2-12): Conditional Verifier + correction loop ───────────
+    // AC 7: On Ollama exhaustion, return clean error — never silently fall back
+    // to the unfiltered chunk set.
+    if (judgeResult === null) {
+      return error(
+        "OLLAMA_EXHAUSTED",
+        "Unable to process your query right now. Please try again in a moment.",
+      );
+    }
 
-  const llmBudget: LlmCallBudget = {
-    used: llmCalls,
-    cap: LLM_TOTAL_CALL_CAP,
-  };
-  const verifierFlag = shouldRunVerifier(draft, temporalFlag) &&
-    hasRemainingLlmCall(llmBudget);
-  const verifiedDraft = await runVerifierCorrectionLoop(
-    query,
-    draft,
-    drafterChunks,
-    answerCaveats,
-    temporalFlag,
-    llmBudget,
-  );
+    const filteredCandidates = judgeResult.filteredCandidates;
+    const { pendingChangeNotice } = judgeResult;
+    // AC3: pre-filter removing superseded chunks IS temporal reasoning — force flag even
+    // if the LLM judge didn't set it independently.
+    const temporalFlag = judgeResult.temporalFlag || amendedNodeIds.size > 0;
 
-  if (verifiedDraft === null) {
-    return error(
-      "OLLAMA_EXHAUSTED",
-      "Unable to process your query right now. Please try again in a moment.",
+    // ── Step 7 (task 2-10): Scripted FK traversal ─────────────────────────────
+
+    const fkTraversal = await traverseForeignKeys(filteredCandidates);
+    if (!fkTraversal.ok) {
+      return error("INGESTION_FAILED", fkTraversal.message, 500);
+    }
+
+    const finalContext = fkTraversal.candidates;
+
+    // ── Step 8 (task 2-10): Completeness check ────────────────────────────────
+
+    const completeness = applyCompletenessCheck(
+      finalContext,
+      temporalFlag,
+      judgeResult.amendmentCaveat,
     );
-  }
-  llmCalls = llmBudget.used;
 
-  // ── Step 11 (task 2-13): Response assembly + RequestLog ──────────────────
+    // ── Step 9 (task 2-11): Answer Drafter LLM call ──────────────────────────
+    // Keep the drafter context at the build-plan ceiling. FK traversal appends
+    // linked rows after the selected context, so lower-priority overflow rows are
+    // excluded here rather than expanding the answer prompt beyond 8 chunks.
 
-  const responseData = assembleQueryResponse(
-    verifiedDraft,
-    temporalFlag,
-    completeness.amendmentCaveat,
-    pendingChangeNotice,
-    completeness.incompleteSearchWarning,
-    answerCaveats,
-  );
-  return await returnLoggedSuccess(responseData, startedAt, {
-    ip,
-    queryText: query,
-    llmCalls,
-    temporalFlag,
-    verifierFlag,
-    incompleteSearch: completeness.incompleteSearchWarning,
+    const drafterContext = finalContext.slice(0, JUDGE_OUTPUT_LIMIT);
+    const drafterChunks = await prepareDrafterChunks(drafterContext);
+    const answerCaveats = caveatList(
+      completeness.amendmentCaveat,
+      pendingChangeNotice,
+      completeness.incompleteSearchWarning,
+    );
+    if (isCurrentStateQuery(query) && !isHistoricalQuery(query)) {
+      answerCaveats.push(CURRENT_VALUE_FALLBACK_CAVEAT);
+    }
+    if (drafterChunks.length > 0) {
+      llmCalls += 1;
+    }
+    const draft = await runAnswerDrafter(
+      query,
+      drafterChunks,
+      answerCaveats,
+    );
+
+    if (draft === null) {
+      return error(
+        "OLLAMA_EXHAUSTED",
+        "Unable to process your query right now. Please try again in a moment.",
+      );
+    }
+
+    // ── Step 10 (task 2-12): Conditional Verifier + correction loop ───────────
+
+    const llmBudget: LlmCallBudget = {
+      used: llmCalls,
+      cap: LLM_TOTAL_CALL_CAP,
+    };
+    const verifierFlag = shouldRunVerifier(draft, temporalFlag) &&
+      hasRemainingLlmCall(llmBudget);
+    const verifiedDraft = await runVerifierCorrectionLoop(
+      query,
+      draft,
+      drafterChunks,
+      answerCaveats,
+      temporalFlag,
+      llmBudget,
+    );
+
+    if (verifiedDraft === null) {
+      return error(
+        "OLLAMA_EXHAUSTED",
+        "Unable to process your query right now. Please try again in a moment.",
+      );
+    }
+    llmCalls = llmBudget.used;
+
+    // ── Step 11 (task 2-13): Response assembly + RequestLog ──────────────────
+
+    const responseData = assembleQueryResponse(
+      verifiedDraft,
+      temporalFlag,
+      completeness.amendmentCaveat,
+      pendingChangeNotice,
+      completeness.incompleteSearchWarning,
+      answerCaveats,
+    );
+    return await returnLoggedSuccess(responseData, startedAt, {
+      ip,
+      queryText: query,
+      llmCalls,
+      temporalFlag,
+      verifierFlag,
+      incompleteSearch: completeness.incompleteSearchWarning,
+    });
   });
-});
+}
