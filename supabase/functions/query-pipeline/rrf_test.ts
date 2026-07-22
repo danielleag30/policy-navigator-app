@@ -16,6 +16,7 @@ Deno.env.set(
 const {
   deterministicCurrentValueDraft,
   extractCurrentValueFromNarrative,
+  formatInlineAnswerCitations,
   formatBudgetValue,
   resolveDeterministicCurrentValue,
   structuredCurrentValueScore,
@@ -806,24 +807,6 @@ function freshnessNotice(freshnessTimestamp: string | null): string | null {
   return `Sources current as of ${retrievedDate(freshnessTimestamp)}`;
 }
 
-function citationByChunkId(citations: CitationChunk[]): Map<string, string> {
-  return new Map(citations.map((citation) => [
-    citation.chunk_id,
-    citation.formatted,
-  ]));
-}
-
-function formatInlineAnswerCitations(
-  answer: string,
-  citations: CitationChunk[],
-): string {
-  const labels = citationByChunkId(citations);
-  return answer.replace(
-    /\[chunk_id=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12});[^\n]*?\](?:\])?/gi,
-    (raw, chunkId: string) => labels.get(chunkId) ?? raw,
-  );
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 Deno.test("minuteFloor zeroes seconds and milliseconds", () => {
@@ -1342,6 +1325,40 @@ Deno.test("response assembly replaces inline chunk-id citations with formatted c
   if (
     !formatted.includes(
       "[FY 2026 Adopted Budget, page 42, retrieved 2026-06-20]",
+    )
+  ) {
+    throw new Error(`expected formatted citation in answer: ${formatted}`);
+  }
+});
+
+Deno.test("response assembly removes raw chunk-id citation with nested bbox JSON", () => {
+  const chunkId = "019f7e43-dd00-742a-bf02-038b64604d16";
+  const citations: CitationChunk[] = [{
+    chunk_id: chunkId,
+    source_url: "https://example.test/minutes.pdf",
+    source_title: "Board Minutes — 2024-09-17",
+    page_number: 4,
+    bbox: {
+      start: [{ x: 72.1, y: 121.4 }, { x: 412.7, y: 121.4 }],
+      end: [{ x: 72.1, y: 140.8 }, { x: 501.2, y: 140.8 }],
+    },
+    retrieved_at: "2026-07-20T00:00:00Z",
+    formatted: "[Board Minutes — 2024-09-17, page 4, retrieved 2026-07-20]",
+    rank: 1,
+  }];
+
+  const answer =
+    `Fairfax County currently levies a 4% transient occupancy tax, consisting of 2% for general purposes and 2% to promote tourism [chunk_id=${chunkId}; page=4; bbox={"start":[{"x":72.1,"y":121.4},{"x":412.7,"y":121.4}],"end":[{"x":72.1,"y":140.8},{"x":501.2,"y":140.8}]}].`;
+  const formatted = formatInlineAnswerCitations(answer, citations);
+
+  if (formatted.includes("chunk_id=") || formatted.includes("bbox=")) {
+    throw new Error(
+      `expected raw citation metadata to be removed: ${formatted}`,
+    );
+  }
+  if (
+    !formatted.includes(
+      "[Board Minutes — 2024-09-17, page 4, retrieved 2026-07-20]",
     )
   ) {
     throw new Error(`expected formatted citation in answer: ${formatted}`);

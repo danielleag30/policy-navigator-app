@@ -2706,15 +2706,61 @@ function citationByChunkId(citations: CitationChunk[]): Map<string, string> {
   ]));
 }
 
-function formatInlineAnswerCitations(
+export function formatInlineAnswerCitations(
   answer: string,
   citations: CitationChunk[],
 ): string {
   const labels = citationByChunkId(citations);
-  return answer.replace(
-    /\[chunk_id=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12});[^\n]*?\](?:\])?/gi,
-    (raw, chunkId: string) => labels.get(chunkId) ?? raw,
-  );
+  const marker =
+    /\[chunk_id=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12});/gi;
+  let formatted = "";
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = marker.exec(answer)) !== null) {
+    const start = match.index;
+    const end = inlineCitationEnd(answer, start);
+    if (end === null) continue;
+
+    formatted += answer.slice(cursor, start);
+    formatted += labels.get(match[1]) ?? answer.slice(start, end);
+    cursor = end;
+    marker.lastIndex = end;
+  }
+
+  return cursor === 0 ? answer : formatted + answer.slice(cursor);
+}
+
+function inlineCitationEnd(answer: string, start: number): number | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < answer.length; index++) {
+    const char = answer[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+    } else if (char === "[") {
+      depth++;
+    } else if (char === "]") {
+      depth--;
+      if (depth === 0) return index + 1;
+    }
+  }
+
+  return null;
 }
 
 function isRefusalAnswer(answer: string): boolean {
