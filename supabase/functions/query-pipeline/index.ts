@@ -65,6 +65,7 @@ const JUDGE_CONTEXT_COUNT = parseInt(
 
 // Maximum chunks the Temporal Judge may select (hard ceiling per build plan).
 const JUDGE_OUTPUT_LIMIT = 8;
+const CURRENT_BUDGET_INDICATOR_LOOKUP_LIMIT = 1000;
 
 // Temperature for the Temporal Judge — 0.0 for maximum determinism (filter/verifier role).
 // Documented in DEPS.md under "Temporal Judge (2-9): 0.0".
@@ -660,7 +661,20 @@ function isRelevantTaxRateCandidate(
   if (!/\btax\b/i.test(query) || !/\brate\b/i.test(query)) return false;
   const corpus = candidateCorpus(c, doc);
   if (c.table === "budget_indicators") {
-    return /\btax\b/.test(corpus) && /\brate\b/.test(corpus) &&
+    const structuredRateFields = [c.row.indicator_name, c.row.unit]
+      .map(normalizedText)
+      .join(" ");
+    const unit = normalizedText(c.row.unit);
+    const actual = asNumber(c.row.value_actual);
+    const plainDollarAmount = /\bdollars?\b/.test(unit) &&
+      !/\bper\s+\$?100\b/.test(unit);
+    const rowItselfIsRate = /\brate\b/.test(structuredRateFields) ||
+      /\bper\s+\$?100\b/.test(structuredRateFields) ||
+      /\bpercent(age)?\b/.test(unit);
+    const rowValueIsPlausibleRate = actual === null || actual <= 100;
+    return rowItselfIsRate && rowValueIsPlausibleRate &&
+      !plainDollarAmount && /\btax\b/.test(corpus) &&
+      /\brate\b/.test(corpus) &&
       matchesBudgetIndicatorQuery(query, c, doc);
   }
   if (c.table === "narrative_chunks") {
@@ -675,6 +689,9 @@ function isAdoptedBudgetSource(
   doc?: SourceDocument,
 ): boolean {
   const corpus = candidateCorpus(c, doc);
+  if (!hasDraftSourceStatus(doc) && hasFinalAdoptedRateSignal(c)) {
+    return true;
+  }
   return /\badopt(ed|ion)?\b/.test(corpus) &&
     !hasDraftQualifierNearRateMention(c) &&
     !hasDraftSourceStatus(doc);
@@ -764,7 +781,84 @@ function hasDraftQualifierForRateEvidence(
   c: EnrichedCandidate,
   doc?: SourceDocument,
 ): boolean {
+  if (!hasDraftSourceStatus(doc) && hasFinalAdoptedRateSignal(c)) {
+    return false;
+  }
   return hasDraftQualifierNearRateMention(c) || hasDraftSourceStatus(doc);
+}
+
+function canonicalBudgetDocumentScore(doc?: SourceDocument): number {
+  const source = [doc?.title, doc?.filename, doc?.url]
+    .map(normalizedText)
+    .join(" ");
+  let score = 0;
+
+  if (/\badopted(?:%20|\s|-)*budget(?:%20|\s|-)*summary\b/.test(source)) {
+    score += 500;
+  }
+  if (
+    /\bgeneral(?:%20|\s|-)*fund(?:%20|\s|-)*revenue(?:%20|\s|-)*overview\b/
+      .test(source)
+  ) {
+    score += 400;
+  }
+  if (
+    /\btrends(?:%20|\s|-)*(?:and|%26)(?:%20|\s|-)*demographics\b/.test(source)
+  ) {
+    score += 300;
+  }
+  if (/\bfy20\d{2}(?:%20|\s|-)*adopted(?:%20|\s|-)*package\b/.test(source)) {
+    score += 250;
+  }
+  if (/\bcex(?:%20|\s|-)*letter\b/.test(source)) {
+    score -= 400;
+  }
+  if (/\bvolume2\b/.test(source)) {
+    score -= 100;
+  }
+
+  return score;
+}
+
+function finalAdoptedRateTextScore(c: EnrichedCandidate): number {
+  const text = normalizedText(candidateText(c));
+  let score = 0;
+
+  // Live FY2027 rows show final rates in adopted summaries using explicit
+  // adoption/reduction language; stale rows mention the advertised/current
+  // rate in passing, including inside adopted-tagged transmittal letters.
+  if (/\badopt(?:ed|ion)\b[\s\S]{0,120}\btax\s+rate\b/.test(text)) {
+    score += 600;
+  }
+  if (
+    /\btax\s+rate\b[\s\S]{0,160}\b(?:decreas|reduc|lower)(?:ed|tion|ing)?\b/
+      .test(text) ||
+    /\b(?:decreas|reduc|lower)(?:ed|tion|ing)?\b[\s\S]{0,160}\btax\s+rate\b/
+      .test(text)
+  ) {
+    score += 550;
+  }
+  if (
+    /\bfrom\s+\$?\d+(?:\.\d+)?[\s\S]{0,80}\bto\s+\$?\d+(?:\.\d+)?/.test(text)
+  ) {
+    score += 350;
+  }
+  if (/\badvertised\s+budget\s+plan\b[\s\S]{0,160}\btax\s+rate\b/.test(text)) {
+    score -= 500;
+  }
+
+  return score;
+}
+
+function budgetIndicatorTiebreakScore(
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): number {
+  return finalAdoptedRateTextScore(c) + canonicalBudgetDocumentScore(doc);
+}
+
+function hasFinalAdoptedRateSignal(c: EnrichedCandidate): boolean {
+  return finalAdoptedRateTextScore(c) >= 550;
 }
 
 function currentStateScore(
@@ -778,7 +872,8 @@ function currentStateScore(
     const fiscalYear = asNumber(c.row.fiscal_year) ?? doc?.fiscal_year ?? 0;
     const adoptedBoost = isAdoptedBudgetSource(c, doc) ? 100 : 0;
     const draftPenalty = hasDraftQualifierForRateEvidence(c, doc) ? -100 : 0;
-    return 2_000_000 + adoptedBoost + draftPenalty + fiscalYear;
+    return 2_000_000 + adoptedBoost + draftPenalty + fiscalYear +
+      budgetIndicatorTiebreakScore(c, doc);
   }
 
   if (
@@ -794,14 +889,11 @@ function currentStateScore(
   return 0;
 }
 
-async function rerankCurrentStateCandidates(
+function compareCurrentStateCandidates(
   query: string,
-  candidates: EnrichedCandidate[],
-): Promise<EnrichedCandidate[]> {
-  if (!isCurrentStateQuery(query)) return candidates;
-
-  const documents = await fetchSourceDocuments(candidates);
-  return [...candidates].sort((a, b) => {
+  documents: Map<string, SourceDocument>,
+): (a: EnrichedCandidate, b: EnrichedCandidate) => number {
+  return (a, b) => {
     const docA = typeof a.row.document_id === "string"
       ? documents.get(a.row.document_id)
       : undefined;
@@ -812,7 +904,55 @@ async function rerankCurrentStateCandidates(
       currentStateScore(query, a, docA);
     if (scoreDelta !== 0) return scoreDelta;
     return b.rrfScore - a.rrfScore;
-  });
+  };
+}
+
+function decisiveCurrentBudgetWinner(
+  query: string,
+  candidates: EnrichedCandidate[],
+  documents: Map<string, SourceDocument>,
+): EnrichedCandidate | null {
+  if (!isCurrentStateQuery(query)) return null;
+
+  const scored = candidates
+    .filter((c) => c.table === "budget_indicators")
+    .map((candidate) => {
+      const doc = typeof candidate.row.document_id === "string"
+        ? documents.get(candidate.row.document_id)
+        : undefined;
+      return {
+        candidate,
+        score: currentStateScore(query, candidate, doc),
+      };
+    })
+    .filter(({ score }) => score >= 2_000_000)
+    .sort((a, b) =>
+      b.score - a.score || b.candidate.rrfScore - a.candidate.rrfScore
+    );
+
+  if (scored.length === 0) return null;
+  const [top, runnerUp] = scored;
+  if (runnerUp && top.score - runnerUp.score < 100) return null;
+  return top.candidate;
+}
+
+function pinCurrentBudgetWinner(
+  filteredCandidates: EnrichedCandidate[],
+  pinned: EnrichedCandidate | null,
+): EnrichedCandidate[] {
+  if (!pinned) return filteredCandidates;
+  const withoutPinned = filteredCandidates.filter((c) => c.key !== pinned.key);
+  return [pinned, ...withoutPinned].slice(0, JUDGE_OUTPUT_LIMIT);
+}
+
+async function rerankCurrentStateCandidates(
+  query: string,
+  candidates: EnrichedCandidate[],
+): Promise<EnrichedCandidate[]> {
+  if (!isCurrentStateQuery(query)) return candidates;
+
+  const documents = await fetchSourceDocuments(candidates);
+  return [...candidates].sort(compareCurrentStateCandidates(query, documents));
 }
 
 function budgetIndicatorCandidate(
@@ -850,11 +990,11 @@ async function fetchCurrentBudgetIndicatorRows(
       "*, documents!inner(id, url, title, filename, ingested_at, source_published_at, fiscal_year)",
     )
     .or(
-      "program.ilike.%Tax%,indicator_name.ilike.%Tax%,raw_extracted_text.ilike.%tax%",
+      "indicator_name.ilike.%Tax%rate%,raw_extracted_text.ilike.%tax%rate%,unit.ilike.%per $100%",
     )
     .not("value_actual", "is", null)
     .order("fiscal_year", { ascending: false })
-    .limit(200);
+    .limit(CURRENT_BUDGET_INDICATOR_LOOKUP_LIMIT);
 
   if (dbErr) {
     console.error(
@@ -864,17 +1004,32 @@ async function fetchCurrentBudgetIndicatorRows(
     return [];
   }
 
-  return ((data ?? []) as Record<string, unknown>[])
+  const rows = ((data ?? []) as Record<string, unknown>[])
     .filter((row) => {
       const doc = row.documents as SourceDocument | undefined;
       return isAdoptedBudgetSource(budgetIndicatorCandidate(row), doc) &&
         isRelevantTaxRateCandidate(query, budgetIndicatorCandidate(row), doc);
+    })
+    .sort((a, b) => {
+      const candidateA = budgetIndicatorCandidate(a);
+      const candidateB = budgetIndicatorCandidate(b);
+      const docA = a.documents as SourceDocument | undefined;
+      const docB = b.documents as SourceDocument | undefined;
+      return compareCurrentStateCandidates(
+        query,
+        new Map([
+          ...(docA ? [[docA.id, docA] as const] : []),
+          ...(docB ? [[docB.id, docB] as const] : []),
+        ]),
+      )(candidateA, candidateB);
     })
     .slice(0, 3)
     .map((row) => {
       const { documents: _documents, ...candidateRow } = row;
       return budgetIndicatorCandidate(candidateRow);
     });
+
+  return rows;
 }
 
 async function prependCurrentBudgetIndicators(
@@ -2562,6 +2717,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
     query,
     taggedCandidates,
   );
+  const currentAwareDocuments = await fetchSourceDocuments(
+    currentAwareCandidates,
+  );
+  const pinnedCurrentBudgetWinner = decisiveCurrentBudgetWinner(
+    query,
+    currentAwareCandidates,
+    currentAwareDocuments,
+  );
 
   const pendingChanges = await fetchPendingChanges(currentAwareCandidates);
 
@@ -2581,7 +2744,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
     );
   }
 
-  const { filteredCandidates, pendingChangeNotice } = judgeResult;
+  const filteredCandidates = pinCurrentBudgetWinner(
+    judgeResult.filteredCandidates,
+    pinnedCurrentBudgetWinner,
+  );
+  const { pendingChangeNotice } = judgeResult;
   // AC3: pre-filter removing superseded chunks IS temporal reasoning — force flag even
   // if the LLM judge didn't set it independently.
   const temporalFlag = judgeResult.temporalFlag || amendedNodeIds.size > 0;

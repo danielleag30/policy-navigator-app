@@ -7,6 +7,7 @@
 // ── Inline the testable logic (no Deno/Supabase runtime deps) ────────────────
 
 const RRF_K = 60;
+const JUDGE_OUTPUT_LIMIT = 8;
 
 type ChunkTable =
   | "ordinance_provisions"
@@ -259,7 +260,20 @@ function isRelevantTaxRateCandidate(
   if (!/\btax\b/i.test(query) || !/\brate\b/i.test(query)) return false;
   const corpus = candidateCorpus(c, doc);
   if (c.table === "budget_indicators") {
-    return /\btax\b/.test(corpus) && /\brate\b/.test(corpus) &&
+    const structuredRateFields = [c.row.indicator_name, c.row.unit]
+      .map(normalizedText)
+      .join(" ");
+    const unit = normalizedText(c.row.unit);
+    const actual = asNumber(c.row.value_actual);
+    const plainDollarAmount = /\bdollars?\b/.test(unit) &&
+      !/\bper\s+\$?100\b/.test(unit);
+    const rowItselfIsRate = /\brate\b/.test(structuredRateFields) ||
+      /\bper\s+\$?100\b/.test(structuredRateFields) ||
+      /\bpercent(age)?\b/.test(unit);
+    const rowValueIsPlausibleRate = actual === null || actual <= 100;
+    return rowItselfIsRate && rowValueIsPlausibleRate &&
+      !plainDollarAmount && /\btax\b/.test(corpus) &&
+      /\brate\b/.test(corpus) &&
       matchesBudgetIndicatorQuery(query, c, doc);
   }
   if (c.table === "narrative_chunks") {
@@ -274,6 +288,9 @@ function isAdoptedBudgetSource(
   doc?: SourceDocument,
 ): boolean {
   const corpus = candidateCorpus(c, doc);
+  if (!hasDraftSourceStatus(doc) && hasFinalAdoptedRateSignal(c)) {
+    return true;
+  }
   return /\badopt(ed|ion)?\b/.test(corpus) &&
     !hasDraftQualifierNearRateMention(c) &&
     !hasDraftSourceStatus(doc);
@@ -361,7 +378,81 @@ function hasDraftQualifierForRateEvidence(
   c: EnrichedCandidate,
   doc?: SourceDocument,
 ): boolean {
+  if (!hasDraftSourceStatus(doc) && hasFinalAdoptedRateSignal(c)) {
+    return false;
+  }
   return hasDraftQualifierNearRateMention(c) || hasDraftSourceStatus(doc);
+}
+
+function canonicalBudgetDocumentScore(doc?: SourceDocument): number {
+  const source = [doc?.title, doc?.filename, doc?.url]
+    .map(normalizedText)
+    .join(" ");
+  let score = 0;
+
+  if (/\badopted(?:%20|\s|-)*budget(?:%20|\s|-)*summary\b/.test(source)) {
+    score += 500;
+  }
+  if (
+    /\bgeneral(?:%20|\s|-)*fund(?:%20|\s|-)*revenue(?:%20|\s|-)*overview\b/
+      .test(source)
+  ) {
+    score += 400;
+  }
+  if (
+    /\btrends(?:%20|\s|-)*(?:and|%26)(?:%20|\s|-)*demographics\b/.test(source)
+  ) {
+    score += 300;
+  }
+  if (/\bfy20\d{2}(?:%20|\s|-)*adopted(?:%20|\s|-)*package\b/.test(source)) {
+    score += 250;
+  }
+  if (/\bcex(?:%20|\s|-)*letter\b/.test(source)) {
+    score -= 400;
+  }
+  if (/\bvolume2\b/.test(source)) {
+    score -= 100;
+  }
+
+  return score;
+}
+
+function finalAdoptedRateTextScore(c: EnrichedCandidate): number {
+  const text = normalizedText(candidateText(c));
+  let score = 0;
+
+  if (/\badopt(?:ed|ion)\b[\s\S]{0,120}\btax\s+rate\b/.test(text)) {
+    score += 600;
+  }
+  if (
+    /\btax\s+rate\b[\s\S]{0,160}\b(?:decreas|reduc|lower)(?:ed|tion|ing)?\b/
+      .test(text) ||
+    /\b(?:decreas|reduc|lower)(?:ed|tion|ing)?\b[\s\S]{0,160}\btax\s+rate\b/
+      .test(text)
+  ) {
+    score += 550;
+  }
+  if (
+    /\bfrom\s+\$?\d+(?:\.\d+)?[\s\S]{0,80}\bto\s+\$?\d+(?:\.\d+)?/.test(text)
+  ) {
+    score += 350;
+  }
+  if (/\badvertised\s+budget\s+plan\b[\s\S]{0,160}\btax\s+rate\b/.test(text)) {
+    score -= 500;
+  }
+
+  return score;
+}
+
+function budgetIndicatorTiebreakScore(
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): number {
+  return finalAdoptedRateTextScore(c) + canonicalBudgetDocumentScore(doc);
+}
+
+function hasFinalAdoptedRateSignal(c: EnrichedCandidate): boolean {
+  return finalAdoptedRateTextScore(c) >= 550;
 }
 
 function currentStateScore(
@@ -375,7 +466,8 @@ function currentStateScore(
     const fiscalYear = asNumber(c.row.fiscal_year) ?? doc?.fiscal_year ?? 0;
     const adoptedBoost = isAdoptedBudgetSource(c, doc) ? 100 : 0;
     const draftPenalty = hasDraftQualifierForRateEvidence(c, doc) ? -100 : 0;
-    return 2_000_000 + adoptedBoost + draftPenalty + fiscalYear;
+    return 2_000_000 + adoptedBoost + draftPenalty + fiscalYear +
+      budgetIndicatorTiebreakScore(c, doc);
   }
 
   if (
@@ -391,13 +483,11 @@ function currentStateScore(
   return 0;
 }
 
-function rerankCurrentStateCandidatesForTest(
+function compareCurrentStateCandidates(
   query: string,
-  candidates: EnrichedCandidate[],
   documents: Map<string, SourceDocument>,
-): EnrichedCandidate[] {
-  if (!isCurrentStateQuery(query)) return candidates;
-  return [...candidates].sort((a, b) => {
+): (a: EnrichedCandidate, b: EnrichedCandidate) => number {
+  return (a, b) => {
     const docA = typeof a.row.document_id === "string"
       ? documents.get(a.row.document_id)
       : undefined;
@@ -408,7 +498,54 @@ function rerankCurrentStateCandidatesForTest(
       currentStateScore(query, a, docA);
     if (scoreDelta !== 0) return scoreDelta;
     return b.rrfScore - a.rrfScore;
-  });
+  };
+}
+
+function decisiveCurrentBudgetWinnerForTest(
+  query: string,
+  candidates: EnrichedCandidate[],
+  documents: Map<string, SourceDocument>,
+): EnrichedCandidate | null {
+  if (!isCurrentStateQuery(query)) return null;
+
+  const scored = candidates
+    .filter((c) => c.table === "budget_indicators")
+    .map((candidate) => {
+      const doc = typeof candidate.row.document_id === "string"
+        ? documents.get(candidate.row.document_id)
+        : undefined;
+      return {
+        candidate,
+        score: currentStateScore(query, candidate, doc),
+      };
+    })
+    .filter(({ score }) => score >= 2_000_000)
+    .sort((a, b) =>
+      b.score - a.score || b.candidate.rrfScore - a.candidate.rrfScore
+    );
+
+  if (scored.length === 0) return null;
+  const [top, runnerUp] = scored;
+  if (runnerUp && top.score - runnerUp.score < 100) return null;
+  return top.candidate;
+}
+
+function pinCurrentBudgetWinnerForTest(
+  filteredCandidates: EnrichedCandidate[],
+  pinned: EnrichedCandidate | null,
+): EnrichedCandidate[] {
+  if (!pinned) return filteredCandidates;
+  const withoutPinned = filteredCandidates.filter((c) => c.key !== pinned.key);
+  return [pinned, ...withoutPinned].slice(0, JUDGE_OUTPUT_LIMIT);
+}
+
+function rerankCurrentStateCandidatesForTest(
+  query: string,
+  candidates: EnrichedCandidate[],
+  documents: Map<string, SourceDocument>,
+): EnrichedCandidate[] {
+  if (!isCurrentStateQuery(query)) return candidates;
+  return [...candidates].sort(compareCurrentStateCandidates(query, documents));
 }
 
 function selectedCurrentBudgetIndicatorsForTest(
@@ -431,11 +568,7 @@ function selectedCurrentBudgetIndicatorsForTest(
       return isAdoptedBudgetSource(row, doc) &&
         isRelevantTaxRateCandidate(query, row, doc);
     })
-    .sort((a, b) => {
-      const fyA = asNumber(a.row.fiscal_year) ?? 0;
-      const fyB = asNumber(b.row.fiscal_year) ?? 0;
-      return fyB - fyA;
-    })
+    .sort(compareCurrentStateCandidates(query, documents))
     .slice(0, 3);
 }
 
@@ -1527,6 +1660,247 @@ Deno.test("current-state rerank uses real FY2027 adopted row over advertised nar
     throw new Error(
       `expected real FY2027 adopted row first, got ${ranked[0].id}`,
     );
+  }
+});
+
+Deno.test("current-state budget indicator lookup tiebreak prefers final adopted rate evidence", () => {
+  const query = "what is the current real estate tax rate";
+  const cexDocId = "00000000-0000-0000-0000-000000000301";
+  const summaryDocId = "00000000-0000-0000-0000-000000000302";
+  const revenueOverviewDocId = "00000000-0000-0000-0000-000000000303";
+
+  const staleAdoptedTaggedCex = testCandidate(
+    "budget_indicators",
+    "stale-cex-11225",
+    {
+      document_id: cexDocId,
+      fiscal_year: 2027,
+      program: "Real Estate Tax",
+      indicator_name: "Real Estate Tax rate",
+      value_actual: 1.1225,
+      unit: "dollars per $100 of assessed value",
+      raw_extracted_text:
+        "The FY 2027 Advertised Budget Plan is balanced at the current Real Estate Tax rate of $1.1225 per $100 of assessed value.",
+    },
+  );
+  staleAdoptedTaggedCex.rrfScore = Number.MAX_SAFE_INTEGER;
+
+  const adoptedSummary = testCandidate(
+    "budget_indicators",
+    "adopted-summary-112",
+    {
+      document_id: summaryDocId,
+      fiscal_year: 2027,
+      program: "Real Estate Tax",
+      indicator_name: "adopted Real Estate Tax rate",
+      value_actual: 1.12,
+      unit: "dollars per $100",
+      raw_extracted_text:
+        "Average residential Real Estate tax bills will increase in FY 2027 based on the adopted Real Estate Tax rate of $1.12 per $100 of assessed value.",
+    },
+  );
+  adoptedSummary.rrfScore = Number.MAX_SAFE_INTEGER;
+
+  const revenueOverview = testCandidate(
+    "budget_indicators",
+    "revenue-overview-112",
+    {
+      document_id: revenueOverviewDocId,
+      fiscal_year: 2027,
+      program: "Real Estate Tax",
+      indicator_name: "Real Estate tax rate",
+      value_actual: 1.12,
+      unit: "dollars per $100 assessed value",
+      raw_extracted_text:
+        "The decrease is primarily the result of the adoption of a Real Estate tax rate of $1.12 per $100 of assessed value, a 0.25-cent reduction from the advertised rate.",
+    },
+  );
+  revenueOverview.rrfScore = Number.MAX_SAFE_INTEGER;
+
+  const documents = new Map<string, SourceDocument>([
+    [cexDocId, {
+      id: cexDocId,
+      url: "https://example.test/fy2027/adopted/overview/CEX%20Letter.pdf",
+      title: null,
+      filename: null,
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: null,
+      fiscal_year: null,
+    }],
+    [summaryDocId, {
+      id: summaryDocId,
+      url:
+        "https://example.test/fy2027/adopted/overview/Adopted%20Budget%20Summary.pdf",
+      title: null,
+      filename: null,
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: null,
+      fiscal_year: null,
+    }],
+    [revenueOverviewDocId, {
+      id: revenueOverviewDocId,
+      url:
+        "https://example.test/fy2027/adopted/overview/General%20Fund%20Revenue%20Overview.pdf",
+      title: null,
+      filename: null,
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: null,
+      fiscal_year: null,
+    }],
+  ]);
+
+  const selected = selectedCurrentBudgetIndicatorsForTest(
+    query,
+    [staleAdoptedTaggedCex, adoptedSummary, revenueOverview],
+    documents,
+  );
+
+  if (selected[0].row.value_actual !== 1.12) {
+    throw new Error(
+      `expected 1.12 top value, got ${selected[0].row.value_actual}`,
+    );
+  }
+  if (
+    selected.slice(0, 2).some((candidate) =>
+      candidate.row.value_actual !== 1.12
+    )
+  ) {
+    throw new Error(
+      "stale adopted-tagged CEX row outranked final-rate evidence",
+    );
+  }
+});
+
+Deno.test("current-state budget indicator lookup rejects non-rate values from rate pages", () => {
+  const docId = "00000000-0000-0000-0000-000000000304";
+  const revenueTotal = testCandidate("budget_indicators", "revenue-total", {
+    document_id: docId,
+    fiscal_year: 2027,
+    program: "Affordable Housing Development and Investment",
+    indicator_name: "Real Estate Tax rate allocation",
+    value_actual: 8788269,
+    unit: "dollars",
+    raw_extracted_text:
+      "The decrease is primarily the result of the adoption of a Real Estate tax rate of $1.12 per $100 of assessed value.",
+  });
+  const realRate = testCandidate("budget_indicators", "real-rate", {
+    document_id: docId,
+    fiscal_year: 2027,
+    program: "Real Estate Tax",
+    indicator_name: "Real Estate tax rate",
+    value_actual: 1.12,
+    unit: "dollars per $100 assessed value",
+    raw_extracted_text:
+      "The decrease is primarily the result of the adoption of a Real Estate tax rate of $1.12 per $100 of assessed value.",
+  });
+  const documents = new Map<string, SourceDocument>([
+    [docId, {
+      id: docId,
+      url:
+        "https://example.test/fy2027/adopted/overview/General%20Fund%20Revenue%20Overview.pdf",
+      title: null,
+      filename: null,
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: null,
+      fiscal_year: null,
+    }],
+  ]);
+
+  const selected = selectedCurrentBudgetIndicatorsForTest(
+    "what is the current real estate tax rate",
+    [revenueTotal, realRate],
+    documents,
+  );
+
+  if (selected.some((candidate) => candidate.id === "revenue-total")) {
+    throw new Error("selected a dollar revenue total as a tax-rate answer");
+  }
+  if (selected[0]?.id !== "real-rate") {
+    throw new Error(`expected real rate row first, got ${selected[0]?.id}`);
+  }
+});
+
+Deno.test("current-state budget winner is pinned when Temporal Judge omits it", () => {
+  const query = "what is the current real estate tax rate";
+  const adoptedDocId = "00000000-0000-0000-0000-000000000401";
+  const advertisedDocId = "00000000-0000-0000-0000-000000000402";
+  const adoptedWinner = testCandidate(
+    "budget_indicators",
+    "adopted-winner",
+    {
+      document_id: adoptedDocId,
+      fiscal_year: 2027,
+      program: "Real Estate Tax",
+      indicator_name: "adopted Real Estate Tax rate",
+      value_actual: 1.12,
+      unit: "dollars per $100",
+      raw_extracted_text:
+        "The adopted Real Estate Tax rate of $1.12 per $100 of assessed value reflects a reduction from $1.1225.",
+    },
+  );
+  const staleNarrative = testCandidate("narrative_chunks", "stale-narrative", {
+    document_id: advertisedDocId,
+    content:
+      "The FY 2028 forecast is based on the current Real Estate tax rate of $1.1225 per $100 of assessed value.",
+  });
+  const other = testCandidate("budget_indicators", "other-rate", {
+    document_id: advertisedDocId,
+    fiscal_year: 2027,
+    program: "Real Estate Tax",
+    indicator_name: "Real Estate Tax rate",
+    value_actual: 1.1225,
+    unit: "dollars per $100 of assessed value",
+    raw_extracted_text:
+      "The FY 2027 Advertised Budget Plan is balanced at the current Real Estate Tax rate of $1.1225 per $100 of assessed value.",
+  });
+
+  const documents = new Map<string, SourceDocument>([
+    [adoptedDocId, {
+      id: adoptedDocId,
+      url:
+        "https://example.test/fy2027/adopted/overview/Adopted%20Budget%20Summary.pdf",
+      title: null,
+      filename: null,
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: null,
+      fiscal_year: null,
+    }],
+    [advertisedDocId, {
+      id: advertisedDocId,
+      url: "https://example.test/fy2027/advertised/overview/Multi%20Year.pdf",
+      title: null,
+      filename: null,
+      ingested_at: "2026-07-09T00:00:00Z",
+      doc_type: "budget_pdf",
+      source_published_at: null,
+      fiscal_year: null,
+    }],
+  ]);
+
+  const pinned = decisiveCurrentBudgetWinnerForTest(
+    query,
+    [staleNarrative, other, adoptedWinner],
+    documents,
+  );
+  const filtered = pinCurrentBudgetWinnerForTest([staleNarrative], pinned);
+
+  if (pinned?.id !== "adopted-winner") {
+    throw new Error(
+      `expected adopted winner to be decisive, got ${pinned?.id}`,
+    );
+  }
+  if (filtered[0]?.id !== "adopted-winner") {
+    throw new Error(`expected pinned winner first, got ${filtered[0]?.id}`);
+  }
+  if (
+    filtered.some((candidate) => candidate.id === "adopted-winner") === false
+  ) {
+    throw new Error("pinned winner was not restored after judge omission");
   }
 });
 
