@@ -1202,10 +1202,14 @@ async function fetchCurrentNarrativeValueRows(
   const terms = budgetIndicatorQueryTerms(query);
   let request = db
     .from("narrative_chunks")
-    .select("*")
-    .limit(CURRENT_BUDGET_INDICATOR_LOOKUP_LIMIT);
+    .select(
+      "*, documents!inner(id, url, title, filename, ingested_at, source_published_at, fiscal_year)",
+    )
+    .limit(100);
   if (terms.includes("transient") && terms.includes("occupancy")) {
-    request = request.ilike("content", "%TOT%");
+    request = request.or(
+      "content.ilike.%TOT%,content.ilike.%Transient Occupancy%",
+    );
   } else {
     request = request.ilike("content", "%tax rate%");
   }
@@ -1219,14 +1223,17 @@ async function fetchCurrentNarrativeValueRows(
 
   return ((data ?? []) as Record<string, unknown>[])
     .filter((row) => {
-      return narrativeCurrentValueScore(query, narrativeCandidate(row)) >=
+      const doc = row.documents as SourceDocument | undefined;
+      return narrativeCurrentValueScore(query, narrativeCandidate(row), doc) >=
         2_000;
     })
     .sort((a, b) => {
       const candidateA = narrativeCandidate(a);
       const candidateB = narrativeCandidate(b);
-      return narrativeCurrentValueScore(query, candidateB) -
-        narrativeCurrentValueScore(query, candidateA);
+      const docA = a.documents as SourceDocument | undefined;
+      const docB = b.documents as SourceDocument | undefined;
+      return narrativeCurrentValueScore(query, candidateB, docB) -
+        narrativeCurrentValueScore(query, candidateA, docA);
     })
     .slice(0, 3)
     .map((row) => {
