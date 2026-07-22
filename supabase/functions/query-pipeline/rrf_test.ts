@@ -2418,6 +2418,52 @@ Deno.test("current-value resolver handles sampled adopted budget indicator rows"
   }
 });
 
+Deno.test("current-value resolver does not answer fee queries from expenditure rows", () => {
+  const adoptedDocId = "00000000-0000-0000-0000-000000000711";
+  const documents = new Map<string, SourceDocument>([
+    [adoptedDocId, {
+      id: adoptedDocId,
+      url: "https://example.test/fy2027/adopted/volume2/40140.pdf",
+      title: "FY 2027 Adopted Refuse Collection",
+      filename: "40140.pdf",
+      ingested_at: "2026-07-12T00:02:42.04Z",
+      doc_type: "budget_pdf",
+      source_published_at: null,
+      fiscal_year: 2027,
+    }],
+  ]);
+  const expenditure = testCandidate("budget_indicators", "refuse-expenditure", {
+    document_id: adoptedDocId,
+    fiscal_year: 2027,
+    program: "Refuse Collection and Recycling Operations",
+    indicator_name: "Expenditures",
+    value_actual: 28644210,
+    unit: "dollars",
+    raw_extracted_text:
+      "Refuse Collection and Recycling Operations expenditures total $28,644,210.",
+  });
+  const fee = testCandidate("budget_indicators", "refuse-fee", {
+    document_id: adoptedDocId,
+    fiscal_year: 2027,
+    program: "Refuse Collection and Recycling Operations",
+    indicator_name: "collection rate",
+    value_actual: 630,
+    unit: "dollars per home",
+    raw_extracted_text:
+      "The FY 2027 adopted refuse collection rate is $630 per home.",
+  });
+
+  const resolved = resolveDeterministicCurrentValue(
+    "what is the current refuse collection fee",
+    [expenditure, fee],
+    documents,
+  );
+
+  if (resolved?.id !== "refuse-fee") {
+    throw new Error(`expected refuse fee row, got ${resolved?.id}`);
+  }
+});
+
 Deno.test("current-value resolver ignores future-year projections for current questions", () => {
   const docId = "00000000-0000-0000-0000-000000000801";
   const documents = new Map<string, SourceDocument>([

@@ -674,10 +674,12 @@ function matchesBudgetIndicatorStructuredSubject(
   ].map(normalizedText).join(" ");
   const hasTotSynonym = /\btot\b/.test(structuredCorpus) &&
     terms.includes("transient") && terms.includes("occupancy");
+  const hasValueKindSynonym = /\b(rate|fee|charge)\b/.test(structuredCorpus);
 
   return terms.every((term) =>
     structuredCorpus.includes(term) ||
-    (hasTotSynonym && (term === "transient" || term === "occupancy"))
+    (hasTotSynonym && (term === "transient" || term === "occupancy")) ||
+    (hasValueKindSynonym && /^(rate|fee|charge)$/.test(term))
   );
 }
 
@@ -913,7 +915,6 @@ function isRelevantStructuredCurrentValueCandidate(
     const structuredValueKind = [
       c.row.indicator_name,
       c.row.unit,
-      c.row.raw_extracted_text,
     ].map(normalizedText).join(" ");
     if (
       !/\b(rate|fee|charge|per\s+\$?100|per\s+(?:home|unit|ton|1,?000|gallon))\b/
