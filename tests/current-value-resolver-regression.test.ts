@@ -13,9 +13,11 @@ import type {
 } from "../supabase/functions/query-pipeline/index.ts";
 
 const {
+  deterministicCurrentValueDraft,
   extractCurrentValueFromOrdinance,
   formatBudgetValue,
   ordinanceCurrentValueScore,
+  parseOrdinanceSectionTitle,
   resolveDeterministicCurrentValue,
   structuredCurrentValueScore,
 } = await import("../supabase/functions/query-pipeline/index.ts");
@@ -215,5 +217,85 @@ Deno.test("real resolver: adopted budget_stage outranks advertised budget indica
   assertEquals(
     formatBudgetValue(winner?.row.value_actual, winner?.row.unit),
     "$1.12 per $100 of assessed value",
+  );
+});
+
+Deno.test("parseOrdinanceSectionTitle: splits real Municode heading formats into number + heading", () => {
+  assertEquals(
+    parseOrdinanceSectionTitle("Section 4-13-2. - Levy; amount of tax."),
+    { number: "4-13-2", heading: "Levy; amount of tax" },
+  );
+  assertEquals(
+    parseOrdinanceSectionTitle("Sec. 4-6-1. Utility tax imposed."),
+    { number: "4-6-1", heading: "Utility tax imposed" },
+  );
+  assertEquals(
+    parseOrdinanceSectionTitle("Chapter 9.2 Cable Television"),
+    { number: "9.2", heading: "Cable Television" },
+  );
+  // No recognized "Section/Sec./Chapter/Article <number>" prefix -> null,
+  // so callers can fall back rather than mis-parsing a bare heading.
+  assertEquals(parseOrdinanceSectionTitle("Levy and amount of tax"), null);
+  assertEquals(parseOrdinanceSectionTitle(null), null);
+});
+
+Deno.test("deterministicCurrentValueDraft: TOT ordinance answer is a natural sentence, not a glued heading", () => {
+  // Real production section_title shape (see live prod bug report), distinct
+  // from the shorter fixture used in the ordinance-winner test above.
+  const tot = candidate("ordinance_provisions", "tot-current", {
+    document_id: "municode",
+    municode_node_id: "FACOCO_CH4TAFI_ART13TROCTA_S4-13-2LEAMTA",
+    section_title: "Section 4-13-2. - Levy; amount of tax.",
+    is_current: true,
+    effective_date: "2026-04-28",
+    content:
+      "Transient occupancy tax levy. There is imposed a tax equivalent to three percent, plus an additional two percent, plus an additional one percent.",
+  });
+  const docs = new Map([
+    [
+      "municode",
+      sourceDocument("municode", {
+        doc_type: "municode_api",
+        title: "Fairfax County Code of Ordinances — Supplement 179",
+        budget_stage: null,
+        fiscal_year: null,
+      }),
+    ],
+  ]);
+
+  const query = "what is the current transient occupancy tax rate";
+  const draft = deterministicCurrentValueDraft(query, tot, docs);
+
+  assert(draft !== null, "expected a deterministic draft for the TOT case");
+  const answer = draft!.answer;
+
+  // Still resolves to the correct value and cites the real chunk (no
+  // regression on correctness -- this test is about phrasing only).
+  assert(answer.includes("6%"), `expected the 6% value in: ${answer}`);
+  assert(
+    answer.includes("[chunk_id=tot-current;"),
+    `expected an inline citation to the real chunk in: ${answer}`,
+  );
+
+  // Must NOT reproduce the reported bug: the raw section heading glued
+  // directly onto "is <value>" with no connecting words.
+  assert(
+    !answer.startsWith("Section 4-13-2. - Levy; amount of tax. is"),
+    `answer still glues the raw section heading onto the value: ${answer}`,
+  );
+  assert(
+    !answer.includes("tax. is 6%"),
+    `answer reads as broken English (heading glued to "is"): ${answer}`,
+  );
+
+  // Should read as a real sentence: references the section number
+  // naturally and states the value with a verb, not a bare juxtaposition.
+  assert(
+    /Sec\.\s*4-13-2/.test(answer),
+    `expected a natural reference to the section number in: ${answer}`,
+  );
+  assert(
+    /the current value is 6%/i.test(answer),
+    `expected a grammatical "the current value is 6%" clause in: ${answer}`,
   );
 });

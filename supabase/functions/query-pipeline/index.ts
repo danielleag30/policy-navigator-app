@@ -2213,6 +2213,44 @@ export function formatBudgetValue(
   return perHundredUnit ? `${prefixedValue} ${perHundredUnit}` : prefixedValue;
 }
 
+/**
+ * Parses a Municode-style ordinance section_title (e.g.
+ * "Section 4-13-2. - Levy; amount of tax." or "Sec. 4-6-1. Utility tax
+ * imposed." or "Chapter 9.2 Cable Television") into a section number and a
+ * standalone heading, so the two can be recombined into a natural sentence
+ * instead of gluing the raw heading onto a value. Returns null for titles
+ * that don't start with a recognized label + numeric token (e.g. a bare
+ * heading with no section number), letting callers fall back gracefully.
+ */
+export function parseOrdinanceSectionTitle(
+  sectionTitle: string | null,
+): { number: string; heading: string } | null {
+  if (!sectionTitle) return null;
+  const match = sectionTitle.trim().match(
+    /^(?:Section|Sec\.?|Chapter|Article)\s+(\d[\d.\-]*)\.?\s*-?\s*(.+)$/i,
+  );
+  if (!match) return null;
+  const number = match[1].replace(/\.$/, "").trim();
+  const heading = match[2].replace(/\.$/, "").trim();
+  if (!number || !heading) return null;
+  return { number, heading };
+}
+
+function ordinanceCurrentValueClaim(
+  candidate: EnrichedCandidate,
+  chunk: AnnotatedDrafterChunk,
+  value: string,
+): string {
+  const sectionTitle = asText(candidate.row.section_title);
+  const parsed = parseOrdinanceSectionTitle(sectionTitle);
+  const subject = parsed
+    ? `Sec. ${parsed.number} (${parsed.heading})`
+    : sectionTitle
+    ? sectionTitle.replace(/\.$/, "")
+    : chunk.source_title;
+  return `Per ${subject}, the current value is ${value}`;
+}
+
 export function deterministicCurrentValueDraft(
   query: string,
   candidate: EnrichedCandidate,
@@ -2228,13 +2266,15 @@ export function deterministicCurrentValueDraft(
     : extractCurrentValueFromNarrative(query, candidate);
   if (value === null) return null;
 
-  const label = candidate.table === "budget_indicators"
-    ? asText(candidate.row.program) ?? asText(candidate.row.indicator_name) ??
-      "The current value"
-    : candidate.table === "ordinance_provisions"
-    ? asText(candidate.row.section_title) ?? "The current tax rate"
-    : budgetIndicatorQueryTerms(query).join(" ") || "The current value";
-  const claim = `${label} is ${value}`;
+  const claim = candidate.table === "ordinance_provisions"
+    ? ordinanceCurrentValueClaim(candidate, chunk, value)
+    : `${
+      candidate.table === "budget_indicators"
+        ? asText(candidate.row.program) ??
+          asText(candidate.row.indicator_name) ??
+          "The current value"
+        : budgetIndicatorQueryTerms(query).join(" ") || "The current value"
+    } is ${value}`;
   const inlineCitation = `[chunk_id=${chunk.chunk_id}; page=${
     chunk.page === null ? "null" : chunk.page
   }; bbox=${formatUnknown(chunk.bbox)}]`;
