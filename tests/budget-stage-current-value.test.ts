@@ -1,5 +1,8 @@
 import { effectiveDateForBudgetIndicator } from "../supabase/functions/_shared/document-date.ts";
-import { canonicalizeBudgetIndicatorName } from "../supabase/functions/_shared/budget-indicator.ts";
+import {
+  budgetIndicatorEmbeddingInput,
+  canonicalizeBudgetIndicatorName,
+} from "../supabase/functions/_shared/budget-indicator.ts";
 
 function assertEquals<T>(actual: T, expected: T, message?: string): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -50,6 +53,65 @@ Deno.test("tax-rate indicator names collapse stage-prefixed duplicates", () => {
   );
 });
 
+Deno.test("budget indicator embedding input is structured and excludes source blob", () => {
+  const rawBlob =
+    "Real Estate Tax Base 2022 2023 2024 2025 2026 2027 Residential Equalization 4.25% 9.57% 6.97% 2.86% 6.17% 3.99%";
+  const first = budgetIndicatorEmbeddingInput({
+    fiscal_year: 2022,
+    department: null,
+    program: "Real Estate Tax Base",
+    indicator_name: "Residential Equalization",
+    value_actual: "4.2500",
+    value_target: null,
+    value_prior_year: null,
+    unit: "percent",
+    budget_stage: "advertised",
+    effective_date: null,
+    effective_date_source: null,
+    chunk_sequence: 2,
+  });
+  const sibling = budgetIndicatorEmbeddingInput({
+    fiscal_year: 2027,
+    department: null,
+    program: "Real Estate Tax Base",
+    indicator_name: "Residential Equalization",
+    value_actual: "3.9900",
+    value_target: null,
+    value_prior_year: "6.1700",
+    unit: "percent",
+    budget_stage: "advertised",
+    effective_date: null,
+    effective_date_source: null,
+    chunk_sequence: 2,
+  });
+
+  assert(first !== sibling, "sibling indicator rows must not share embedding input");
+  assert(
+    first.includes("indicator_name: Residential Equalization"),
+    "input should include indicator name",
+  );
+  assert(first.includes("fiscal_year: 2022"), "first row should include FY 2022");
+  assert(sibling.includes("fiscal_year: 2027"), "sibling row should include FY 2027");
+  assert(
+    sibling.includes("value_prior_year: 6.1700"),
+    "sibling row should include prior-year value",
+  );
+  assert(!first.includes(rawBlob), "embedding input must not include raw_extracted_text");
+});
+
+Deno.test("budget indicator embedding input can read budget_stage from joined document", () => {
+  const input = budgetIndicatorEmbeddingInput({
+    fiscal_year: 2027,
+    indicator_name: "Average tax bill increase",
+    value_actual: 357,
+    unit: "dollars",
+    documents: { budget_stage: "adopted" },
+  });
+
+  assert(input.includes("budget_stage: adopted"), "joined budget stage should be included");
+  assert(input.includes("value_actual: 357"), "actual value should be included");
+});
+
 Deno.test("migration backfills budget_stage and effective date from real URL patterns", async () => {
   const migration = await Deno.readTextFile(
     new URL(
@@ -69,4 +131,37 @@ Deno.test("migration backfills budget_stage and effective date from real URL pat
       migration.includes("effective_date_source"),
     "migration must backfill FY July 1 effective dates using amendment_events effective_date_source shape",
   );
+});
+
+Deno.test("ingest orchestrator embeds budget indicators from structured formatter", async () => {
+  const src = await Deno.readTextFile(
+    new URL("../supabase/functions/ingest-orchestrator/index.ts", import.meta.url),
+  );
+
+  assert(
+    src.includes("budgetIndicatorEmbeddingInput"),
+    "ingest path must use the shared structured budget indicator embedding formatter",
+  );
+  assert(
+    src.includes('select("budget_stage")') &&
+      src.includes("value_actual, value_target, value_prior_year") &&
+      src.includes("const texts = rows.map((r) =>") &&
+      src.includes("budgetIndicatorEmbeddingInput({"),
+    "ingest path must fetch structured budget indicator columns and not embed raw_extracted_text",
+  );
+});
+
+Deno.test("re-embed job is held-safe and uses structured formatter", async () => {
+  const src = await Deno.readTextFile(
+    new URL("../scripts/reembed-budget-indicators.ts", import.meta.url),
+  );
+
+  assert(
+    src.includes("BUDGET_INDICATOR_REEMBED_WRITE") && src.includes("dry-run"),
+    "job should default to dry-run unless write is explicitly enabled",
+  );
+  assert(src.includes("START_AFTER_ID"), "job should expose cursor resume");
+  assert(src.includes("REEMBED_DEADLINE_MS"), "job should expose a deadline");
+  assert(src.includes("budgetIndicatorEmbeddingInput"), "job should use shared formatter");
+  assert(src.includes("generateEmbeddingsHttpBatched"), "job should use HTTP embed path");
 });

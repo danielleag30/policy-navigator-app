@@ -27,12 +27,7 @@ import { generate as uuidv7 } from "@std/uuid/v7";
 import db from "../_shared/db-client.ts";
 import { error, success } from "../_shared/response.ts";
 import { contentHash } from "../_shared/hash.ts";
-import {
-  type Chunk,
-  chunkBlocks,
-  type FlatBlock,
-  validateTokenizer,
-} from "../_shared/chunker.ts";
+import { type Chunk, chunkBlocks, type FlatBlock, validateTokenizer } from "../_shared/chunker.ts";
 import { extractAndPersist } from "../_shared/extractor.ts";
 import {
   computeDocumentDateMetadata,
@@ -45,6 +40,10 @@ import {
   persistEmbeddings,
   preflight,
 } from "../_shared/embedder.ts";
+import {
+  budgetIndicatorEmbeddingInput,
+  type BudgetIndicatorEmbeddingInputRow,
+} from "../_shared/budget-indicator.ts";
 import {
   handleMunicode,
   handleMunicodeHistoricalBackfill,
@@ -208,8 +207,7 @@ async function deferIngestion(
 async function requeueForResume(
   pendingIngestionId: string,
   currentAttempts: number,
-  logMessage: string =
-    "[orchestrator] Municode soft deadline hit — requeued for resume",
+  logMessage: string = "[orchestrator] Municode soft deadline hit — requeued for resume",
 ): Promise<Response> {
   const { error: requeueErr } = await db
     .from("pending_ingestions")
@@ -250,9 +248,7 @@ async function pdfBranch(
   if (!doclingUrl) throw new Error("HF_SPACES_DOCLING_URL not set");
 
   const remainingMs = () =>
-    deadlineMs === undefined
-      ? Number.POSITIVE_INFINITY
-      : deadlineMs - Date.now();
+    deadlineMs === undefined ? Number.POSITIVE_INFINITY : deadlineMs - Date.now();
   const boundedTimeoutMs = (
     requestedMs: number,
     reserveMs = 0,
@@ -493,9 +489,7 @@ async function embedDocumentChunks(
       .eq("id", rows[i].id);
     if (chunkErr) {
       throw new Error(
-        `Failed to write embedding for chunk ${
-          rows[i].id
-        }: ${chunkErr.message}`,
+        `Failed to write embedding for chunk ${rows[i].id}: ${chunkErr.message}`,
       );
     }
   }
@@ -511,9 +505,7 @@ async function embedDocumentChunks(
   }
   if ((nonNullCount ?? 0) !== rows.length) {
     throw new Error(
-      `Embedding count mismatch: expected ${rows.length}, got ${
-        nonNullCount ?? 0
-      } non-null in DB`,
+      `Embedding count mismatch: expected ${rows.length}, got ${nonNullCount ?? 0} non-null in DB`,
     );
   }
 }
@@ -610,9 +602,20 @@ async function embedBudgetIndicators(
   documentId: string,
   embedUrl: string,
 ): Promise<void> {
+  const { data: docRow, error: docFetchErr } = await db
+    .from("documents")
+    .select("budget_stage")
+    .eq("id", documentId)
+    .maybeSingle();
+  if (docFetchErr) {
+    throw new Error(`Fetching document budget_stage failed: ${docFetchErr.message}`);
+  }
+
   const { data: rows, error: fetchErr } = await db
     .from("budget_indicators")
-    .select("id, raw_extracted_text")
+    .select(
+      "id, fiscal_year, department, program, indicator_name, value_actual, value_target, value_prior_year, unit, effective_date, effective_date_source, chunk_sequence",
+    )
     .eq("document_id", documentId);
 
   if (fetchErr) {
@@ -623,7 +626,13 @@ async function embedBudgetIndicators(
     return;
   }
 
-  const texts = rows.map((r) => r.raw_extracted_text as string);
+  const budgetStage = (docRow?.budget_stage as string | null | undefined) ?? null;
+  const texts = rows.map((r) =>
+    budgetIndicatorEmbeddingInput({
+      ...(r as BudgetIndicatorEmbeddingInputRow),
+      budget_stage: budgetStage,
+    })
+  );
   const embeddings = await generateEmbeddingsHttpBatched(embedUrl, texts);
 
   await persistEmbeddings(
@@ -894,17 +903,18 @@ async function processClaimedIngestion(
       // policy_decisions rows above exist so the extraction fallback has
       // real data to read. Never fabricated — null when no real signal
       // exists, same as documents.status leaves those fields today.
-      const { sourcePublishedAt, fiscalYear } =
-        await computeDocumentDateMetadata(
-          db as unknown as DocumentDateDb,
-          documentId,
-          row.doc_type,
-          row.url,
-        );
+      const { sourcePublishedAt, fiscalYear } = await computeDocumentDateMetadata(
+        db as unknown as DocumentDateDb,
+        documentId,
+        row.doc_type,
+        row.url,
+      );
 
       if (isBudgetDoc) {
-        const { effectiveDate, effectiveDateSource } =
-          effectiveDateForBudgetIndicator(row.budget_stage ?? null, fiscalYear);
+        const { effectiveDate, effectiveDateSource } = effectiveDateForBudgetIndicator(
+          row.budget_stage ?? null,
+          fiscalYear,
+        );
         const { error: indicatorDateErr } = await db
           .from("budget_indicators")
           .update({
@@ -958,12 +968,11 @@ async function processClaimedIngestion(
 
     // ── Municode branch ─────────────────────────────────────────────────────
     if (isMunicode) {
-      const { documentId, nodeIds, skipped, complete, supplementJobId } =
-        await handleMunicode(
-          pendingIngestionId,
-          softDeadlineMs,
-          forceFullReingest,
-        );
+      const { documentId, nodeIds, skipped, complete, supplementJobId } = await handleMunicode(
+        pendingIngestionId,
+        softDeadlineMs,
+        forceFullReingest,
+      );
 
       if (!complete) {
         return await requeueForResume(pendingIngestionId, newAttempts);
@@ -1307,8 +1316,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const historicalEmbeddingRetry =
-      await handleMunicodeHistoricalEmbeddingRetry(SOFT_DEADLINE_MS);
+    const historicalEmbeddingRetry = await handleMunicodeHistoricalEmbeddingRetry(SOFT_DEADLINE_MS);
     // Only bail out early if the retry ran out of deadline budget — if it
     // drained the due backlog (even having done work) within budget, fall
     // through to the regular pending_ingestions loop below using whatever
