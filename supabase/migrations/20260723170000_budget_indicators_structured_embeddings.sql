@@ -16,11 +16,11 @@ CREATE UNIQUE INDEX budget_indicators_natural_key_uidx
     COALESCE(department, ''),
     COALESCE(program, ''),
     indicator_name,
-    COALESCE(value_actual::text, ''),
-    COALESCE(value_target::text, ''),
-    COALESCE(value_prior_year::text, ''),
+    COALESCE(value_actual, -999999999999.9999),
+    COALESCE(value_target, -999999999999.9999),
+    COALESCE(value_prior_year, -999999999999.9999),
     COALESCE(unit, ''),
-    COALESCE(effective_date::text, ''),
+    COALESCE(effective_date, DATE '0001-01-01'),
     COALESCE(effective_date_source, ''),
     md5(raw_extracted_text)
   );
