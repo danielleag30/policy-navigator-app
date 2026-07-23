@@ -16,8 +16,10 @@ Deno.env.set(
 const {
   deterministicCurrentValueDraft,
   extractCurrentValueFromNarrative,
+  filterUncurrentNarrativeValues,
   formatInlineAnswerCitations,
   formatBudgetValue,
+  narrativeCurrentValueHasStaleProvenance,
   resolveDeterministicCurrentValue,
   structuredCurrentValueScore,
 } = await import("./index.ts");
@@ -2683,5 +2685,278 @@ Deno.test("current-state rerank does not override explicit historical tax-rate q
         ranked[0].id
       }`,
     );
+  }
+});
+
+// ── §5.2.1 narrative-currency guard (Wave 2a) ────────────────────────────────
+// These bind to the SHIPPING filterUncurrentNarrativeValues /
+// narrativeCurrentValueHasStaleProvenance exports (imported from ./index.ts at
+// the top of this file), not to local copies — a mutation to the shipping guard
+// must break them.
+
+function narrativeDoc(
+  id: string,
+  overrides: Partial<SourceDocument> = {},
+): SourceDocument {
+  return {
+    id,
+    url: "https://example.test/reports/summary.pdf",
+    title: null,
+    filename: null,
+    ingested_at: "2026-07-01T00:00:00Z",
+    doc_type: "budget_pdf",
+    source_published_at: null,
+    fiscal_year: null,
+    ...overrides,
+  };
+}
+
+// A 2024 narrative asserting "currently levies a 4%" TOT and a newer Board-
+// approved narrative asserting 6% — the exact contradiction the Fable audit
+// caught (app answered TOT as 4% vs 6% depending on phrasing). For an implicit-
+// current query the older, non-approved chunk must be dropped so it can never be
+// drafted as the current value; the Board-approved chunk survives.
+Deno.test("§5.2.1 guard drops the older non-approved TOT narrative, keeps the Board-approved one", () => {
+  const query = "what is the current transient occupancy tax rate";
+  const staleDocId = "00000000-0000-0000-0000-0000000005a1";
+  const currentDocId = "00000000-0000-0000-0000-0000000005a2";
+
+  const staleTot = testCandidate("narrative_chunks", "tot-stale", {
+    document_id: staleDocId,
+    content:
+      "Transient Occupancy Tax ($25.6 million) Fairfax County currently levies a 4% transient occupancy tax (2% for general purposes and 2% to promote tourism). The Transient Occupancy Tax rate has not been adjusted since 2004.",
+  });
+  staleTot.rrfScore = 0.03;
+
+  const currentTot = testCandidate("narrative_chunks", "tot-current", {
+    document_id: currentDocId,
+    content:
+      "In FY 2026, TOT receipts increase, primarily associated with a 2-percentage point increase in the FY 2026 TOT tax rate from 4 percent to 6 percent approved by the Board of Supervisors.",
+  });
+  currentTot.rrfScore = 0.01;
+
+  const documents = new Map<string, SourceDocument>([
+    [staleDocId, narrativeDoc(staleDocId, {
+      url:
+        "https://example.test/budget%20committee%20meeting/2024/sep-17/supplemental.pdf",
+      doc_type: "bos_minutes",
+      ingested_at: "2026-07-20T00:00:00Z",
+    })],
+    [currentDocId, narrativeDoc(currentDocId, {
+      url:
+        "https://example.test/fy2027/advertised/overview/General%20Fund%20Revenue%20Overview.pdf",
+    })],
+  ]);
+
+  const kept = filterUncurrentNarrativeValues(
+    query,
+    [staleTot, currentTot],
+    documents,
+  ).map((c) => c.id);
+
+  if (kept.includes("tot-stale")) {
+    throw new Error(
+      `stale 4% TOT narrative must be dropped for a current query, kept: ${
+        kept.join(", ")
+      }`,
+    );
+  }
+  if (!kept.includes("tot-current")) {
+    throw new Error(
+      `Board-approved 6% TOT narrative must be preserved, kept: ${
+        kept.join(", ")
+      }`,
+    );
+  }
+});
+
+// The stormwater case from the audit: a rate served as current whose only
+// provenance is a "FY 2022 Budget as Advertised" document. Advertised/proposed
+// figures must not be asserted as current, so the sole candidate is dropped —
+// the drafter then has no current-value narrative and cannot assert it.
+Deno.test("§5.2.1 guard drops an advertised-only current-value narrative", () => {
+  const query = "what is the current stormwater district tax rate";
+  const docId = "00000000-0000-0000-0000-0000000005b1";
+  const advertised = testCandidate("narrative_chunks", "stormwater-advertised", {
+    document_id: docId,
+    content:
+      "The FY 2022 Budget as Advertised sets the stormwater service district tax rate at 0.0325 per $100 of assessed value, effective July 1 2021.",
+  });
+  const documents = new Map<string, SourceDocument>([
+    [docId, narrativeDoc(docId, {
+      url: "https://example.test/fy2022/advertised/stormwater.pdf",
+      title: "FY 2022 Advertised Budget Plan",
+    })],
+  ]);
+
+  if (
+    !narrativeCurrentValueHasStaleProvenance(query, advertised, documents.get(docId))
+  ) {
+    throw new Error(
+      "advertised stormwater narrative should be flagged stale-provenance",
+    );
+  }
+  const kept = filterUncurrentNarrativeValues(query, [advertised], documents)
+    .map((c) => c.id);
+  if (kept.length !== 0) {
+    throw new Error(
+      `advertised-only current-value narrative must be dropped, kept: ${
+        kept.join(", ")
+      }`,
+    );
+  }
+});
+
+// A Board-approval content signal overrides an "advertised" container: the FY2027
+// Advertised Overview reports an already-approved 6% rate. This must NOT be
+// treated as stale provenance, otherwise the guard would over-filter the correct
+// answer.
+Deno.test("§5.2.1 guard: Board-approval text overrides an advertised container", () => {
+  const query = "what is the current transient occupancy tax rate";
+  const docId = "00000000-0000-0000-0000-0000000005c1";
+  const approved = testCandidate("narrative_chunks", "tot-approved", {
+    document_id: docId,
+    content:
+      "In FY 2026, TOT receipts increase, primarily associated with a 2-percentage point increase in the FY 2026 TOT tax rate from 4 percent to 6 percent approved by the Board of Supervisors.",
+  });
+  const documents = new Map<string, SourceDocument>([
+    [docId, narrativeDoc(docId, {
+      url:
+        "https://example.test/fy2027/advertised/overview/General%20Fund%20Revenue%20Overview.pdf",
+    })],
+  ]);
+
+  if (narrativeCurrentValueHasStaleProvenance(query, approved, documents.get(docId))) {
+    throw new Error(
+      "Board-approved narrative in an advertised container must not be stale-provenance",
+    );
+  }
+  const kept = filterUncurrentNarrativeValues(query, [approved], documents)
+    .map((c) => c.id);
+  if (!kept.includes("tot-approved")) {
+    throw new Error(
+      `Board-approved narrative must be kept, kept: ${kept.join(", ")}`,
+    );
+  }
+});
+
+// Currency cannot be established (no advertised marker, no newer competitor): the
+// candidate is KEPT so the drafter can answer WITH the shipping caveat. The guard
+// must not over-refuse — it only removes figures it can prove are not current.
+Deno.test("§5.2.1 guard keeps an unknown-currency narrative when nothing better competes", () => {
+  const query = "what is the current transient occupancy tax rate";
+  const docId = "00000000-0000-0000-0000-0000000005d1";
+  const lone = testCandidate("narrative_chunks", "tot-lone", {
+    document_id: docId,
+    content:
+      "Transient Occupancy Tax ($25.6 million) Fairfax County currently levies a 4% transient occupancy tax (2% for general purposes and 2% to promote tourism). The Transient Occupancy Tax rate has not been adjusted since 2004.",
+  });
+  const documents = new Map<string, SourceDocument>([
+    [docId, narrativeDoc(docId, {
+      url: "https://example.test/reports/tax-summary.pdf",
+      title: "County Tax Summary",
+      doc_type: "bos_summary",
+    })],
+  ]);
+
+  // Sanity: this chunk really does carry a current-value the drafter could cite.
+  if (extractCurrentValueFromNarrative(query, lone) === null) {
+    throw new Error("fixture must extract a current value to be meaningful");
+  }
+  const kept = filterUncurrentNarrativeValues(query, [lone], documents)
+    .map((c) => c.id);
+  if (!kept.includes("tot-lone")) {
+    throw new Error(
+      `unknown-currency lone narrative must be kept for caveated answer, kept: ${
+        kept.join(", ")
+      }`,
+    );
+  }
+});
+
+// Regression safety: an adopted structured row is never removed and still
+// resolves deterministically even when a stale competing narrative is present.
+Deno.test("§5.2.1 guard preserves the adopted structured $1.12 row and still resolves it", () => {
+  const query = "what is the current real estate tax rate";
+  const adoptedDocId = "00000000-0000-0000-0000-0000000005e1";
+  const staleDocId = "00000000-0000-0000-0000-0000000005e2";
+
+  const adopted = testCandidate("budget_indicators", "re-adopted", {
+    document_id: adoptedDocId,
+    fiscal_year: 2027,
+    program: "Real Estate Tax",
+    indicator_name: "adopted Real Estate Tax rate",
+    value_actual: 1.12,
+    unit: "dollars per $100",
+    raw_extracted_text:
+      "The adopted Real Estate Tax rate of $1.12 per $100 of assessed value reflects a reduction from $1.1225.",
+  });
+  const staleNarrative = testCandidate("narrative_chunks", "re-stale", {
+    document_id: staleDocId,
+    content:
+      "The FY 2020 Adopted Budget set the Real Estate tax rate at $1.15 per $100, remaining at $1.15 for that year.",
+  });
+  staleNarrative.rrfScore = 0.03;
+
+  const documents = new Map<string, SourceDocument>([
+    [adoptedDocId, narrativeDoc(adoptedDocId, {
+      url:
+        "https://example.test/fy2027/adopted/overview/Adopted%20Budget%20Summary.pdf",
+      fiscal_year: 2027,
+    })],
+    [staleDocId, narrativeDoc(staleDocId, {
+      url: "https://example.test/fy2020/adopted/overview.pdf",
+      title: "FY 2020 Adopted Budget Overview",
+      fiscal_year: 2020,
+    })],
+  ]);
+
+  const curated = filterUncurrentNarrativeValues(
+    query,
+    [staleNarrative, adopted],
+    documents,
+  );
+  if (!curated.some((c) => c.id === "re-adopted")) {
+    throw new Error("adopted structured $1.12 row must never be filtered out");
+  }
+  const resolved = resolveDeterministicCurrentValue(query, curated, documents);
+  if (resolved?.id !== "re-adopted") {
+    throw new Error(
+      `adopted $1.12 row must still resolve deterministically, got ${resolved?.id}`,
+    );
+  }
+});
+
+// Historical / compound / deep-historical queries are a no-op: the guard must not
+// touch candidate sets for anything but implicit-current questions.
+Deno.test("§5.2.1 guard is a no-op for historical and compound queries", () => {
+  const docId = "00000000-0000-0000-0000-0000000005f1";
+  const advertised = testCandidate("narrative_chunks", "hist-advertised", {
+    document_id: docId,
+    content:
+      "The FY 2022 Budget as Advertised sets the stormwater service district tax rate at 0.0325 per $100 of assessed value, effective July 1 2021.",
+  });
+  const documents = new Map<string, SourceDocument>([
+    [docId, narrativeDoc(docId, {
+      url: "https://example.test/fy2022/advertised/stormwater.pdf",
+      title: "FY 2022 Advertised Budget Plan",
+    })],
+  ]);
+
+  for (
+    const query of [
+      "what was the stormwater district tax rate in 2021",
+      "what is the current stormwater district tax rate, and what was it in 2021",
+    ]
+  ) {
+    const kept = filterUncurrentNarrativeValues(query, [advertised], documents)
+      .map((c) => c.id);
+    if (kept.length !== 1 || kept[0] !== "hist-advertised") {
+      throw new Error(
+        `guard must not touch candidates for "${query}", kept: ${
+          kept.join(", ")
+        }`,
+      );
+    }
   }
 });

@@ -1205,6 +1205,110 @@ async function rerankCurrentStateCandidates(
   return [...candidates].sort(compareCurrentStateCandidates(query, documents));
 }
 
+// ── §5.2.1 narrative-currency guard ──────────────────────────────────────────
+// A narrative chunk may only be asserted as a CURRENT value when its currency is
+// backed by real structured signals. The Fable audit proved the narrative path
+// served stale/advertised figures labeled "current" (a 2021-advertised stormwater
+// rate; a 2024 narrative "currently 4%" TOT contradicting the 6% ordinance). Per
+// spec §5.2.1 (correctness > availability) that must not happen: a narrative whose
+// currency cannot be established is kept out of both the resolver and the LLM
+// drafter, deterministically — not by LLM judgment.
+
+/**
+ * True when the narrative text itself carries a board-approval / final-adopted
+ * signal for the value. That content signal overrides an advertised/draft
+ * container — e.g. an "Advertised Budget Overview" that reports a rate the Board
+ * has already approved is still asserting current law.
+ */
+function narrativeAssertsApprovedCurrentValue(c: EnrichedCandidate): boolean {
+  const text = normalizedText(candidateText(c));
+  return /\bapproved by (?:the )?board of supervisors\b/.test(text) ||
+    hasFinalAdoptedRateSignal(c);
+}
+
+/**
+ * A narrative current-value candidate whose provenance is advertised/proposed/
+ * draft and whose text carries no board-approval or final-adopted signal — its
+ * currency cannot be trusted, so it must not be served as the current value.
+ * Exported so the guard binds to shipping code under test.
+ */
+export function narrativeCurrentValueHasStaleProvenance(
+  query: string,
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): boolean {
+  if (c.table !== "narrative_chunks") return false;
+  if (narrativeCurrentValueScore(query, c, doc) <= 0) return false;
+  if (narrativeAssertsApprovedCurrentValue(c)) return false;
+  return hasDraftQualifierForRateEvidence(c, doc);
+}
+
+/**
+ * Deterministic §5.2.1 guard for implicit-current queries. Removes narrative
+ * chunks that would supply a current value but are not credibly current:
+ *   (a) advertised/proposed/draft provenance with no board-approval / final-
+ *       adopted content signal, or
+ *   (b) strictly older (by real document date / fiscal-year signal) than a
+ *       competing, defensible current-value candidate.
+ *
+ * Structured rows (ordinance_provisions, budget_indicators) are never removed —
+ * their currency is gated by is_current / budget_stage upstream (source-authority
+ * order: current ordinance > adopted budget > narrative). Board-approved
+ * narratives are never removed (they assert settled current law). Plain-context
+ * narratives (no matching current value) are untouched. When the removed chunk
+ * was the only current-value evidence, the drafter can no longer cite it as
+ * current: a more defensible candidate answers, or the query refuses — never a
+ * silent stale-as-current assertion. Historical / compound / deep-historical
+ * queries are a no-op (guarded identically to the resolver).
+ */
+export function filterUncurrentNarrativeValues(
+  query: string,
+  candidates: EnrichedCandidate[],
+  documents: Map<string, SourceDocument>,
+): EnrichedCandidate[] {
+  if (!isCurrentStateQuery(query) || isHistoricalQuery(query)) return candidates;
+
+  const docOf = (c: EnrichedCandidate): SourceDocument | undefined =>
+    typeof c.row.document_id === "string"
+      ? documents.get(c.row.document_id)
+      : undefined;
+
+  const currentValueCandidates = candidates.filter((c) =>
+    currentStateScore(query, c, docOf(c)) > 0
+  );
+  // Nothing to guard unless a current-value narrative is actually present.
+  if (!currentValueCandidates.some((c) => c.table === "narrative_chunks")) {
+    return candidates;
+  }
+
+  // Recency ceiling from the DEFENSIBLE current-value candidates only, so an
+  // advertised/proposed outlier cannot raise the bar and evict a legitimate
+  // older row.
+  const defensibleRecencies = currentValueCandidates
+    .filter((c) => !narrativeCurrentValueHasStaleProvenance(query, c, docOf(c)))
+    .map((c) => parseDocumentRecencyScore(docOf(c)))
+    .filter((r): r is number => r !== null);
+  const maxRecency = defensibleRecencies.length > 0
+    ? Math.max(...defensibleRecencies)
+    : null;
+
+  return candidates.filter((c) => {
+    if (c.table !== "narrative_chunks") return true;
+    const doc = docOf(c);
+    if (narrativeCurrentValueScore(query, c, doc) <= 0) return true;
+    // Board-approved / final-adopted narratives assert settled current law.
+    if (narrativeAssertsApprovedCurrentValue(c)) return true;
+    // (a) advertised/proposed provenance without an approval signal.
+    if (hasDraftQualifierForRateEvidence(c, doc)) return false;
+    // (b) strictly older than a defensible competing current-value candidate.
+    const recency = parseDocumentRecencyScore(doc);
+    if (recency !== null && maxRecency !== null && recency < maxRecency) {
+      return false;
+    }
+    return true;
+  });
+}
+
 function budgetIndicatorCandidate(
   row: Record<string, unknown>,
 ): EnrichedCandidate {
@@ -3326,9 +3430,18 @@ if (import.meta.main) {
     const currentAwareDocuments = await fetchSourceDocuments(
       currentAwareCandidates,
     );
-    const deterministicCurrentValue = resolveDeterministicCurrentValue(
+    // §5.2.1: drop narrative chunks that would be asserted as a current value but
+    // whose currency cannot be established (advertised/proposed provenance, or
+    // older than a competing candidate). Deterministic — keeps stale/advertised
+    // figures out of both the resolver and the LLM drafter.
+    const curatedCandidates = filterUncurrentNarrativeValues(
       query,
       currentAwareCandidates,
+      currentAwareDocuments,
+    );
+    const deterministicCurrentValue = resolveDeterministicCurrentValue(
+      query,
+      curatedCandidates,
       currentAwareDocuments,
     );
 
@@ -3360,12 +3473,12 @@ if (import.meta.main) {
       }
     }
 
-    const pendingChanges = await fetchPendingChanges(currentAwareCandidates);
+    const pendingChanges = await fetchPendingChanges(curatedCandidates);
 
     llmCalls += 1;
     const judgeResult = await runTemporalJudge(
       query,
-      currentAwareCandidates,
+      curatedCandidates,
       pendingChanges,
     );
 
