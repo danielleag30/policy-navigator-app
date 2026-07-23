@@ -43,9 +43,11 @@
  *   just the top-level TOC content_hash. Before inserting a node's content,
  *   the existing is_current=true row for that municode_node_id (if any) is
  *   looked up:
- *     - same content_hash  → unchanged content; skip insert entirely.
+ *     - same content_hash anywhere on the node → unchanged content; skip insert entirely.
  *     - different content_hash → genuine amendment; flip the old row to
- *       is_current=false with superseded_date set, then insert the new row.
+ *       is_current=false with superseded_date set, then insert the new row,
+ *       but only when the incoming effective_date is known and not older
+ *       than the incumbent current row.
  *
  * FORCED FULL RE-INGESTION (fix, this file's current revision):
  *
@@ -259,6 +261,14 @@ async function fetchNodeChildren(
  * is skipped; genuinely different content flips the old row to
  * is_current=false (with superseded_date) before inserting the new one.
  */
+export function effectiveDateCanSupersede(
+  incomingEffectiveDate: string | null | undefined,
+  incumbentEffectiveDate: string | null | undefined,
+): boolean {
+  if (!incomingEffectiveDate || !incumbentEffectiveDate) return false;
+  return incomingEffectiveDate >= incumbentEffectiveDate;
+}
+
 async function upsertProvision(
   item: QueueItem,
   ctx: IngestContext,
@@ -266,9 +276,32 @@ async function upsertProvision(
 ): Promise<void> {
   const newHash = await contentHash(plainContent);
 
+  const { data: matchingContent, error: hashLookupErr } = await db
+    .from("ordinance_provisions")
+    .select("id, effective_date, is_current")
+    .eq("municode_node_id", item.id)
+    .eq("content_hash", newHash)
+    .limit(1)
+    .maybeSingle();
+
+  if (hashLookupErr) {
+    throw new Error(
+      `ordinance_provisions content-hash lookup failed for ${item.id}: ${hashLookupErr.message}`,
+    );
+  }
+
+  if (matchingContent) {
+    console.log(
+      `[municode] unchanged content hash already present — skipping ${item.id} (existing effective_date=${
+        matchingContent.effective_date ?? "unknown"
+      })`,
+    );
+    return;
+  }
+
   const { data: existing, error: lookupErr } = await db
     .from("ordinance_provisions")
-    .select("id, content_hash")
+    .select("id, content_hash, effective_date")
     .eq("municode_node_id", item.id)
     .eq("is_current", true)
     .maybeSingle();
@@ -279,14 +312,23 @@ async function upsertProvision(
     );
   }
 
-  if (existing && existing.content_hash === newHash) {
-    console.log(
-      `[municode] unchanged content — skipping ${item.id} (depth ${item.depth})`,
-    );
-    return;
-  }
-
   if (existing) {
+    if (
+      !effectiveDateCanSupersede(
+        ctx.effectiveDate,
+        existing.effective_date as string | null | undefined,
+      )
+    ) {
+      console.warn(
+        `[municode] older/unknown effective_date ${
+          ctx.effectiveDate ?? "unknown"
+        } cannot supersede current ${item.id} (current effective_date=${
+          existing.effective_date ?? "unknown"
+        }) — skipping`,
+      );
+      return;
+    }
+
     // WHERE is_current = true (not just id) makes this an atomic conditional
     // update: Postgres row-level locking serializes concurrent UPDATEs on the
     // same row, so a second concurrent supersede attempt naturally matches
@@ -397,6 +439,36 @@ async function upsertHistoricalProvision(
     citationToCurrentNodeId: ctx.identityIndex.citationToCurrentNodeId,
     citationToCurrentContent: ctx.identityIndex.citationToCurrentContent,
   });
+
+  const { data: matchingContent, error: hashLookupErr } = await db
+    .from("ordinance_provisions")
+    .select("id, embedding, effective_date")
+    .eq("municode_node_id", identity.nodeId)
+    .eq("content_hash", newHash)
+    .limit(1)
+    .maybeSingle();
+
+  if (hashLookupErr) {
+    throw new Error(
+      `historical ordinance_provisions content-hash lookup failed for ${identity.nodeId}: ${hashLookupErr.message}`,
+    );
+  }
+
+  if (matchingContent) {
+    if (!matchingContent.embedding) {
+      await persistHistoricalEmbedding(
+        ctx,
+        matchingContent.id as string,
+        plainContent,
+      );
+    }
+    console.log(
+      `[municode-history] matching content hash already present — skipping ${identity.nodeId} (${ctx.effectiveDate}; existing effective_date=${
+        matchingContent.effective_date ?? "unknown"
+      })`,
+    );
+    return;
+  }
 
   const { data: existing, error: lookupErr } = await db
     .from("ordinance_provisions")
