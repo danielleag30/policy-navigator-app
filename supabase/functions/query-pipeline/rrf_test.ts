@@ -16,8 +16,11 @@ Deno.env.set(
 const {
   deterministicCurrentValueDraft,
   extractCurrentValueFromNarrative,
+  filterUncurrentNarrativeValues,
   formatInlineAnswerCitations,
   formatBudgetValue,
+  narrativeCurrentValueHasStaleProvenance,
+  narrativeMakesCurrentValueClaim,
   resolveDeterministicCurrentValue,
   structuredCurrentValueScore,
 } = await import("./index.ts");
@@ -70,6 +73,7 @@ interface SourceDocument {
   doc_type: string | null;
   source_published_at: string | null;
   fiscal_year: number | null;
+  budget_stage?: "advertised" | "adopted" | null;
 }
 
 function rrfMerge(
@@ -2683,5 +2687,397 @@ Deno.test("current-state rerank does not override explicit historical tax-rate q
         ranked[0].id
       }`,
     );
+  }
+});
+
+// ── §5.2.1 narrative-currency guard (Wave 2a) ────────────────────────────────
+// Bound to the SHIPPING exports (filterUncurrentNarrativeValues,
+// narrativeMakesCurrentValueClaim, narrativeCurrentValueHasStaleProvenance,
+// resolveDeterministicCurrentValue — imported from ./index.ts at the top of this
+// file), NOT to local copies. A mutation to any of those shipping functions must
+// break these tests.
+//
+// The two TOT fixtures below use content pulled VERBATIM from Supabase project
+// ahaurkifxzqsrhwjshbj (chunk ids preserved), so they exercise the guard against
+// the exact data the Fable audit flagged.
+
+// Verbatim live content — narrative_chunks.content for the two audit chunks.
+const REAL_STALE_TOT_ID = "019f7e45-b2cd-706b-84de-2591108fa2bc";
+const REAL_STALE_TOT_DOC = "019f7e45-6930-7ee8-b56a-089cb78d4697";
+const REAL_STALE_TOT_CONTENT =
+  "max=$10.2 million; at state maximum rates=$98 million (Based on FY 2025 projection) Transient Occupancy Tax ($25.6 million) Fairfax County currently levies a 4% transient occupancy tax (2% for general purposes and 2% to promote tourism). The Transient Occupancy Tax rate has not been adjusted since 2004. Public hearing, approval by the Board of Supervisors and ordinance change Rates between 2 and 5% are earmarked for tourism promotion. No restriction on the tax rate above 5% 1% = $6.4 million based on FY 2025 estimated revenue Taxes With No Rate Flexibility Revenue Category (FY 2025 Revenue Estimate) Information Action Required Rate Limitations Potential Revenue Local Option Sales and Use Tax ($246.4 million) Maximum 1% local option rate set by the state N/A 1% N/A Cigarette Tax ($5.2 million at the FY 2025 tax rate of 40 cents per pack of 20 cigarettes)";
+
+const REAL_CURRENT_TOT_ID = "019f4747-ee4b-7089-bcaf-4498bef4c586";
+const REAL_CURRENT_TOT_DOC = "019f4747-3a67-7e01-bdb9-c186ec35fcd0";
+const REAL_CURRENT_TOT_CONTENT =
+  "However, the FY 2022 level was still well below the pre-pandemic collections, as business travel was slow to recover. FY 2023 collections continued to have a robust recovery, increasing a strong 42.2 percent compared to FY 2022 and bringing the collections back to near pre-pandemic level. Actual FY 2024 receipts increased 12.1 percent, surpassing the pre-pandemic collection levels, primarily as a result of higher hotel average daily rates (ADR) and higher hotel occupancy. Actual FY 2025 collections increased 5.7 percent over the previous year. In FY 2026, TOT receipts are projected to increase 48.3 percent, which is primarily associated with a 2-percentage point increase in the FY 2026 TOT tax rate from 4 percent to 6 percent approved by the Board of Supervisors. Transient Occupancy Taxes are charged as part of a hotel bill and remitted by the hotel to the County. The Transient Occupancy Tax had been levied at 4 percent since the Virginia  General  Assembly  permitted  the  Board  of  Supervisors  to  levy  an  additional  2.0  percent Transient Occupancy Tax in FY 2005.";
+
+function realStaleTotCandidate(): EnrichedCandidate {
+  return testCandidate("narrative_chunks", REAL_STALE_TOT_ID, {
+    document_id: REAL_STALE_TOT_DOC,
+    content: REAL_STALE_TOT_CONTENT,
+  });
+}
+function realCurrentTotCandidate(): EnrichedCandidate {
+  return testCandidate("narrative_chunks", REAL_CURRENT_TOT_ID, {
+    document_id: REAL_CURRENT_TOT_DOC,
+    content: REAL_CURRENT_TOT_CONTENT,
+  });
+}
+// doc_type/budget_stage/source_published_at/fiscal_year also copied live.
+function realStaleTotDoc(): SourceDocument {
+  return {
+    id: REAL_STALE_TOT_DOC,
+    url:
+      "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/budget%20committee%20meeting/2024/sep-17/2024_Sept_17_BudgetComm_TaxingAuthority_Supplemental.pdf",
+    title: null,
+    filename: null,
+    ingested_at: "2026-07-20T06:45:05.968+00:00",
+    doc_type: "bos_minutes",
+    budget_stage: null,
+    source_published_at: "2024-09-17",
+    fiscal_year: null,
+  };
+}
+function realCurrentTotDoc(): SourceDocument {
+  return {
+    id: REAL_CURRENT_TOT_DOC,
+    url:
+      "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/fy2027/advertised/overview/General%20Fund%20Revenue%20Overview.pdf",
+    title: null,
+    filename: null,
+    ingested_at: "2026-07-09T14:27:58.183+00:00",
+    doc_type: "budget_pdf",
+    budget_stage: "advertised",
+    source_published_at: null,
+    fiscal_year: 2027,
+  };
+}
+
+// The core proof (review PROOF STANDARD): against the two real chunks, the stale
+// 4% chunk is filtered and the Board-approved 6% chunk is kept for a current
+// query. This is the exact failure the reviewer reproduced against live data.
+Deno.test("§5.2.1 guard (real chunks): stale 4% TOT filtered, Board-approved 6% kept", () => {
+  const query = "what is the current transient occupancy tax rate";
+  const stale = realStaleTotCandidate();
+  const current = realCurrentTotCandidate();
+  const documents = new Map<string, SourceDocument>([
+    [REAL_STALE_TOT_DOC, realStaleTotDoc()],
+    [REAL_CURRENT_TOT_DOC, realCurrentTotDoc()],
+  ]);
+
+  const kept = filterUncurrentNarrativeValues(
+    query,
+    [stale, current],
+    documents,
+  )
+    .map((c) => c.id);
+  if (kept.includes(REAL_STALE_TOT_ID)) {
+    throw new Error(
+      `real stale 4% chunk must be filtered for a current query, kept: ${
+        kept.join(", ")
+      }`,
+    );
+  }
+  if (!kept.includes(REAL_CURRENT_TOT_ID)) {
+    throw new Error(
+      `real Board-approved 6% chunk must be kept, kept: ${kept.join(", ")}`,
+    );
+  }
+});
+
+// BLOCKING 1 regression: the classifier must recognize the stale chunk's explicit
+// "currently levies a 4%" assertion even though the ranking extractor returns
+// null on this exact text. If classification silently regresses to the extractor,
+// the chunk is treated as plain context and kept — the original leak.
+Deno.test("§5.2.1 classifier recognizes 'currently levies a 4%' where the extractor returns null", () => {
+  const query = "what is the current transient occupancy tax rate";
+  const stale = realStaleTotCandidate();
+  const doc = realStaleTotDoc();
+  if (extractCurrentValueFromNarrative(query, stale) !== null) {
+    throw new Error(
+      "fixture premise changed: the ranking extractor no longer returns null on this chunk",
+    );
+  }
+  if (!narrativeMakesCurrentValueClaim(query, stale, doc)) {
+    throw new Error(
+      "classifier must flag the explicit 'currently levies a 4%' current-value claim",
+    );
+  }
+});
+
+// BLOCKING 3: an undatable / older non-defensible claim is filtered when a
+// positively-dated defensible competitor exists — but kept (caveat path) when it
+// is the only current-value evidence.
+Deno.test("§5.2.1 guard drops the stale claim only when a positively-dated defensible competitor exists", () => {
+  const query = "what is the current transient occupancy tax rate";
+  const staleOnly = filterUncurrentNarrativeValues(
+    query,
+    [realStaleTotCandidate()],
+    new Map<string, SourceDocument>([[REAL_STALE_TOT_DOC, realStaleTotDoc()]]),
+  ).map((c) => c.id);
+  if (!staleOnly.includes(REAL_STALE_TOT_ID)) {
+    throw new Error(
+      "with no defensible competitor the stale claim must be kept for the caveat path",
+    );
+  }
+  const withCompetitor = filterUncurrentNarrativeValues(
+    query,
+    [realStaleTotCandidate(), realCurrentTotCandidate()],
+    new Map<string, SourceDocument>([
+      [REAL_STALE_TOT_DOC, realStaleTotDoc()],
+      [REAL_CURRENT_TOT_DOC, realCurrentTotDoc()],
+    ]),
+  ).map((c) => c.id);
+  if (withCompetitor.includes(REAL_STALE_TOT_ID)) {
+    throw new Error(
+      "with a positively-dated defensible competitor the stale claim must be dropped",
+    );
+  }
+});
+
+// BLOCKING 2: defensibility is POSITIVE currency evidence, not the absence of a
+// stale flag. The Board-approved 6% chunk sits in an "advertised" container yet
+// must be defensible (its own approval signal), while the stale chunk — which is
+// NOT advertised, so an absence-of-stale-flag rule would wrongly call it
+// defensible — is not. narrativeCurrentValueHasStaleProvenance is false for both
+// (neither is advertised); the drop is driven by positive-evidence + recency.
+Deno.test("§5.2.1 guard: Board-approval in an advertised container is defensible; a non-advertised stale claim is not", () => {
+  const query = "what is the current transient occupancy tax rate";
+  const stale = realStaleTotCandidate();
+  const current = realCurrentTotCandidate();
+  // Neither chunk is advertised-with-no-approval, so stale-provenance is false
+  // for both — proving the drop is NOT a provenance shortcut.
+  if (
+    narrativeCurrentValueHasStaleProvenance(query, stale, realStaleTotDoc())
+  ) {
+    throw new Error(
+      "stale chunk is not advertised → stale-provenance must be false",
+    );
+  }
+  if (
+    narrativeCurrentValueHasStaleProvenance(query, current, realCurrentTotDoc())
+  ) {
+    throw new Error(
+      "Board-approved chunk must not be flagged stale-provenance despite advertised container",
+    );
+  }
+  // The Board-approved chunk alone is always kept (own positive evidence).
+  const currentAlone = filterUncurrentNarrativeValues(
+    query,
+    [current],
+    new Map<string, SourceDocument>([[
+      REAL_CURRENT_TOT_DOC,
+      realCurrentTotDoc(),
+    ]]),
+  ).map((c) => c.id);
+  if (!currentAlone.includes(REAL_CURRENT_TOT_ID)) {
+    throw new Error("Board-approved chunk must never be filtered");
+  }
+});
+
+// The stormwater case from the audit: a rate served as current whose only
+// provenance is a "FY 2022 Budget as Advertised" document. Advertised/proposed
+// figures must not be asserted as current, so the sole candidate is dropped by
+// provenance (rule a) regardless of any competitor.
+Deno.test("§5.2.1 guard drops an advertised-only current-value narrative", () => {
+  const query = "what is the current stormwater district tax rate";
+  const docId = "00000000-0000-0000-0000-0000000005b1";
+  const advertised = testCandidate(
+    "narrative_chunks",
+    "stormwater-advertised",
+    {
+      document_id: docId,
+      content:
+        "The FY 2022 Budget as Advertised sets the stormwater service district tax rate at 0.0325 per $100 of assessed value, effective July 1 2021.",
+    },
+  );
+  const documents = new Map<string, SourceDocument>([
+    [docId, {
+      id: docId,
+      url: "https://example.test/fy2022/advertised/stormwater.pdf",
+      title: "FY 2022 Advertised Budget Plan",
+      filename: null,
+      ingested_at: "2026-07-01T00:00:00Z",
+      doc_type: "budget_pdf",
+      budget_stage: "advertised",
+      source_published_at: null,
+      fiscal_year: 2022,
+    }],
+  ]);
+
+  if (
+    !narrativeCurrentValueHasStaleProvenance(
+      query,
+      advertised,
+      documents.get(docId),
+    )
+  ) {
+    throw new Error(
+      "advertised stormwater narrative should be flagged stale-provenance",
+    );
+  }
+  const kept = filterUncurrentNarrativeValues(query, [advertised], documents)
+    .map((c) => c.id);
+  if (kept.length !== 0) {
+    throw new Error(
+      `advertised-only current-value narrative must be dropped, kept: ${
+        kept.join(", ")
+      }`,
+    );
+  }
+});
+
+// Regression safety: an adopted structured row is never removed and still
+// resolves deterministically even when a stale competing narrative is present.
+Deno.test("§5.2.1 guard preserves the adopted structured $1.12 row and still resolves it", () => {
+  const query = "what is the current real estate tax rate";
+  const adoptedDocId = "00000000-0000-0000-0000-0000000005e1";
+  const staleDocId = "00000000-0000-0000-0000-0000000005e2";
+
+  const adopted = testCandidate("budget_indicators", "re-adopted", {
+    document_id: adoptedDocId,
+    fiscal_year: 2027,
+    program: "Real Estate Tax",
+    indicator_name: "adopted Real Estate Tax rate",
+    value_actual: 1.12,
+    unit: "dollars per $100",
+    raw_extracted_text:
+      "The adopted Real Estate Tax rate of $1.12 per $100 of assessed value reflects a reduction from $1.1225.",
+  });
+  const staleNarrative = testCandidate("narrative_chunks", "re-stale", {
+    document_id: staleDocId,
+    content:
+      "The Real Estate tax rate is $1.15 per $100 of assessed value, remaining at $1.15 for that year.",
+  });
+  staleNarrative.rrfScore = 0.03;
+
+  const documents = new Map<string, SourceDocument>([
+    [adoptedDocId, {
+      id: adoptedDocId,
+      url:
+        "https://example.test/fy2027/adopted/overview/Adopted%20Budget%20Summary.pdf",
+      title: null,
+      filename: null,
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "budget_pdf",
+      budget_stage: "adopted",
+      source_published_at: null,
+      fiscal_year: 2027,
+    }],
+    [staleDocId, {
+      id: staleDocId,
+      url: "https://example.test/fy2020/adopted/overview.pdf",
+      title: "FY 2020 Adopted Budget Overview",
+      filename: null,
+      ingested_at: "2026-07-01T00:00:00Z",
+      doc_type: "budget_pdf",
+      budget_stage: "adopted",
+      source_published_at: "2019-05-07",
+      fiscal_year: 2020,
+    }],
+  ]);
+
+  const curated = filterUncurrentNarrativeValues(
+    query,
+    [staleNarrative, adopted],
+    documents,
+  );
+  if (!curated.some((c) => c.id === "re-adopted")) {
+    throw new Error("adopted structured $1.12 row must never be filtered out");
+  }
+  if (curated.some((c) => c.id === "re-stale")) {
+    throw new Error(
+      "stale FY2020 narrative must be dropped when a defensible FY2027 row competes",
+    );
+  }
+  const resolved = resolveDeterministicCurrentValue(query, curated, documents);
+  if (resolved?.id !== "re-adopted") {
+    throw new Error(
+      `adopted $1.12 row must still resolve deterministically, got ${resolved?.id}`,
+    );
+  }
+});
+
+// Historical / compound / deep-historical queries are a no-op: the guard must not
+// touch candidate sets for anything but implicit-current questions.
+Deno.test("§5.2.1 guard is a no-op for historical and compound queries", () => {
+  const documents = new Map<string, SourceDocument>([
+    [REAL_STALE_TOT_DOC, realStaleTotDoc()],
+  ]);
+  for (
+    const query of [
+      "what was the transient occupancy tax rate in 2020",
+      "what is the current transient occupancy tax rate, and what was it in 2020",
+    ]
+  ) {
+    const kept = filterUncurrentNarrativeValues(
+      query,
+      [realStaleTotCandidate()],
+      documents,
+    ).map((c) => c.id);
+    if (kept.length !== 1 || kept[0] !== REAL_STALE_TOT_ID) {
+      throw new Error(
+        `guard must not touch candidates for "${query}", kept: ${
+          kept.join(", ")
+        }`,
+      );
+    }
+  }
+});
+
+// BLOCKING 3 (null-recency branch): an UNDATABLE current-value claim (no fiscal
+// year, no source_published_at, no date in the URL) must be filtered when a
+// positively-dated defensible competitor exists — undatable is not a free pass.
+Deno.test("§5.2.1 guard drops an undatable current-value claim against a positively-dated competitor", () => {
+  const query = "what is the current transient occupancy tax rate";
+  const undatableDocId = "00000000-0000-0000-0000-0000000006a1";
+  const undatable = testCandidate("narrative_chunks", "tot-undatable", {
+    document_id: undatableDocId,
+    content:
+      "The transient occupancy tax is currently levied at a rate of 4% on hotel stays in the County.",
+  });
+  undatable.rrfScore = 0.05;
+
+  const documents = new Map<string, SourceDocument>([
+    [undatableDocId, {
+      id: undatableDocId,
+      url: "https://example.test/reference/tax-glossary.pdf",
+      title: "Tax Glossary",
+      filename: null,
+      ingested_at: "2026-07-20T00:00:00Z",
+      doc_type: "bos_summary",
+      budget_stage: null,
+      source_published_at: null,
+      fiscal_year: null,
+    }],
+    [REAL_CURRENT_TOT_DOC, realCurrentTotDoc()],
+  ]);
+
+  // Sanity: the undatable chunk genuinely has no recency signal.
+  const undatableAlone = filterUncurrentNarrativeValues(
+    query,
+    [undatable],
+    new Map<string, SourceDocument>([[
+      undatableDocId,
+      documents.get(undatableDocId)!,
+    ]]),
+  ).map((c) => c.id);
+  if (!undatableAlone.includes("tot-undatable")) {
+    throw new Error("undatable claim alone must be kept for the caveat path");
+  }
+
+  const kept = filterUncurrentNarrativeValues(
+    query,
+    [undatable, realCurrentTotCandidate()],
+    documents,
+  ).map((c) => c.id);
+  if (kept.includes("tot-undatable")) {
+    throw new Error(
+      "undatable claim must be dropped when a positively-dated defensible competitor exists",
+    );
+  }
+  if (!kept.includes(REAL_CURRENT_TOT_ID)) {
+    throw new Error("the defensible competitor must be kept");
   }
 });
