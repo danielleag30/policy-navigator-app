@@ -1313,7 +1313,8 @@ Deno.test("response assembly replaces inline chunk-id citations with formatted c
     rank: 1,
   }];
 
-  const answer = `The tax rate is 1.12. [chunk_id=${chunkId}; page=42; bbox=null]`;
+  const answer =
+    `The tax rate is 1.12. [chunk_id=${chunkId}; page=42; bbox=null]`;
   const formatted = formatInlineAnswerCitations(answer, citations);
 
   if (formatted.includes("chunk_id=")) {
@@ -1387,7 +1388,8 @@ Deno.test("response assembly replaces comma-joined multi chunk-id citations", ()
     rank: 2,
   }];
 
-  const answer = `not in the documents [chunk_id=${firstChunkId}, chunk_id=${secondChunkId}]`;
+  const answer =
+    `not in the documents [chunk_id=${firstChunkId}, chunk_id=${secondChunkId}]`;
   const formatted = formatInlineAnswerCitations(answer, citations);
 
   if (formatted.includes("chunk_id=") || formatted.includes(firstChunkId)) {
@@ -1523,7 +1525,8 @@ Deno.test("current-state rerank prefers latest adopted real estate tax budget in
     indicator_name: "Real Estate Tax rate",
     value_actual: 1.12,
     unit: "dollars per $100 assessed value",
-    raw_extracted_text: "FY 2027 Adopted Budget sets the Real Estate tax rate at $1.12 per $100.",
+    raw_extracted_text:
+      "FY 2027 Adopted Budget sets the Real Estate tax rate at $1.12 per $100.",
   });
   currentAdopted.rrfScore = 0.01;
 
@@ -1574,7 +1577,8 @@ Deno.test("compound current and historical real estate tax query still prefers c
       indicator_name: "Real Estate Tax rate",
       value_actual: 1.15,
       unit: "dollars per $100 assessed value",
-      raw_extracted_text: "FY 2020 Adopted Budget sets the Real Estate tax rate at $1.15 per $100.",
+      raw_extracted_text:
+        "FY 2020 Adopted Budget sets the Real Estate tax rate at $1.15 per $100.",
     },
   );
   historicalRate.rrfScore = 0.03;
@@ -1586,7 +1590,8 @@ Deno.test("compound current and historical real estate tax query still prefers c
     indicator_name: "Real Estate Tax rate",
     value_actual: 1.12,
     unit: "dollars per $100 assessed value",
-    raw_extracted_text: "FY 2027 Adopted Budget sets the Real Estate tax rate at $1.12 per $100.",
+    raw_extracted_text:
+      "FY 2027 Adopted Budget sets the Real Estate tax rate at $1.12 per $100.",
   });
   currentRate.rrfScore = 0.01;
 
@@ -1613,7 +1618,8 @@ Deno.test("compound current and historical real estate tax query still prefers c
     }],
   ]);
 
-  const query = "what is the current real estate tax rate, and was it different in 2020?";
+  const query =
+    "what is the current real estate tax rate, and was it different in 2020?";
   const ranked = rerankCurrentStateCandidatesForTest(
     query,
     [historicalRate, currentRate],
@@ -1809,7 +1815,8 @@ Deno.test("current-state budget indicator lookup tiebreak prefers final adopted 
     }],
     [summaryDocId, {
       id: summaryDocId,
-      url: "https://example.test/fy2027/adopted/overview/Adopted%20Budget%20Summary.pdf",
+      url:
+        "https://example.test/fy2027/adopted/overview/Adopted%20Budget%20Summary.pdf",
       title: null,
       filename: null,
       ingested_at: "2026-07-20T00:00:00Z",
@@ -1819,7 +1826,8 @@ Deno.test("current-state budget indicator lookup tiebreak prefers final adopted 
     }],
     [revenueOverviewDocId, {
       id: revenueOverviewDocId,
-      url: "https://example.test/fy2027/adopted/overview/General%20Fund%20Revenue%20Overview.pdf",
+      url:
+        "https://example.test/fy2027/adopted/overview/General%20Fund%20Revenue%20Overview.pdf",
       title: null,
       filename: null,
       ingested_at: "2026-07-20T00:00:00Z",
@@ -1841,7 +1849,9 @@ Deno.test("current-state budget indicator lookup tiebreak prefers final adopted 
     );
   }
   if (
-    selected.slice(0, 2).some((candidate) => candidate.row.value_actual !== 1.12)
+    selected.slice(0, 2).some((candidate) =>
+      candidate.row.value_actual !== 1.12
+    )
   ) {
     throw new Error(
       "stale adopted-tagged CEX row outranked final-rate evidence",
@@ -1874,7 +1884,8 @@ Deno.test("current-state budget indicator lookup rejects non-rate values from ra
   const documents = new Map<string, SourceDocument>([
     [docId, {
       id: docId,
-      url: "https://example.test/fy2027/adopted/overview/General%20Fund%20Revenue%20Overview.pdf",
+      url:
+        "https://example.test/fy2027/adopted/overview/General%20Fund%20Revenue%20Overview.pdf",
       title: null,
       filename: null,
       ingested_at: "2026-07-20T00:00:00Z",
@@ -1935,7 +1946,8 @@ Deno.test("current-value resolver selects adopted structured row before Temporal
   const documents = new Map<string, SourceDocument>([
     [adoptedDocId, {
       id: adoptedDocId,
-      url: "https://example.test/fy2027/adopted/overview/Adopted%20Budget%20Summary.pdf",
+      url:
+        "https://example.test/fy2027/adopted/overview/Adopted%20Budget%20Summary.pdf",
       title: null,
       filename: null,
       ingested_at: "2026-07-20T00:00:00Z",
@@ -2092,7 +2104,8 @@ Deno.test("current-state budget indicator lookup selects current personal proper
       indicator_name: "Personal Property Tax rate",
       value_actual: 4.57,
       unit: "dollars per $100 assessed value",
-      raw_extracted_text: "FY 2027 Adopted Budget: Personal Property Tax rate is $4.57 per $100.",
+      raw_extracted_text:
+        "FY 2027 Adopted Budget: Personal Property Tax rate is $4.57 per $100.",
     },
   );
   const stalePersonalProperty = testCandidate(
@@ -2105,7 +2118,8 @@ Deno.test("current-state budget indicator lookup selects current personal proper
       indicator_name: "Personal Property Tax rate",
       value_actual: 4.57,
       unit: "dollars per $100 assessed value",
-      raw_extracted_text: "1993 BOS summary: Personal Property Tax rate is $4.57 per $100.",
+      raw_extracted_text:
+        "1993 BOS summary: Personal Property Tax rate is $4.57 per $100.",
     },
   );
   const realEstate = testCandidate("budget_indicators", "real-estate", {
@@ -2169,7 +2183,8 @@ Deno.test("current-value resolver handles known current tax cases as one suite",
     }],
     [narrativeDocId, {
       id: narrativeDocId,
-      url: "https://example.test/fy2027/adopted/general-fund-revenue-overview.pdf",
+      url:
+        "https://example.test/fy2027/adopted/general-fund-revenue-overview.pdf",
       title: "FY 2027 Adopted General Fund Revenue Overview",
       filename: "General Fund Revenue Overview.pdf",
       ingested_at: "2026-07-20T00:00:00Z",
@@ -2443,7 +2458,8 @@ Deno.test("current-value resolver handles sampled adopted budget indicator rows"
     testCandidate("budget_indicators", "commercial-industrial-tax", {
       document_id: adoptedDocId,
       fiscal_year: 2027,
-      program: "Commercial & Industrial Tax for Transportation Projects (Fund 40010)",
+      program:
+        "Commercial & Industrial Tax for Transportation Projects (Fund 40010)",
       indicator_name: "Commercial & Industrial Tax for Transportation Projects",
       value_actual: 0.125,
       unit: "dollars per $100 of assessed value",
@@ -2553,7 +2569,8 @@ Deno.test("current-value resolver does not answer fee queries from expenditure r
     indicator_name: "collection rate",
     value_actual: 630,
     unit: "dollars per home",
-    raw_extracted_text: "The FY 2027 adopted refuse collection rate is $630 per home.",
+    raw_extracted_text:
+      "The FY 2027 adopted refuse collection rate is $630 per home.",
   });
 
   const resolved = resolveDeterministicCurrentValue(
@@ -2588,7 +2605,8 @@ Deno.test("current-value resolver ignores future-year projections for current qu
     indicator_name: "Sewer Service Charge Per 1,000 gallons of water",
     value_actual: 9.88,
     unit: "dollars",
-    raw_extracted_text: "2027 $9.88 2028 $10.78 2029 $11.75 2030 $12.81 2031 $13.69.",
+    raw_extracted_text:
+      "2027 $9.88 2028 $10.78 2029 $11.75 2030 $12.81 2031 $13.69.",
   });
   const future = testCandidate("budget_indicators", "sewer-fy2031", {
     document_id: docId,
@@ -2597,7 +2615,8 @@ Deno.test("current-value resolver ignores future-year projections for current qu
     indicator_name: "Sewer Service Charge Per 1,000 gallons of water",
     value_actual: 13.69,
     unit: "dollars",
-    raw_extracted_text: "2027 $9.88 2028 $10.78 2029 $11.75 2030 $12.81 2031 $13.69.",
+    raw_extracted_text:
+      "2027 $9.88 2028 $10.78 2029 $11.75 2030 $12.81 2031 $13.69.",
   });
   const priorAdopted = testCandidate("budget_indicators", "sewer-fy2026", {
     document_id: docId,
@@ -2660,7 +2679,9 @@ Deno.test("current-state rerank does not override explicit historical tax-rate q
 
   if (ranked[0].id !== "old-markup") {
     throw new Error(
-      `expected historical query to preserve retrieval order, got ${ranked[0].id}`,
+      `expected historical query to preserve retrieval order, got ${
+        ranked[0].id
+      }`,
     );
   }
 });
