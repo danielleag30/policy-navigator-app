@@ -90,6 +90,7 @@ while (processed < maxRows) {
   }
 
   const limit = Math.min(pageSize, maxRows - processed);
+  const pageStartCursor = cursor;
   const { data: rows, error } = await db
     .from("budget_indicators")
     .select(
@@ -114,22 +115,22 @@ while (processed < maxRows) {
   const inputs = typedRows.map(budgetIndicatorEmbeddingInput);
   const embeddings = await generateEmbeddingsHttpBatched(embedUrl, inputs);
 
+  const nullCount = embeddings.filter((embedding) => embedding === null).length;
+  if (nullCount > 0) {
+    throw new Error(
+      `embedding generation returned ${nullCount} null vector(s); resume with START_AFTER_ID=${pageStartCursor}`,
+    );
+  }
+
   if (writeEnabled) {
     await persistEmbeddings(db, "budget_indicators", "budget_indicator", typedRows, embeddings);
   }
 
   processed += typedRows.length;
   cursor = typedRows[typedRows.length - 1].id;
-  const nullCount = embeddings.filter((embedding) => embedding === null).length;
   console.log(
     `[budget-reembed] processed=${processed} last_id=${cursor} null_embeddings=${nullCount}`,
   );
-
-  if (nullCount > 0) {
-    throw new Error(
-      `embedding generation returned ${nullCount} null vector(s); resume with START_AFTER_ID=${cursor}`,
-    );
-  }
 }
 
 console.log(
