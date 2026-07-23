@@ -2906,24 +2906,50 @@ export function formatInlineAnswerCitations(
   citations: CitationChunk[],
 ): string {
   const labels = citationByChunkId(citations);
-  const marker =
-    /\[chunk_id=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12});/gi;
   let formatted = "";
   let cursor = 0;
-  let match: RegExpExecArray | null;
 
-  while ((match = marker.exec(answer)) !== null) {
-    const start = match.index;
+  for (let start = answer.indexOf("[chunk_id="); start !== -1;) {
     const end = inlineCitationEnd(answer, start);
-    if (end === null) continue;
+    if (end === null) {
+      formatted += answer.slice(cursor, start);
+      formatted += scrubMalformedInlineCitation(answer.slice(start));
+      cursor = answer.length;
+      break;
+    }
 
+    const marker = answer.slice(start, end);
+    const chunkIds = [...marker.matchAll(
+      /\bchunk_id=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/gi,
+    )].map((match) => match[1]);
+    if (chunkIds.length === 0) {
+      start = answer.indexOf("[chunk_id=", start + 1);
+      continue;
+    }
+
+    const replacement = [...new Set(chunkIds)]
+      .map((chunkId) => labels.get(chunkId))
+      .filter((label): label is string => label !== undefined)
+      .join(" ");
     formatted += answer.slice(cursor, start);
-    formatted += labels.get(match[1]) ?? answer.slice(start, end);
+    formatted += replacement;
     cursor = end;
-    marker.lastIndex = end;
+    start = answer.indexOf("[chunk_id=", end);
   }
 
   return cursor === 0 ? answer : formatted + answer.slice(cursor);
+}
+
+function scrubMalformedInlineCitation(text: string): string {
+  return text
+    .replace(
+      /\[?\s*chunk_id=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+      "",
+    )
+    .replace(/\b(?:page|bbox)=[^\]\s;,]+/gi, "")
+    .replace(/[;,]\s*[;,]?/g, "")
+    .replace(/\s+\]/g, "]")
+    .replace(/\s{2,}/g, " ");
 }
 
 function inlineCitationEnd(answer: string, start: number): number | null {

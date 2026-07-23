@@ -1365,6 +1365,109 @@ Deno.test("response assembly removes raw chunk-id citation with nested bbox JSON
   }
 });
 
+Deno.test("response assembly replaces comma-joined multi chunk-id citations", () => {
+  const firstChunkId = "019f4c4c-0000-7000-8000-000000000001";
+  const secondChunkId = "019f8b52-0000-7000-8000-000000000002";
+  const citations: CitationChunk[] = [{
+    chunk_id: firstChunkId,
+    source_url: "https://example.test/ordinance",
+    source_title: "Fairfax County Code",
+    page_number: null,
+    bbox: null,
+    retrieved_at: "2026-07-20T00:00:00Z",
+    formatted: "[Fairfax County Code, page n/a, retrieved 2026-07-20]",
+    rank: 1,
+  }, {
+    chunk_id: secondChunkId,
+    source_url: "https://example.test/zoning",
+    source_title: "Zoning Ordinance",
+    page_number: null,
+    bbox: null,
+    retrieved_at: "2026-07-21T00:00:00Z",
+    formatted: "[Zoning Ordinance, page n/a, retrieved 2026-07-21]",
+    rank: 2,
+  }];
+
+  const answer =
+    `not in the documents [chunk_id=${firstChunkId}, chunk_id=${secondChunkId}]`;
+  const formatted = formatInlineAnswerCitations(answer, citations);
+
+  if (formatted.includes("chunk_id=") || formatted.includes(firstChunkId)) {
+    throw new Error(`expected audit leak fixture to be removed: ${formatted}`);
+  }
+  if (
+    !formatted.includes(
+      "[Fairfax County Code, page n/a, retrieved 2026-07-20]",
+    ) ||
+    !formatted.includes("[Zoning Ordinance, page n/a, retrieved 2026-07-21]")
+  ) {
+    throw new Error(`expected both citation labels in answer: ${formatted}`);
+  }
+  if (!formatted.startsWith("not in the documents ")) {
+    throw new Error(`expected surrounding answer text preserved: ${formatted}`);
+  }
+});
+
+Deno.test("response assembly replaces comma-joined chunk ids with metadata and nested bbox", () => {
+  const firstChunkId = "019f4c4c-1111-7111-8111-111111111111";
+  const secondChunkId = "019f8b52-2222-7222-8222-222222222222";
+  const citations: CitationChunk[] = [{
+    chunk_id: firstChunkId,
+    source_url: "",
+    source_title: "Board Summary",
+    page_number: 5,
+    bbox: null,
+    retrieved_at: "2026-07-20T00:00:00Z",
+    formatted: "[Board Summary, page 5, retrieved 2026-07-20]",
+    rank: 1,
+  }, {
+    chunk_id: secondChunkId,
+    source_url: "",
+    source_title: "Budget Document",
+    page_number: 8,
+    bbox: null,
+    retrieved_at: "2026-07-22T00:00:00Z",
+    formatted: "[Budget Document, page 8, retrieved 2026-07-22]",
+    rank: 2,
+  }];
+
+  const answer =
+    `The supported answer remains visible [chunk_id=${firstChunkId}; page=5; bbox={"boxes":[[1,2],[3,4]]}, chunk_id=${secondChunkId}; page=8; bbox={"end":[{"x":72.1,"y":140.8}]}].`;
+  const formatted = formatInlineAnswerCitations(answer, citations);
+
+  if (formatted.includes("chunk_id=") || formatted.includes("bbox=")) {
+    throw new Error(`expected raw metadata to be removed: ${formatted}`);
+  }
+  if (!formatted.startsWith("The supported answer remains visible ")) {
+    throw new Error(`expected answer text preserved: ${formatted}`);
+  }
+  if (
+    !formatted.includes("[Board Summary, page 5, retrieved 2026-07-20]") ||
+    !formatted.includes("[Budget Document, page 8, retrieved 2026-07-22]")
+  ) {
+    throw new Error(`expected both metadata citations replaced: ${formatted}`);
+  }
+});
+
+Deno.test("response assembly strips unresolved or malformed chunk-id citations cleanly", () => {
+  const unresolved = "019f4c4c-3333-7333-8333-333333333333";
+  const malformed = "019f8b52-4444-7444-8444-444444444444";
+  const resolved = formatInlineAnswerCitations(
+    `Keep this answer [chunk_id=${unresolved}, chunk_id=${malformed}] and this too [chunk_id=${malformed}; page=1.`,
+    [],
+  );
+
+  if (resolved.includes("chunk_id=") || resolved.includes(unresolved)) {
+    throw new Error(`expected raw unresolved ids to be removed: ${resolved}`);
+  }
+  if (
+    !resolved.includes("Keep this answer ") ||
+    !resolved.includes(" and this too ")
+  ) {
+    throw new Error(`expected surrounding answer text preserved: ${resolved}`);
+  }
+});
+
 Deno.test("response assembly freshness uses most recent cited ingested_at", () => {
   const citations: CitationChunk[] = [
     {
