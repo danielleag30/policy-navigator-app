@@ -365,9 +365,7 @@ function rrfMerge(
 async function enrichWithAncestors(
   candidates: RankedCandidate[],
 ): Promise<EnrichedCandidate[]> {
-  const ordinanceCandidates = candidates.filter((c) =>
-    c.table === "ordinance_provisions"
-  );
+  const ordinanceCandidates = candidates.filter((c) => c.table === "ordinance_provisions");
 
   const parentNodeIds = [
     ...new Set(
@@ -556,9 +554,7 @@ function hardFilterSuperseded(
 
   const currentNodeIds = new Set(
     candidates
-      .filter((c) =>
-        c.table === "ordinance_provisions" && c.row.is_current === true
-      )
+      .filter((c) => c.table === "ordinance_provisions" && c.row.is_current === true)
       .map((c) => c.municode_node_id)
       .filter((id): id is string => id !== undefined),
   );
@@ -961,9 +957,7 @@ export function ordinanceCurrentValueScore(
   if (extractCurrentValueFromOrdinance(query, c) === null) return 0;
 
   const effectiveDate = asText(c.row.effective_date);
-  const effectiveScore = effectiveDate
-    ? Date.parse(effectiveDate) / 86_400_000
-    : 0;
+  const effectiveScore = effectiveDate ? Date.parse(effectiveDate) / 86_400_000 : 0;
   return 3_000_000 + (Number.isFinite(effectiveScore) ? effectiveScore : 0);
 }
 
@@ -1051,9 +1045,7 @@ export function extractCurrentValueFromOrdinance(
   const total = unique.reduce((sum, value) => sum + value, 0);
   if (total > 0 && total <= 20 && unique.length > 1) {
     return `${
-      Number.isInteger(total)
-        ? total
-        : total.toFixed(4).replace(/0+$/, "").replace(/\.$/, "")
+      Number.isInteger(total) ? total : total.toFixed(4).replace(/0+$/, "").replace(/\.$/, "")
     }%`;
   }
   if (unique.length === 1) {
@@ -1564,9 +1556,7 @@ function serializeChunk(c: EnrichedCandidate, index: number): string {
   lines.push(meta.join(" | "));
 
   const rawText = candidateText(c);
-  const truncated = rawText.length > 600
-    ? rawText.slice(0, 600) + "…"
-    : rawText;
+  const truncated = rawText.length > 600 ? rawText.slice(0, 600) + "…" : rawText;
   lines.push(`    ${truncated}`);
 
   return lines.join("\n");
@@ -1611,9 +1601,7 @@ function validateJudgeOutput(
     .filter((id): id is string => typeof id === "string" && validIds.has(id))
     .slice(0, JUDGE_OUTPUT_LIMIT);
 
-  const amendmentCaveat = typeof obj.amendment_caveat === "string"
-    ? obj.amendment_caveat
-    : null;
+  const amendmentCaveat = typeof obj.amendment_caveat === "string" ? obj.amendment_caveat : null;
   const pendingChangeNotice = typeof obj.pending_change_notice === "string"
     ? obj.pending_change_notice
     : null;
@@ -2082,9 +2070,7 @@ function caveatList(
   incompleteSearchWarning: boolean,
 ): string[] {
   const caveats = [amendmentCaveat, pendingChangeNotice]
-    .filter((value): value is string =>
-      typeof value === "string" && value.trim() !== ""
-    )
+    .filter((value): value is string => typeof value === "string" && value.trim() !== "")
     .map((value) => value.trim());
 
   if (incompleteSearchWarning) {
@@ -2151,9 +2137,7 @@ function validateDrafterOutput(
 
   const rawAnswer = obj.answer.trim();
   const isRefusal = rawAnswer.toLowerCase().includes("not in the documents");
-  const answer = isRefusal
-    ? "not in the documents"
-    : withRequiredCaveats(rawAnswer, caveats);
+  const answer = isRefusal ? "not in the documents" : withRequiredCaveats(rawAnswer, caveats);
   if (citedIds.size === 0 && !isRefusal) return null;
 
   const citedChunks = chunks.filter((chunk) => citedIds.has(chunk.chunk_id));
@@ -2194,9 +2178,7 @@ export function formatBudgetValue(
 ): string | null {
   const unitText = typeof unit === "string" ? unit.trim() : "";
   const numericValue = asNumber(value);
-  const textValue = typeof value === "string" && value.trim() !== ""
-    ? value.trim()
-    : null;
+  const textValue = typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 
   if (numericValue === null && textValue === null) return null;
 
@@ -2206,9 +2188,7 @@ export function formatBudgetValue(
     ? String(numericValue)
     : String(numericValue);
   const perHundredUnit = unitText.replace(/^dollars?\s+/i, "");
-  const prefixedValue = /\bper\s+\$?100\b/i.test(unitText)
-    ? `$${valueText}`
-    : valueText;
+  const prefixedValue = /\bper\s+\$?100\b/i.test(unitText) ? `$${valueText}` : valueText;
 
   return perHundredUnit ? `${prefixedValue} ${perHundredUnit}` : prefixedValue;
 }
@@ -2328,9 +2308,7 @@ export function resolveDeterministicCurrentValue(
       };
     })
     .filter(({ score }) => score > 0)
-    .sort((a, b) =>
-      b.score - a.score || b.candidate.rrfScore - a.candidate.rrfScore
-    );
+    .sort((a, b) => b.score - a.score || b.candidate.rrfScore - a.candidate.rrfScore);
 
   const structured = scored.find(({ candidate, score }) =>
     (candidate.table === "budget_indicators" && score >= 2_000_000) ||
@@ -2350,8 +2328,7 @@ async function runAnswerDrafter(
 
   const styleHint = detectQuestionStyle(userQuery);
 
-  const systemPrompt =
-    `You are the Answer Drafter for a municipal policy Q&A system.
+  const systemPrompt = `You are the Answer Drafter for a municipal policy Q&A system.
 
 Use only the provided document chunks. Do not use outside knowledge.
 
@@ -2505,9 +2482,7 @@ function parseFlaggedClaims(
     const matchedClaim = claimsByNormalized.get(normalizeClaim(rawClaim)) ??
       rawClaim;
     const mappedChunkId = citationMap[matchedClaim]?.chunk_id;
-    const rawChunkId = typeof obj.chunk_id === "string"
-      ? obj.chunk_id.trim()
-      : "";
+    const rawChunkId = typeof obj.chunk_id === "string" ? obj.chunk_id.trim() : "";
     const chunkId = mappedChunkId ?? rawChunkId;
     const issue = typeof obj.issue === "string" ? obj.issue.trim() : "";
     const instruction = typeof obj.correction_instruction === "string"
@@ -2702,8 +2677,7 @@ async function runCorrectionPass(
 ): Promise<CorrectionResult | null> {
   if (!consumeLlmCall(budget, `correction-pass-${passNumber}`)) return null;
 
-  const systemPrompt =
-    `You are the Correction Drafter for a municipal policy Q&A system.
+  const systemPrompt = `You are the Correction Drafter for a municipal policy Q&A system.
 
 Use only the provided document chunks. Do not use outside knowledge.
 
@@ -2906,24 +2880,50 @@ export function formatInlineAnswerCitations(
   citations: CitationChunk[],
 ): string {
   const labels = citationByChunkId(citations);
-  const marker =
-    /\[chunk_id=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12});/gi;
   let formatted = "";
   let cursor = 0;
-  let match: RegExpExecArray | null;
 
-  while ((match = marker.exec(answer)) !== null) {
-    const start = match.index;
+  for (let start = answer.indexOf("[chunk_id="); start !== -1;) {
     const end = inlineCitationEnd(answer, start);
-    if (end === null) continue;
+    if (end === null) {
+      formatted += answer.slice(cursor, start);
+      formatted += scrubMalformedInlineCitation(answer.slice(start));
+      cursor = answer.length;
+      break;
+    }
 
+    const marker = answer.slice(start, end);
+    const chunkIds = [...marker.matchAll(
+      /\bchunk_id=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/gi,
+    )].map((match) => match[1]);
+    if (chunkIds.length === 0) {
+      start = answer.indexOf("[chunk_id=", start + 1);
+      continue;
+    }
+
+    const replacement = [...new Set(chunkIds)]
+      .map((chunkId) => labels.get(chunkId))
+      .filter((label): label is string => label !== undefined)
+      .join(" ");
     formatted += answer.slice(cursor, start);
-    formatted += labels.get(match[1]) ?? answer.slice(start, end);
+    formatted += replacement;
     cursor = end;
-    marker.lastIndex = end;
+    start = answer.indexOf("[chunk_id=", end);
   }
 
   return cursor === 0 ? answer : formatted + answer.slice(cursor);
+}
+
+function scrubMalformedInlineCitation(text: string): string {
+  return text
+    .replace(
+      /\[?\s*chunk_id=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+      "",
+    )
+    .replace(/\b(?:page|bbox)=[^\]\s;,]+/gi, "")
+    .replace(/[;,]\s*[;,]?/g, "")
+    .replace(/\s+\]/g, "]")
+    .replace(/\s{2,}/g, " ");
 }
 
 function inlineCitationEnd(answer: string, start: number): number | null {
