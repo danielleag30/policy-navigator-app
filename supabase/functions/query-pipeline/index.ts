@@ -749,7 +749,15 @@ function parseDocumentFiscalYear(doc?: SourceDocument): number | null {
   return null;
 }
 
-function parseDocumentRecencyScore(doc?: SourceDocument): number | null {
+/**
+ * Recency from REAL currency signals only — fiscal year, source_published_at, or
+ * a date embedded in the title/filename/url. Deliberately excludes ingested_at:
+ * ingestion time is not a currency signal (routine re-ingestion must not decide
+ * current law). Returns null when a document carries no real date/fiscal signal —
+ * that "undatable" state is meaningful to the §5.2.1 guard, so it must not be
+ * papered over with the ingestion timestamp.
+ */
+function realDocumentDateScore(doc?: SourceDocument): number | null {
   if (!doc) return null;
   const fiscalYear = parseDocumentFiscalYear(doc);
   if (fiscalYear !== null) return 1_000_000 + fiscalYear;
@@ -778,7 +786,14 @@ function parseDocumentRecencyScore(doc?: SourceDocument): number | null {
     if (!Number.isNaN(parsed)) return parsed / 86_400_000;
   }
 
-  if (doc.ingested_at) {
+  return null;
+}
+
+function parseDocumentRecencyScore(doc?: SourceDocument): number | null {
+  const realDate = realDocumentDateScore(doc);
+  if (realDate !== null) return realDate;
+
+  if (doc?.ingested_at) {
     const parsed = Date.parse(doc.ingested_at);
     if (!Number.isNaN(parsed)) return parsed / 86_400_000;
   }
@@ -1207,12 +1222,24 @@ async function rerankCurrentStateCandidates(
 
 // ── §5.2.1 narrative-currency guard ──────────────────────────────────────────
 // A narrative chunk may only be asserted as a CURRENT value when its currency is
-// backed by real structured signals. The Fable audit proved the narrative path
-// served stale/advertised figures labeled "current" (a 2021-advertised stormwater
-// rate; a 2024 narrative "currently 4%" TOT contradicting the 6% ordinance). Per
-// spec §5.2.1 (correctness > availability) that must not happen: a narrative whose
-// currency cannot be established is kept out of both the resolver and the LLM
-// drafter, deterministically — not by LLM judgment.
+// backed by real POSITIVE structured signals. The Fable audit proved the
+// narrative path served stale/advertised figures labeled "current" (a 2021-
+// advertised stormwater rate; a 2024 "currently 4%" TOT contradicting the 6%
+// ordinance). Per spec §5.2.1 (correctness > availability) that must not happen.
+//
+// Three things this guard must NOT do (each a live-evidenced review failure):
+//   1. Classify a chunk by the RANKING score. `narrativeCurrentValueScore`
+//      requires the fragile extractor to succeed; the real 2024 chunk asserts
+//      "currently levies a 4% transient occupancy tax" yet the extractor returns
+//      null → score 0. Classification is therefore a dedicated text test that is
+//      independent of the extractor.
+//   2. Define "defensible" as the ABSENCE of a stale flag — that is circular
+//      (two stale rows elect each other). Defensibility is POSITIVE currency
+//      evidence: adopted budget_stage, an in-effect fiscal-year window, or a
+//      board-approval / final-adopted content signal.
+//   3. Spare undatable claims. An undatable current-value claim that competes
+//      with a positively-dated defensible candidate must be filtered; the caveat
+//      path is the fallback only when ALL candidates are undatable/undefensible.
 
 /**
  * True when the narrative text itself carries a board-approval / final-adopted
@@ -1227,9 +1254,84 @@ function narrativeAssertsApprovedCurrentValue(c: EnrichedCandidate): boolean {
 }
 
 /**
- * A narrative current-value candidate whose provenance is advertised/proposed/
- * draft and whose text carries no board-approval or final-adopted signal — its
- * currency cannot be trusted, so it must not be served as the current value.
+ * Classification (NOT ranking): does this narrative chunk make an explicit
+ * present-tense CURRENT-value assertion about the query subject? Independent of
+ * the extractor — it fires on "currently levies a 4%", "levied at 4 percent",
+ * "the rate is 4%", etc., even when `extractCurrentValueFromNarrative` cannot
+ * pull the number out. Future/proposal-qualified mentions do not count.
+ * Exported so the classifier binds to shipping code under test.
+ */
+export function narrativeMakesCurrentValueClaim(
+  query: string,
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): boolean {
+  if (c.table !== "narrative_chunks") return false;
+  if (!matchesBudgetIndicatorQuery(query, c, doc)) return false;
+
+  const scoped = subjectWindows(query, candidateText(c)).join("\n");
+  const value = String
+    .raw`(?:\$\s*)?\d+(?:\.\d+)?\s*(?:%|percent|per\s+\$?100(?:\s+of\s+assessed\s+value)?)`;
+  const claimPatterns = [
+    // "currently levies a 4%" / "4 percent ... currently"
+    new RegExp(String.raw`\bcurrent(?:ly)?\b[\s\S]{0,80}?${value}`, "i"),
+    new RegExp(String.raw`${value}[\s\S]{0,80}?\bcurrent(?:ly)?\b`, "i"),
+    // "levies a 4%" / "is levied at 4 percent"
+    new RegExp(String.raw`\blev(?:y|ies|ied)\b[\s\S]{0,60}?${value}`, "i"),
+    // "the (tax) rate is/remains/of/at 4%"
+    new RegExp(
+      String
+        .raw`\b(?:tax\s+)?rate\b[\s\S]{0,40}?\b(?:is|remains?|remained|of|at)\b[\s\S]{0,40}?${value}`,
+      "i",
+    ),
+  ];
+  return claimPatterns.some((re) => {
+    const match = scoped.match(re);
+    return match !== null && !hasFutureOrProposalSignal(match[0]);
+  });
+}
+
+/**
+ * POSITIVE currency evidence — the value is affirmatively in effect. Defined by
+ * concrete signals, never by the absence of a stale flag (review BLOCKING 2):
+ *   • a board-approval / final-adopted content signal (overrides its container),
+ *   • an adopted budget_stage, or
+ *   • a real fiscal-year signal inside the in-effect window (current FY or the
+ *     one just ended), from a source that is NOT advertised/proposed/draft.
+ */
+function hasPositiveCurrencyEvidence(
+  c: EnrichedCandidate,
+  doc?: SourceDocument,
+): boolean {
+  const fiscalYear = parseDocumentFiscalYear(doc);
+  // A KNOWN fiscal year that is clearly in the past overrides every positive
+  // signal — an adopted FY2020 budget is "adopted" but not current.
+  const fiscalYearIsStale = fiscalYear !== null &&
+    fiscalYear < currentFiscalYear() - 1;
+  if (fiscalYearIsStale) return false;
+
+  if (
+    c.table === "narrative_chunks" && narrativeAssertsApprovedCurrentValue(c)
+  ) {
+    return true;
+  }
+  if (doc?.budget_stage === "adopted") return true;
+  // Advertised/proposed/draft provenance is not, by itself, positive evidence.
+  if (doc?.budget_stage === "advertised") return false;
+  if (hasDraftQualifierForRateEvidence(c, doc)) return false;
+  if (
+    fiscalYear !== null && fiscalYear >= currentFiscalYear() - 1 &&
+    fiscalYear <= currentFiscalYear()
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * A narrative that makes a current-value claim but whose provenance is
+ * advertised/proposed/draft with no board-approval / final-adopted signal — its
+ * currency cannot be trusted, so it must never be served as the current value.
  * Exported so the guard binds to shipping code under test.
  */
 export function narrativeCurrentValueHasStaleProvenance(
@@ -1237,28 +1339,30 @@ export function narrativeCurrentValueHasStaleProvenance(
   c: EnrichedCandidate,
   doc?: SourceDocument,
 ): boolean {
-  if (c.table !== "narrative_chunks") return false;
-  if (narrativeCurrentValueScore(query, c, doc) <= 0) return false;
+  if (!narrativeMakesCurrentValueClaim(query, c, doc)) return false;
   if (narrativeAssertsApprovedCurrentValue(c)) return false;
   return hasDraftQualifierForRateEvidence(c, doc);
 }
 
 /**
  * Deterministic §5.2.1 guard for implicit-current queries. Removes narrative
- * chunks that would supply a current value but are not credibly current:
+ * chunks that make a current-value claim (by classification, not by extractor
+ * success) but are not credibly current:
  *   (a) advertised/proposed/draft provenance with no board-approval / final-
  *       adopted content signal, or
- *   (b) strictly older (by real document date / fiscal-year signal) than a
- *       competing, defensible current-value candidate.
+ *   (b) a positively-dated defensible competitor exists and this claim is either
+ *       undatable OR strictly older than that competitor.
  *
  * Structured rows (ordinance_provisions, budget_indicators) are never removed —
  * their currency is gated by is_current / budget_stage upstream (source-authority
- * order: current ordinance > adopted budget > narrative). Board-approved
- * narratives are never removed (they assert settled current law). Plain-context
- * narratives (no matching current value) are untouched. When the removed chunk
- * was the only current-value evidence, the drafter can no longer cite it as
- * current: a more defensible candidate answers, or the query refuses — never a
- * silent stale-as-current assertion. Historical / compound / deep-historical
+ * order: current ordinance > adopted budget > narrative). A chunk with its own
+ * positive currency evidence is never removed (it asserts settled current law).
+ * Plain-context narratives (no current-value claim) are untouched. When the
+ * removed chunk was the only current-value evidence, the drafter can no longer
+ * cite it as current: a defensible candidate answers, or the query refuses —
+ * never a silent stale-as-current assertion. When every current-value candidate
+ * is undatable / undefensible, the claim is kept and the existing
+ * CURRENT_VALUE_FALLBACK_CAVEAT ships. Historical / compound / deep-historical
  * queries are a no-op (guarded identically to the resolver).
  */
 export function filterUncurrentNarrativeValues(
@@ -1266,45 +1370,52 @@ export function filterUncurrentNarrativeValues(
   candidates: EnrichedCandidate[],
   documents: Map<string, SourceDocument>,
 ): EnrichedCandidate[] {
-  if (!isCurrentStateQuery(query) || isHistoricalQuery(query)) return candidates;
+  if (!isCurrentStateQuery(query) || isHistoricalQuery(query)) {
+    return candidates;
+  }
 
   const docOf = (c: EnrichedCandidate): SourceDocument | undefined =>
     typeof c.row.document_id === "string"
       ? documents.get(c.row.document_id)
       : undefined;
 
-  const currentValueCandidates = candidates.filter((c) =>
-    currentStateScore(query, c, docOf(c)) > 0
-  );
-  // Nothing to guard unless a current-value narrative is actually present.
-  if (!currentValueCandidates.some((c) => c.table === "narrative_chunks")) {
+  const isCurrentValueClaim = (c: EnrichedCandidate): boolean =>
+    c.table === "narrative_chunks"
+      ? narrativeMakesCurrentValueClaim(query, c, docOf(c))
+      : currentStateScore(query, c, docOf(c)) > 0;
+
+  const claimants = candidates.filter(isCurrentValueClaim);
+  // Nothing to guard unless a current-value narrative claim is present.
+  if (!claimants.some((c) => c.table === "narrative_chunks")) {
     return candidates;
   }
 
-  // Recency ceiling from the DEFENSIBLE current-value candidates only, so an
-  // advertised/proposed outlier cannot raise the bar and evict a legitimate
-  // older row.
-  const defensibleRecencies = currentValueCandidates
-    .filter((c) => !narrativeCurrentValueHasStaleProvenance(query, c, docOf(c)))
-    .map((c) => parseDocumentRecencyScore(docOf(c)))
+  // A "positively-dated defensible competitor" has POSITIVE currency evidence AND
+  // a REAL date signal (not ingested_at) — the bar an undatable/older claim must
+  // clear.
+  const defensibleDates = claimants
+    .filter((c) => hasPositiveCurrencyEvidence(c, docOf(c)))
+    .map((c) => realDocumentDateScore(docOf(c)))
     .filter((r): r is number => r !== null);
-  const maxRecency = defensibleRecencies.length > 0
-    ? Math.max(...defensibleRecencies)
+  const maxDefensibleDate = defensibleDates.length > 0
+    ? Math.max(...defensibleDates)
     : null;
 
   return candidates.filter((c) => {
     if (c.table !== "narrative_chunks") return true;
     const doc = docOf(c);
-    if (narrativeCurrentValueScore(query, c, doc) <= 0) return true;
-    // Board-approved / final-adopted narratives assert settled current law.
-    if (narrativeAssertsApprovedCurrentValue(c)) return true;
+    if (!narrativeMakesCurrentValueClaim(query, c, doc)) return true;
+    // Own positive currency evidence → settled current law, never removed.
+    if (hasPositiveCurrencyEvidence(c, doc)) return true;
     // (a) advertised/proposed provenance without an approval signal.
     if (hasDraftQualifierForRateEvidence(c, doc)) return false;
-    // (b) strictly older than a defensible competing current-value candidate.
-    const recency = parseDocumentRecencyScore(doc);
-    if (recency !== null && maxRecency !== null && recency < maxRecency) {
-      return false;
+    // (b) undatable (no real date) or older than a positively-dated defensible
+    //     competitor — ingested_at does not count as a currency date here.
+    if (maxDefensibleDate !== null) {
+      const realDate = realDocumentDateScore(doc);
+      if (realDate === null || realDate < maxDefensibleDate) return false;
     }
+    // No defensible competitor at all → keep for the caveated answer path.
     return true;
   });
 }
