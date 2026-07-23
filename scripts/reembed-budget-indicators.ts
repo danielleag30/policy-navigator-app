@@ -15,6 +15,7 @@
  *   REEMBED_LIMIT=<number>               Stop after this many rows.
  *   REEMBED_DEADLINE_MS=<number>         Wall-clock budget, default 60000.
  *   REEMBED_PAGE_SIZE=<number>           DB page size, default 50.
+ *   REEMBED_HTTP_TIMEOUT_MS=<number>     Per-/embed timeout, default 20000.
  */
 
 import { createClient } from "@supabase/supabase-js";
@@ -23,6 +24,7 @@ import {
   type BudgetIndicatorEmbeddingInputRow,
 } from "../supabase/functions/_shared/budget-indicator.ts";
 import {
+  generateEmbeddingsHttp,
   generateEmbeddingsHttpBatched,
   persistEmbeddings,
 } from "../supabase/functions/_shared/embedder.ts";
@@ -63,6 +65,7 @@ const embedUrl = requiredEnv("HF_SPACES_DOCLING_URL");
 const writeEnabled = Deno.env.get("BUDGET_INDICATOR_REEMBED_WRITE") === "true";
 const pageSize = positiveIntEnv("REEMBED_PAGE_SIZE", DEFAULT_PAGE_SIZE);
 const deadlineMs = positiveIntEnv("REEMBED_DEADLINE_MS", DEFAULT_DEADLINE_MS);
+const httpTimeoutMs = positiveIntEnv("REEMBED_HTTP_TIMEOUT_MS", 20_000);
 const maxRows = Deno.env.get("REEMBED_LIMIT")
   ? positiveIntEnv("REEMBED_LIMIT", Number.MAX_SAFE_INTEGER)
   : Number.MAX_SAFE_INTEGER;
@@ -78,7 +81,7 @@ const startMs = Date.now();
 console.log(
   `[budget-reembed] mode=${
     writeEnabled ? "write" : "dry-run"
-  } start_after=${cursor} page_size=${pageSize} deadline_ms=${deadlineMs}`,
+  } start_after=${cursor} page_size=${pageSize} deadline_ms=${deadlineMs} http_timeout_ms=${httpTimeoutMs}`,
 );
 
 while (processed < maxRows) {
@@ -113,7 +116,9 @@ while (processed < maxRows) {
     return { ...row, documents };
   });
   const inputs = typedRows.map(budgetIndicatorEmbeddingInput);
-  const embeddings = await generateEmbeddingsHttpBatched(embedUrl, inputs);
+  const embeddings = httpTimeoutMs === 20_000
+    ? await generateEmbeddingsHttpBatched(embedUrl, inputs)
+    : await generateEmbeddingsHttp(embedUrl, inputs, httpTimeoutMs);
 
   const nullCount = embeddings.filter((embedding) => embedding === null).length;
   if (nullCount > 0) {
