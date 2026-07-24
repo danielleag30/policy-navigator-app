@@ -16,12 +16,14 @@ Deno.env.set(
 const {
   deterministicCurrentValueDraft,
   extractCurrentValueFromNarrative,
+  extractCurrentValueFromOrdinance,
   filterUncurrentNarrativeValues,
   formatInlineAnswerCitations,
   formatBudgetValue,
   narrativeCurrentValueHasStaleProvenance,
   narrativeMakesCurrentValueClaim,
   resolveDeterministicCurrentValue,
+  selectCurrentOrdinanceValueAnchors,
   structuredCurrentValueScore,
 } = await import("./index.ts");
 
@@ -3079,5 +3081,271 @@ Deno.test("§5.2.1 guard drops an undatable current-value claim against a positi
   }
   if (!kept.includes(REAL_CURRENT_TOT_ID)) {
     throw new Error("the defensible competitor must be kept");
+  }
+});
+
+// ── Wave 2b: generalized deterministic ordinance current-value resolver ────────
+//
+// These tests exercise the SHIPPING functions imported from ./index.ts
+// (selectCurrentOrdinanceValueAnchors, extractCurrentValueFromOrdinance) — no
+// parallel copies. Fixtures are derived from real live rows in
+// ordinance_provisions (Supabase ahaurkifxzqsrhwjshbj), including the exact
+// noise BM25's OR-semantics leg returns for the transient-occupancy query.
+
+// Faithful excerpt of the live current §4-13-2 (three additive subsections
+// 3% + 2% + 1% = 6%, each stacked "in addition to the tax imposed by subsection").
+const REAL_TOT_ORDINANCE_CONTENT =
+  "(a) Pursuant to Virginia Code § 58.1-3819, in addition to all other taxes, " +
+  "there is hereby imposed and levied a tax equivalent to three percent of the " +
+  "total room charge paid by or for any such transient for the use or possession " +
+  "of accommodations; provided however, that the tax imposed by this subsection " +
+  "will not be imposed on any transient occupancy in any Lodging Facility that is " +
+  "located within any town that has imposed a tax on transient occupancy. " +
+  "(b) Pursuant to Virginia Code § 58.1-3824, and in addition to the tax imposed " +
+  "by subsection a of this Section, in addition to all other taxes, there is " +
+  "hereby imposed and levied a tax equivalent to two percent of the total room " +
+  "charge paid by or for any such transient for the use or possession of " +
+  "accommodations. (c) Pursuant to Virginia Code § 58.1-3819, and in addition to " +
+  "the tax imposed by subsections a and b of this Section, in addition to all " +
+  "other taxes, there is hereby imposed and levied a tax equivalent to one " +
+  "percent of the total room charge. The one percent tax levy shall be spent " +
+  "solely for tourism.";
+
+const TOT_NODE_ID = "FACOCO_CH4TAFI_ART13TROCTA_S4-13-2LEAMTA";
+const TOT_QUERY = "what is the current transient occupancy tax rate";
+
+function totRawRow(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    id: "01931234-0000-7000-8000-00000000ab13",
+    municode_node_id: TOT_NODE_ID,
+    section_title: "Section 4-13-2. - Levy; amount of tax.",
+    is_current: true,
+    effective_date: "2026-04-28",
+    document_id: "00000000-0000-0000-0000-0000000004a1",
+    content: REAL_TOT_ORDINANCE_CONTENT,
+    ...overrides,
+  };
+}
+
+// A real is_current zoning section BM25 returns for the TOT query — dozens of
+// non-additive percentages, but no "transient occupancy" subject match.
+function zoningNoiseRow(): Record<string, unknown> {
+  return {
+    id: "01931234-0000-7000-8000-0000000022e5",
+    municode_node_id: "encode:2245",
+    section_title: "Article 5 - Development Standards",
+    is_current: true,
+    effective_date: "2025-01-01",
+    document_id: "00000000-0000-0000-0000-0000000004a2",
+    content:
+      "Article 5 - Development Standards. Lot, Bulk, and Open Space Regulations: " +
+      "25 percent, 50 percent, 125 percent, 20 percent open space; setbacks of " +
+      "15 percent and 30 percent apply to affordable dwelling unit programs.",
+  };
+}
+
+Deno.test("extractCurrentValueFromOrdinance sums the live TOT additive subsections to 6% (sentinel)", () => {
+  const value = extractCurrentValueFromOrdinance(
+    TOT_QUERY,
+    testCandidate("ordinance_provisions", TOT_NODE_ID, {
+      is_current: true,
+      section_title: "Section 4-13-2. - Levy; amount of tax.",
+      content: REAL_TOT_ORDINANCE_CONTENT,
+    }),
+  );
+  if (value !== "6%") {
+    throw new Error(`expected 6% for the TOT compound levy, got ${value}`);
+  }
+});
+
+Deno.test("extractCurrentValueFromOrdinance generalizes off the TOT node: a non-TOT single-rate ordinance yields its value", () => {
+  const value = extractCurrentValueFromOrdinance(
+    "what is the current meals tax rate",
+    testCandidate("ordinance_provisions", "FACOCO-meals-tax", {
+      is_current: true,
+      section_title: "Section 4-31-2. - Levy; amount of meals tax.",
+      content:
+        "There is hereby imposed and levied a meals tax at the rate of four " +
+        "percent of the amount charged for prepared food and beverages sold in " +
+        "the County.",
+    }),
+  );
+  // Old hardcoded gate returned null for anything lacking "transient occupancy".
+  if (value !== "4%") {
+    throw new Error(`expected 4% for the generalized meals tax, got ${value}`);
+  }
+});
+
+Deno.test("extractCurrentValueFromOrdinance refuses to sum non-additive multi-percentage sections (precision)", () => {
+  // Real §4-31-8 shape: a collection commission with 3% and 1% components that
+  // are NOT stacked. Naively summing would fabricate 4%; the additive guard
+  // must return null so the caller falls through instead of pinning garbage.
+  const value = extractCurrentValueFromOrdinance(
+    "what is the current meals tax commission rate",
+    testCandidate("ordinance_provisions", "FACOCO-commission", {
+      is_current: true,
+      section_title:
+        "Section 4-31-8. - Commission to seller for collection of tax.",
+      content:
+        "For the purpose of defraying some of the costs incurred by the seller " +
+        "in collecting the meals tax imposed by this Article, every seller who " +
+        "collects and remits the tax shall be allowed a commission of three " +
+        "percent on the first taxes collected and one percent thereafter.",
+    }),
+  );
+  if (value !== null) {
+    throw new Error(
+      `expected null (ambiguous non-additive percentages), got ${value}`,
+    );
+  }
+});
+
+Deno.test("selectCurrentOrdinanceValueAnchors pins the real TOT node out of a noisy BM25 pool", () => {
+  // Mirrors the live bm25_ordinance_provisions('...transient occupancy tax rate')
+  // result: the real §4-13-2 row plus zoning/definition noise and a superseded
+  // (is_current=false) TOT version. Only the real current node must survive.
+  const supersededTot = totRawRow({
+    id: "01931234-0000-7000-8000-00000000ac13",
+    is_current: false,
+    effective_date: "2005-07-01",
+    content: REAL_TOT_ORDINANCE_CONTENT.replace(
+      "one percent of the total room charge. The one percent tax levy shall be spent solely for tourism.",
+      "an older schedule.",
+    ),
+  });
+  const anchors = selectCurrentOrdinanceValueAnchors(TOT_QUERY, [
+    zoningNoiseRow(),
+    supersededTot,
+    totRawRow(),
+  ]);
+
+  if (anchors.length !== 1) {
+    throw new Error(
+      `expected exactly the current TOT node, got ${anchors.length}: ${
+        anchors.map((a) => a.municode_node_id).join(", ")
+      }`,
+    );
+  }
+  if (anchors[0].municode_node_id !== TOT_NODE_ID) {
+    throw new Error(`wrong node pinned: ${anchors[0].municode_node_id}`);
+  }
+  if (anchors[0].row.is_current !== true) {
+    throw new Error("pinned a non-current row");
+  }
+  if (extractCurrentValueFromOrdinance(TOT_QUERY, anchors[0]) !== "6%") {
+    throw new Error("pinned TOT node does not extract to 6%");
+  }
+});
+
+Deno.test("selectCurrentOrdinanceValueAnchors falls through (empty) when no row matches the subject", () => {
+  const anchors = selectCurrentOrdinanceValueAnchors(TOT_QUERY, [
+    zoningNoiseRow(),
+  ]);
+  if (anchors.length !== 0) {
+    throw new Error(
+      `expected fall-through on no subject match, got ${anchors.length}`,
+    );
+  }
+});
+
+Deno.test("selectCurrentOrdinanceValueAnchors never pins an is_current=false row", () => {
+  const anchors = selectCurrentOrdinanceValueAnchors(TOT_QUERY, [
+    totRawRow({ is_current: false }),
+  ]);
+  if (anchors.length !== 0) {
+    throw new Error(
+      `is_current=false must never be pinned, got ${anchors.length}`,
+    );
+  }
+});
+
+Deno.test("selectCurrentOrdinanceValueAnchors falls through when two sections disagree on the value (ambiguity guard)", () => {
+  const nodeA = {
+    id: "01931234-0000-7000-8000-0000000000a1",
+    municode_node_id: "FACOCO-widget-a",
+    section_title: "Section 4-40-1. - Widget tax.",
+    is_current: true,
+    effective_date: "2026-01-01",
+    document_id: "00000000-0000-0000-0000-0000000004b1",
+    content:
+      "There is hereby imposed and levied a widget tax at the rate of four " +
+      "percent of the widget sales price.",
+  };
+  const nodeB = {
+    id: "01931234-0000-7000-8000-0000000000b2",
+    municode_node_id: "FACOCO-widget-b",
+    section_title: "Section 4-40-2. - Widget tax (special district).",
+    is_current: true,
+    effective_date: "2026-02-01",
+    document_id: "00000000-0000-0000-0000-0000000004b2",
+    content:
+      "There is hereby imposed and levied a widget tax at the rate of six " +
+      "percent of the widget sales price.",
+  };
+  const anchors = selectCurrentOrdinanceValueAnchors(
+    "what is the current widget tax rate",
+    [nodeA, nodeB],
+  );
+  if (anchors.length !== 0) {
+    throw new Error(
+      `conflicting sections must fall through, got ${anchors.length}`,
+    );
+  }
+});
+
+Deno.test("selectCurrentOrdinanceValueAnchors respects the query-shape gate", () => {
+  // Historical phrasing → not a current-value query → no prefetch.
+  const historical = selectCurrentOrdinanceValueAnchors(
+    "what was the transient occupancy tax rate in 2020",
+    [totRawRow()],
+  );
+  if (historical.length !== 0) {
+    throw new Error(
+      `historical query must not prefetch, got ${historical.length}`,
+    );
+  }
+  // Non tax-rate question → no prefetch even against a matching row.
+  const nonRate = selectCurrentOrdinanceValueAnchors(
+    "who administers the transient occupancy program",
+    [totRawRow()],
+  );
+  if (nonRate.length !== 0) {
+    throw new Error(
+      `non tax-rate query must not prefetch, got ${nonRate.length}`,
+    );
+  }
+});
+
+Deno.test("deterministicCurrentValueDraft renders the generalized TOT anchor with PR #125 formatting and no narrative caveat", () => {
+  const docId = "00000000-0000-0000-0000-0000000004a1";
+  const documents = new Map<string, SourceDocument>([
+    [docId, {
+      id: docId,
+      url: "https://example.test/ordinance/4-13-2",
+      title: "Fairfax County Code Sec. 4-13-2",
+      filename: "ordinance.pdf",
+      ingested_at: "2026-05-01T00:00:00Z",
+      doc_type: "ordinance",
+      source_published_at: null,
+      fiscal_year: null,
+    }],
+  ]);
+  const [anchor] = selectCurrentOrdinanceValueAnchors(TOT_QUERY, [totRawRow()]);
+  if (!anchor) throw new Error("expected a TOT anchor");
+
+  const draft = deterministicCurrentValueDraft(TOT_QUERY, anchor, documents);
+  if (
+    !draft?.answer.includes(
+      "Per Sec. 4-13-2 (Levy; amount of tax), the current value is 6%.",
+    )
+  ) {
+    throw new Error(`unexpected ordinance draft: ${draft?.answer}`);
+  }
+  if (draft.answer.includes("source-date review")) {
+    throw new Error(
+      "structured ordinance draft must not carry the narrative source-date caveat",
+    );
   }
 });
