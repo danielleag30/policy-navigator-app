@@ -20,3 +20,77 @@ I built it solo, end to end: schema design, ingestion pipeline, retrieval and ge
 
 ## Architecture
 
+```
+Fairfax County sources (Municode, EnCode zoning archive, budget/minutes PDFs)
+        │
+        ▼
+change-detection  ──►  ingest-orchestrator  ──►  Docling wrapper (HF Spaces)
+  (crawl, diff)          (fetch/parse/chunk/        (PDF → structured text,
+                          embed/persist, resumable    OCR fallback, batch
+                          via claim leases)           embeddings)
+        │                       │
+        ▼                       ▼
+  reconciliation           Supabase Postgres + pgvector
+  amendment-resolution      (ordinance_provisions, vote_tallies,
+  (never guesses a           budget_indicators, narrative_chunks,
+   citation/vote match)       policy_decisions, + crosswalk/audit tables)
+                                     │
+                                     ▼
+                          query-pipeline (Edge Function)
+                    BM25 + vector retrieval → RRF merge →
+                    Temporal Judge → FK traversal → Answer
+                    Drafter → conditional Verifier
+                                     │
+                                     ▼
+                      Next.js frontend (Vercel) — query UI,
+                      citation drill-down, admin alert dashboard
+```
+
+pg_cron drives the recurring jobs (ingestion polling, change detection, reconciliation, watchdog recovery, keep-alive pings) by calling Edge Functions directly from Postgres via `pg_net`, with advisory-lock single-flight guards so overlapping cron ticks can't double-fire the same work.
+
+## Engineering war stories
+
+**The BM25 half of "hybrid retrieval" was silently useless for months.** The full-text side used Postgres's `plainto_tsquery`, which ANDs every stemmed term together — meaning a real multi-word question only matched a row if *every* word in it appeared in that row. A later audit measured this directly against 156 real eval questions: BM25 returned zero rows at all in 56% of them. The fix (rewriting the query's `&` connectives to `|`) took gold-answer-in-top-40 recall from 12% to 36% and top-10 recall from 10% to 18%, with no regressions. It's a reminder that "we have hybrid search" and "hybrid search is doing anything" are different claims worth actually measuring.
+
+**A tax-rate amendment got linked to the wrong vote — a Girl Scout proclamation.** The first live run of the amendment-resolution pipeline correctly identified a 1993 ordinance amendment (a Gypsy Moth control district tax-rate cut) but blindly trusted a foreign key that pointed at the wrong vote on the same board-meeting document — a "Girl Scout Leader's Day" proclamation voted on the same day. That's exactly why the pipeline no longer trusts `vote_tally_id` at ingestion time: it now independently re-verifies the vote against the actual motion text before writing an amendment_events row.
+
+**An ingestion watchdog fixed one bug and caused a worse one.** Rows stuck in "processing" for 30+ minutes were assumed dead and reset — reasonable, until the threshold was tightened to 5 minutes and the ingestion function itself was found to be legitimately hanging past that (a missing fetch timeout to the PDF-extraction service). The watchdog then reset in-flight rows into an infinite retry loop. Fixing the real timeout, then re-loosening the watchdog to 10 minutes, both mattered — a good example of why watchdogs need to fail *toward* the actual bug, not just paper over its symptoms.
+
+## Eval-driven development
+
+Every retrieval or prompt change gets checked against `eval/`'s 175 cases before it ships — categories include citation accuracy (numeric and textual), refusal correctness (does it decline to answer questions outside its remit, like state law or real-time data?), adversarial near-misses (repealed ordinance sections whose citation numbers get reused for something unrelated), and temporal correctness. Grading is deterministic, not an LLM judge, and a hand-tuned tolerant-text-match utility exists specifically because an earlier version of the grader flagged a *correct* answer as wrong for saying "permits" when the expected text said "allows."
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Database | Supabase Postgres, pgvector (HNSW), full-text search (BM25-style ranking), `pg_cron`, `pg_net` |
+| Backend | Supabase Edge Functions (Deno), 14 functions covering ingestion, retrieval, change detection, reconciliation, amendment resolution, and ops alerting |
+| LLM | Ollama Cloud, native chat API, task-specific deterministic/creative temperature settings |
+| PDF extraction | Docling (FastAPI microservice on Hugging Face Spaces), with an OCR fallback path for scanned historical reprints |
+| Embeddings | `gte-small` (384-dim) |
+| Frontend | Next.js (App Router), React, TypeScript, Tailwind, deployed on Vercel |
+| Eval | Deno CLI harness, 175 hand-authored cases, deterministic grading against a live pipeline and live DB |
+| Ops | GitHub Actions keep-alive, pg_cron watchdogs, admin alert dashboard |
+
+## What's not (yet) here
+
+- Retrieval is BM25 + vector + RRF — there's no learned reranker on top of it.
+- The EnCode zoning-ordinance historical source is implemented but gated behind a compliance flag pending a legal check on that source's terms of use.
+- Single LLM provider with retry/backoff but no fallback provider — a documented, monitored risk, not an oversight.
+- Free-tier infrastructure (Supabase, Hugging Face Spaces) means real constraints: cold starts, CPU-time ceilings that shaped several design choices (e.g., moving embedding generation to an async HTTP call specifically to dodge Edge Function CPU billing).
+
+## Project layout
+
+```
+.
+├── frontend/                 # Next.js app — query UI, citation panel, admin dashboard
+├── docling-wrapper/           # FastAPI PDF-extraction/OCR/embedding microservice (HF Spaces)
+├── eval/                      # 175-case deterministic eval harness + runner
+├── supabase/
+│   ├── functions/             # 14 Edge Functions + _shared/ helpers
+│   └── migrations/            # ~90 migrations — schema, RPCs, pg_cron jobs
+├── tests/                     # Deno unit/regression tests
+├── scripts/                   # One-off backfill/maintenance scripts
+└── README.md
+```
