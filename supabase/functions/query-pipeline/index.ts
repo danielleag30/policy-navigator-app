@@ -983,7 +983,13 @@ export function structuredCurrentValueScore(
   const fiscalYear = asNumber(c.row.fiscal_year) ?? doc?.fiscal_year ?? 0;
   if (fiscalYear > currentFiscalYear()) return 0;
   const draftPenalty = hasDraftQualifierForRateEvidence(c, doc) ? -100 : 0;
-  return 2_000_000 + 100 + draftPenalty + fiscalYear +
+  // Budget-first ordering (fix ②): an adopted budget_indicator sits in the TOP
+  // band (3,000,000+), strictly above any ordinance anchor (2,000,000+). For a
+  // tax-rate query, a qualifying adopted budget_indicator therefore always
+  // outranks a competing ordinance section — the authoritative adopted rates
+  // ($1.12 real estate, $4.57 personal property) win the pin, and ordinance
+  // pinning only decides queries where no such indicator exists (e.g. the TOT).
+  return 3_000_000 + 100 + draftPenalty + fiscalYear +
     budgetIndicatorTiebreakScore(c, doc);
 }
 
@@ -995,13 +1001,24 @@ export function ordinanceCurrentValueScore(
   if (c.table !== "ordinance_provisions") return 0;
   if (c.row.is_current !== true) return 0;
   if (!isRelevantTaxRateCandidate(query, c, doc)) return 0;
+  // Levy-language gate (fix ①). Redundant with the check inside
+  // extractCurrentValueFromOrdinance below, but stated explicitly here so the
+  // scoring contract itself documents that a value may not be returned without
+  // genuine rate-setting structure.
+  if (!hasLevyRateStructure(candidateText(c))) return 0;
   if (extractCurrentValueFromOrdinance(query, c) === null) return 0;
 
   const effectiveDate = asText(c.row.effective_date);
   const effectiveScore = effectiveDate
     ? Date.parse(effectiveDate) / 86_400_000
     : 0;
-  return 3_000_000 + (Number.isFinite(effectiveScore) ? effectiveScore : 0);
+  // Budget-first ordering (fix ②): the ordinance band sits BELOW the adopted
+  // budget_indicator band (structuredCurrentValueScore). budget_indicators is the
+  // authoritative source for numeric rates; ordinance pinning is the fallback for
+  // rates that only exist in ordinance text (like the transient-occupancy tax). It
+  // still sits far above the narrative band, so a current ordinance rate outranks
+  // every narrative chunk.
+  return 2_000_000 + (Number.isFinite(effectiveScore) ? effectiveScore : 0);
 }
 
 function subjectWindows(
@@ -1065,6 +1082,28 @@ function hasAdditiveLevyStructure(text: string): boolean {
     /\ban additional (?:tax|levy)[^.]{0,60}(?:percent|%)/i.test(text);
 }
 
+/**
+ * Levy-language precision gate (fix ①). True only when the provision text carries
+ * genuine rate-SETTING structure: a levy verb (imposed / levied / assessed)
+ * followed — WITHIN THE SAME SENTENCE (no `.` may intervene) — by a rate
+ * connective and then a percentage. All three must fall in one window, which is
+ * what separates a real tax-rate section from one that merely mentions a tax and
+ * a stray percentage elsewhere in the same chunk.
+ *
+ * Verified against real live rows (see `_ordinance-gate_test.ts` fixtures):
+ *   • PASSES  Sec. 4-13-2 transient-occupancy tax — "there is hereby imposed and
+ *     levied a tax equivalent to three percent of the total room charge …".
+ *   • FAILS   the four spurious sections that hijacked the pin before this gate:
+ *     zoning Article 3 overlay/CRD (encode:2236, floor-area-ratio percentages),
+ *     Sec. 4-24-5 (late-payment forfeiture, 5%), Sec. 4-24-3.1 (exemption tiers,
+ *     up to 25%), Sec. 4-7.2-1 (BPOL definitions) — none pair a levy verb with a
+ *     rate connective and a percentage in one sentence.
+ */
+export function hasLevyRateStructure(text: string): boolean {
+  return /\b(?:imposed|levied|assessed)\b[^.]{0,200}?\b(?:at the rate of|rate of|tax equivalent to|equal to)\b[^.]{0,60}?(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:percent|%)/i
+    .test(text);
+}
+
 export function extractCurrentValueFromOrdinance(
   query: string,
   c: EnrichedCandidate,
@@ -1093,6 +1132,14 @@ export function extractCurrentValueFromOrdinance(
   ) {
     return null;
   }
+
+  // Levy-language gate (fix ①): refuse to extract a value unless the provision
+  // sets a rate through genuine levy structure (a levy verb + rate connective +
+  // percentage in one sentence). Bag-of-words subject matching alone let zoning
+  // FAR tables and penalty/exemption sections that merely contain a percentage
+  // hijack the pin; requiring rate-setting structure keeps those from ever
+  // yielding a value, so the caller falls through to the full pipeline.
+  if (!hasLevyRateStructure(text)) return null;
 
   const percentages = [
     ...text.matchAll(
@@ -1471,7 +1518,7 @@ export function filterUncurrentNarrativeValues(
   });
 }
 
-function budgetIndicatorCandidate(
+export function budgetIndicatorCandidate(
   row: Record<string, unknown>,
 ): EnrichedCandidate {
   const id = row.id as string;
@@ -1507,7 +1554,9 @@ function narrativeCandidate(row: Record<string, unknown>): EnrichedCandidate {
   };
 }
 
-function ordinanceCandidate(row: Record<string, unknown>): EnrichedCandidate {
+export function ordinanceCandidate(
+  row: Record<string, unknown>,
+): EnrichedCandidate {
   const id = row.id as string;
   return {
     key: `ordinance_provisions:${id}`,
@@ -1649,6 +1698,24 @@ async function fetchCurrentNarrativeValueRows(
  *      disagree on the extracted value, the subject match is ambiguous; pinning
  *      either risks the wrong answer, so we return [] and fall through.
  */
+/**
+ * Scope gate for the ordinance current-value prefetch pool (fix ③). Two rules:
+ *   1. Exclude EnCode zoning rows entirely (source_type = "encode_zoning" or an
+ *      "encode:" node id). Zoning articles carry floor-area-ratio and bulk
+ *      percentages that are not tax rates and were a source of spurious pins.
+ *   2. Restrict to the Taxation & Finance chapter (municode_node_id prefix
+ *      FACOCO_CH4TAFI), where every real county tax rate — including the
+ *      transient-occupancy tax (Sec. 4-13-2) — actually lives.
+ * A row missing municode_node_id, or from any other chapter/source, is dropped;
+ * the resolver then falls through, which is always safe.
+ */
+export function isTaxationOrdinanceRow(row: Record<string, unknown>): boolean {
+  if (asText(row.source_type) === "encode_zoning") return false;
+  const node = asText(row.municode_node_id) ?? "";
+  if (node.startsWith("encode:")) return false;
+  return node.startsWith("FACOCO_CH4TAFI");
+}
+
 export function selectCurrentOrdinanceValueAnchors(
   query: string,
   rows: Record<string, unknown>[],
@@ -1656,6 +1723,7 @@ export function selectCurrentOrdinanceValueAnchors(
   if (!isOrdinanceCurrentValueQuery(query)) return [];
 
   const scored = rows
+    .filter(isTaxationOrdinanceRow)
     .map((row) => {
       const candidate = ordinanceCandidate(row);
       return { candidate, score: ordinanceCurrentValueScore(query, candidate) };
@@ -1711,7 +1779,7 @@ async function fetchCurrentOrdinanceValueRows(
   );
 }
 
-async function prependCurrentBudgetIndicators(
+export async function prependCurrentBudgetIndicators(
   query: string,
   candidates: EnrichedCandidate[],
 ): Promise<EnrichedCandidate[]> {
@@ -2207,7 +2275,7 @@ function applyCompletenessCheck(
 
 // ── Answer Drafter ───────────────────────────────────────────────────────────
 
-async function fetchSourceDocuments(
+export async function fetchSourceDocuments(
   candidates: EnrichedCandidate[],
 ): Promise<Map<string, SourceDocument>> {
   const documentIds = [
@@ -2643,13 +2711,86 @@ export function resolveDeterministicCurrentValue(
       b.score - a.score || b.candidate.rrfScore - a.candidate.rrfScore
     );
 
+  // Budget-first ordering (fix ②): budget_indicators occupies the top band
+  // (≥3,000,000), ordinance_provisions the band below (≥2,000,000). `scored` is
+  // sorted by score descending, so when both a qualifying adopted budget
+  // indicator and an ordinance anchor are present, `.find` returns the budget
+  // indicator first. Ordinance pins only when no qualifying budget indicator
+  // exists for the subject.
   const structured = scored.find(({ candidate, score }) =>
-    (candidate.table === "budget_indicators" && score >= 2_000_000) ||
-    (candidate.table === "ordinance_provisions" && score >= 3_000_000)
+    (candidate.table === "budget_indicators" && score >= 3_000_000) ||
+    (candidate.table === "ordinance_provisions" && score >= 2_000_000)
   );
   if (structured) return structured.candidate;
 
   return null;
+}
+
+export interface CurrentValueResolution {
+  source:
+    | "budget_indicators"
+    | "ordinance_provisions"
+    | "narrative_chunks"
+    | null;
+  value: string | null;
+  sectionNodeId: string | null;
+  sectionTitle: string | null;
+}
+
+/**
+ * End-to-end deterministic current-value resolution against the live database,
+ * composed entirely from the shipping pipeline steps (prefetch anchors →
+ * supersession pre-filter → current-state rerank → §5.2.1 narrative guard →
+ * deterministic winner). It runs the SAME sequence the Deno.serve handler runs
+ * for the deterministic path, differing only in that it seeds the base candidate
+ * list as empty — the prefetch already scans the full budget_indicators table and
+ * a BM25 ordinance pool, which is a superset of what RRF retrieval would surface
+ * for the pin decision. Exposed so the offline integration proof exercises real
+ * shipping code end to end rather than a reimplementation. Returns the pinned
+ * source + extracted value, or a null source when the resolver falls through.
+ */
+export async function resolveCurrentValueForQuery(
+  query: string,
+): Promise<CurrentValueResolution> {
+  const fallThrough: CurrentValueResolution = {
+    source: null,
+    value: null,
+    sectionNodeId: null,
+    sectionTitle: null,
+  };
+  if (!isCurrentStateQuery(query) || isHistoricalQuery(query)) {
+    return fallThrough;
+  }
+
+  const anchored = await prependCurrentBudgetIndicators(query, []);
+  const { filtered: preFiltered, amendedNodeIds } = hardFilterSuperseded(
+    anchored,
+    false,
+  );
+  const tagged = preFiltered.map((c) => ({
+    ...c,
+    hasAmendmentHistory: c.table === "ordinance_provisions" &&
+      c.municode_node_id !== undefined &&
+      amendedNodeIds.has(c.municode_node_id),
+  }));
+  const reranked = await rerankCurrentStateCandidates(query, tagged);
+  const documents = await fetchSourceDocuments(reranked);
+  const curated = filterUncurrentNarrativeValues(query, reranked, documents);
+  const winner = resolveDeterministicCurrentValue(query, curated, documents);
+  if (winner === null) return fallThrough;
+
+  const value = winner.table === "budget_indicators"
+    ? formatBudgetValue(winner.row.value_actual, winner.row.unit)
+    : winner.table === "ordinance_provisions"
+    ? extractCurrentValueFromOrdinance(query, winner)
+    : extractCurrentValueFromNarrative(query, winner);
+
+  return {
+    source: winner.table as CurrentValueResolution["source"],
+    value,
+    sectionNodeId: winner.municode_node_id ?? null,
+    sectionTitle: asText(winner.row.section_title),
+  };
 }
 
 async function runAnswerDrafter(
