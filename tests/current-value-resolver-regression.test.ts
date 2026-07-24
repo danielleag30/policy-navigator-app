@@ -77,6 +77,16 @@ function sourceDocument(
   };
 }
 
+// Verbatim content of ordinance_provisions Sec. 4-13-2 (transient occupancy tax)
+// pulled from Supabase project ahaurkifxzqsrhwjshbj, id
+// 019f34b8-6265-754e-9169-b8ad83a1094a (node
+// FACOCO_CH4TAFI_ART13TROCTA_S4-13-2LEAMTA). Real content — not hand-authored —
+// so it carries the genuine rate-levy language ("imposed and levied a tax
+// equivalent to three percent") and the "in addition to the tax imposed by
+// subsection" stacking that the levy gate (PR fix ①) requires and that sums to 6%.
+const REAL_TOT_S4_13_2_CONTENT =
+  "(a) Pursuant to Virginia Code § 58.1-3819, in addition to all other taxes, there is hereby imposed and levied a tax equivalent to three percent of the total room charge paid by or for any such transient for the use or possession of accommodations; provided however, that the tax imposed by this subsection will not be imposed on any transient occupancy in any Lodging Facility that is located within any town that has imposed a tax on transient occupancy. (b) Pursuant to Virginia Code § 58.1-3824, and in addition to the tax imposed by subsection a of this Section, in addition to all other taxes, there is hereby imposed and levied a tax equivalent to two percent of the total room charge paid by or for any such transient for the use or possession of accommodations regardless of whether the hotel is located within any town that has imposed a tax on transient occupancy. The tax imposed pursuant to this subsection will be collected and appropriated for those purposes set forth in Virginia Code § 58.13824. (c) Pursuant to Virginia Code § 58.1-3819, and in addition to the tax imposed by subsections a and b of this Section, in addition to all other taxes, there is hereby imposed and levied a tax equivalent to one percent of the total room charge paid by or for any such transient for the use or possession of accommodations; provided however, that the tax imposed by this subsection will not be imposed on any transient occupancy in any Lodging Facility that is located within any town whose governing body has not consented to the imposition and levy of the tax pursuant to this subsection. The one percent tax levy imposed pursuant to this subsection c shall be designated and spent solely for tourism and travel, marketing of tourism or initiatives that, as determined after consultation with local tourism industry organizations, including representatives of lodging properties located in Fairfax County, attract travelers to Fairfax County, increase occupancy at lodging properties, and generate tourism revenues in Fairfax County. (2-28-72; 1961 Code, § 25-91; 16-04-4; 26-18-4; 20-22-4 ; 09-25-4 .)";
+
 Deno.test("real resolver: current ordinance_provisions wins transient occupancy tax", () => {
   const tot = candidate("ordinance_provisions", "tot-current", {
     document_id: "municode",
@@ -84,8 +94,7 @@ Deno.test("real resolver: current ordinance_provisions wins transient occupancy 
     section_title: "Levy and amount of tax",
     is_current: true,
     effective_date: "2026-04-28",
-    content:
-      "Transient occupancy tax levy. There is imposed a tax equivalent to three percent, plus an additional two percent, plus an additional one percent.",
+    content: REAL_TOT_S4_13_2_CONTENT,
   });
 
   const query = "what is the current transient occupancy tax rate";
@@ -113,9 +122,13 @@ Deno.test("real resolver: current ordinance_provisions wins transient occupancy 
     ]),
   );
 
+  // Budget-first ordering (PR fix ②): ordinance anchors now occupy the band
+  // BELOW adopted budget_indicators — [2,000,000, 3,000,000) — so an adopted
+  // budget rate always outranks them. Asserting the band (not just >= 2M) locks
+  // the inversion in place.
   assert(
-    score >= 3_000_000,
-    "TOT ordinance must receive deterministic ordinance score",
+    score >= 2_000_000 && score < 3_000_000,
+    `TOT ordinance must score in the ordinance band [2M, 3M); got ${score}`,
   );
   assertEquals(extractCurrentValueFromOrdinance(query, tot), "6%");
   assertEquals(winner?.id, "tot-current");
@@ -163,8 +176,7 @@ Deno.test("real resolver: adopted budget_stage outranks advertised budget indica
     indicator_name: "Real Estate Tax rate",
     value_actual: 1.1225,
     unit: "per $100 of assessed value",
-    raw_extracted_text:
-      "Real Estate Tax rate 1.1225 per $100 of assessed value",
+    raw_extracted_text: "Real Estate Tax rate 1.1225 per $100 of assessed value",
   }, 0.9);
   const adopted = candidate("budget_indicators", "adopted-rate", {
     document_id: "adopted-doc",
@@ -173,8 +185,7 @@ Deno.test("real resolver: adopted budget_stage outranks advertised budget indica
     indicator_name: "Real Estate Tax rate",
     value_actual: 1.12,
     unit: "per $100 of assessed value",
-    raw_extracted_text:
-      "Adopted Real Estate Tax rate 1.1200 per $100 of assessed value",
+    raw_extracted_text: "Adopted Real Estate Tax rate 1.1200 per $100 of assessed value",
   }, 0.1);
   const docs = new Map<string, SourceDocument>([
     [
@@ -248,8 +259,7 @@ Deno.test("deterministicCurrentValueDraft: TOT ordinance answer is a natural sen
     section_title: "Section 4-13-2. - Levy; amount of tax.",
     is_current: true,
     effective_date: "2026-04-28",
-    content:
-      "Transient occupancy tax levy. There is imposed a tax equivalent to three percent, plus an additional two percent, plus an additional one percent.",
+    content: REAL_TOT_S4_13_2_CONTENT,
   });
   const docs = new Map([
     [
