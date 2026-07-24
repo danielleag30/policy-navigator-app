@@ -67,6 +67,15 @@ const JUDGE_CONTEXT_COUNT = parseInt(
 const JUDGE_OUTPUT_LIMIT = 8;
 const CURRENT_BUDGET_INDICATOR_LOOKUP_LIMIT = 5000;
 
+// Deterministic ordinance current-value resolver (§5.2.1). BM25 pulls a subject-
+// relevant candidate pool from ordinance_provisions per query; precision gating
+// then keeps at most ORDINANCE_CURRENT_VALUE_ANCHOR_LIMIT current-value anchors.
+const ORDINANCE_PREFETCH_CANDIDATE_LIMIT = parseInt(
+  Deno.env.get("ORDINANCE_PREFETCH_CANDIDATE_LIMIT") ?? "40",
+  10,
+);
+const ORDINANCE_CURRENT_VALUE_ANCHOR_LIMIT = 3;
+
 // Temperature for the Temporal Judge — 0.0 for maximum determinism (filter/verifier role).
 // Documented in DEPS.md under "Temporal Judge (2-9): 0.0".
 const TEMPORAL_JUDGE_TEMPERATURE = 0.0;
@@ -584,6 +593,19 @@ function isCurrentStateQuery(query: string): boolean {
   return hasExplicitCurrentIntent(query);
 }
 
+/**
+ * Query-shape gate for the deterministic ordinance current-value resolver: an
+ * explicit-current, non-historical question about a tax rate/levy. This decides
+ * only the QUESTION shape — never which program/section is relevant. Subject
+ * relevance is enforced per-row downstream by ordinanceCurrentValueScore (via
+ * matchesBudgetIndicatorQuery), which is what lets the resolver serve any
+ * program instead of the single hardcoded transient-occupancy node.
+ */
+function isOrdinanceCurrentValueQuery(query: string): boolean {
+  return isCurrentStateQuery(query) && !isHistoricalQuery(query) &&
+    /\btax\b/i.test(query) && /\b(rate|levy|occupancy|tot)\b/i.test(query);
+}
+
 function normalizedText(value: unknown): string {
   return typeof value === "string"
     ? value.toLowerCase().replace(/(?<=\d),(?=\d)/g, "").replace(
@@ -1028,6 +1050,21 @@ function parsePercentValue(raw: string): number | null {
   return wordValues[raw.toLowerCase()] ?? null;
 }
 
+/**
+ * True when an ordinance provision explicitly STACKS multiple rate components
+ * into a single levy ("... in addition to the tax imposed by subsection a ...").
+ * That is the only structure under which summing the distinct percentages yields
+ * the real combined rate — the Fairfax transient-occupancy tax layers 3% + 2% +
+ * 1% = 6% exactly this way. Every other multi-percentage tax section in the live
+ * corpus (penalty-vs-interest pairs, tiered exemption tables, zoning bulk
+ * standards) lacks this stacking language, so gating the compound-sum branch on
+ * it keeps generalization from ever fabricating a wrong summed value.
+ */
+function hasAdditiveLevyStructure(text: string): boolean {
+  return /\bin addition to the tax(?:es)? imposed by subsection/i.test(text) ||
+    /\ban additional (?:tax|levy)[^.]{0,60}(?:percent|%)/i.test(text);
+}
+
 export function extractCurrentValueFromOrdinance(
   query: string,
   c: EnrichedCandidate,
@@ -1043,9 +1080,15 @@ export function extractCurrentValueFromOrdinance(
 
   const text = candidateText(c);
   const lower = normalizedText(text);
+  // Subject-relevance floor (generalized off the hardcoded transient-occupancy
+  // node): the provision's own text must mention a tax AND carry every
+  // distinctive query term. matchesBudgetIndicatorQuery already handles the
+  // TOT<->transient/occupancy synonym, so dropping the literal "transient
+  // occupancy"/"tot" test widens this to any subject without weakening the gate
+  // — a row that does not actually match the asked subject still yields null,
+  // and the caller falls through to the full pipeline.
   if (
     !/\btax\b/.test(lower) ||
-    !(/\btransient occupancy\b/.test(lower) || /\btot\b/.test(lower)) ||
     !matchesBudgetIndicatorQuery(query, c)
   ) {
     return null;
@@ -1064,7 +1107,15 @@ export function extractCurrentValueFromOrdinance(
   if (unique.length === 0) return null;
 
   const total = unique.reduce((sum, value) => sum + value, 0);
-  if (total > 0 && total <= 20 && unique.length > 1) {
+  // Compound levy (PR #124): sum stacked rate components — but ONLY when the text
+  // explicitly stacks them (hasAdditiveLevyStructure). Without that signal,
+  // multiple distinct percentages in one section are ambiguous (penalty vs.
+  // interest, tiered exemption tables) and summing would fabricate a wrong value,
+  // so we refuse and fall through rather than pin a bad number.
+  if (
+    total > 0 && total <= 20 && unique.length > 1 &&
+    hasAdditiveLevyStructure(text)
+  ) {
     return `${
       Number.isInteger(total)
         ? total
@@ -1582,37 +1633,82 @@ async function fetchCurrentNarrativeValueRows(
     });
 }
 
+/**
+ * Pure, testable core of the deterministic ordinance current-value resolver.
+ * Given rows already fetched from ordinance_provisions (any subject), select the
+ * current-value anchor(s) via the §5.2.1 source-authority gate.
+ *
+ * Precision is enforced in three layers, all of which must pass for a row to be
+ * pinned; failing any one drops the row, and an empty result means the caller
+ * falls through to the full pipeline unchanged (which is always safe):
+ *   1. ordinanceCurrentValueScore(query, row) > 0 — requires is_current=true, a
+ *      confident subject match (matchesBudgetIndicatorQuery: every distinctive
+ *      query term present, TOT synonym aware), and a cleanly extractable value.
+ *   2. Dedup by municode_node_id — one anchor per section, highest score first.
+ *   3. Cross-section agreement — if two DIFFERENT sections both qualify but
+ *      disagree on the extracted value, the subject match is ambiguous; pinning
+ *      either risks the wrong answer, so we return [] and fall through.
+ */
+export function selectCurrentOrdinanceValueAnchors(
+  query: string,
+  rows: Record<string, unknown>[],
+): EnrichedCandidate[] {
+  if (!isOrdinanceCurrentValueQuery(query)) return [];
+
+  const scored = rows
+    .map((row) => {
+      const candidate = ordinanceCandidate(row);
+      return { candidate, score: ordinanceCurrentValueScore(query, candidate) };
+    })
+    .filter(({ score }) => score > 0)
+    .sort((a, b) =>
+      b.score - a.score || b.candidate.rrfScore - a.candidate.rrfScore
+    );
+
+  if (scored.length === 0) return [];
+
+  const anchors: EnrichedCandidate[] = [];
+  const seenNodes = new Set<string>();
+  const distinctValues = new Set<string>();
+  for (const { candidate } of scored) {
+    const node = candidate.municode_node_id ?? candidate.id;
+    if (seenNodes.has(node)) continue;
+    seenNodes.add(node);
+    const value = extractCurrentValueFromOrdinance(query, candidate);
+    if (value !== null) distinctValues.add(value);
+    anchors.push(candidate);
+    if (anchors.length >= ORDINANCE_CURRENT_VALUE_ANCHOR_LIMIT) break;
+  }
+  if (distinctValues.size > 1) return [];
+
+  return anchors;
+}
+
 async function fetchCurrentOrdinanceValueRows(
   query: string,
 ): Promise<EnrichedCandidate[]> {
-  if (
-    !isCurrentStateQuery(query) || isHistoricalQuery(query) ||
-    !/\btax\b/i.test(query) ||
-    !/\b(rate|levy|occupancy|tot)\b/i.test(query)
-  ) {
-    return [];
-  }
+  if (!isOrdinanceCurrentValueQuery(query)) return [];
 
-  const terms = budgetIndicatorQueryTerms(query);
-  if (!(terms.includes("transient") && terms.includes("occupancy"))) {
-    return [];
-  }
-
-  const { data, error: dbErr } = await db
-    .from("ordinance_provisions")
-    .select("*")
-    .eq("municode_node_id", "FACOCO_CH4TAFI_ART13TROCTA_S4-13-2LEAMTA")
-    .eq("is_current", true)
-    .limit(1);
+  // General subject-relevance retrieval: BM25 over ordinance_provisions (the live
+  // OR-semantics RPC from PR #132) surfaces sections matching the asked subject
+  // for ANY program — no longer pinned to the transient-occupancy node. The RPC
+  // returns full ordinance_provisions rows (is_current included). Vector recall is
+  // already covered by the main RRF candidate set this anchor list is merged into,
+  // so a single targeted BM25 call is sufficient here and avoids an extra embed.
+  const { data, error: dbErr } = await db.rpc("bm25_ordinance_provisions", {
+    p_query_text: query,
+    p_limit: ORDINANCE_PREFETCH_CANDIDATE_LIMIT,
+  });
 
   if (dbErr) {
     console.error("current ordinance value lookup error:", dbErr.message);
     return [];
   }
 
-  return ((data ?? []) as Record<string, unknown>[])
-    .map(ordinanceCandidate)
-    .filter((candidate) => ordinanceCurrentValueScore(query, candidate) > 0);
+  return selectCurrentOrdinanceValueAnchors(
+    query,
+    (data ?? []) as Record<string, unknown>[],
+  );
 }
 
 async function prependCurrentBudgetIndicators(
