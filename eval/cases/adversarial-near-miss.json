@@ -30,7 +30,7 @@
     "id": "adversarial-002",
     "category": "adversarial_near_miss",
     "query": "Are there any current regulations for massage establishments in Fairfax County Code?",
-    "chunk_ids": ["019f34bd-2f3e-73f4-90c7-80292c14bd2e"],
+    "chunk_ids": ["9a8651de-c8a0-4687-87b1-17f087766d05"],
     "criteria": [
       {
         "id": "adversarial-002-repealed",
@@ -40,7 +40,7 @@
       {
         "id": "adversarial-002-cites",
         "description": "Response cites the Chapter 28 reserved/repealed note",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-2f3e-73f4-90c7-80292c14bd2e" }
+        "check": { "type": "cites_chunk", "chunk_id": "9a8651de-c8a0-4687-87b1-17f087766d05" }
       },
       {
         "id": "adversarial-002-not-refusal",
@@ -54,7 +54,7 @@
     "id": "adversarial-003",
     "category": "adversarial_near_miss",
     "query": "Does Fairfax County Code still regulate real estate salesmen under Chapter 29?",
-    "chunk_ids": ["019f34bd-772d-7b8b-aef2-36ed40512ce5"],
+    "chunk_ids": ["79b706dc-c9c0-4db2-a35f-19df814ab554"],
     "criteria": [
       {
         "id": "adversarial-003-repealed",
@@ -64,7 +64,7 @@
       {
         "id": "adversarial-003-cites",
         "description": "Response cites the Chapter 29 repealed note",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-772d-7b8b-aef2-36ed40512ce5" }
+        "check": { "type": "cites_chunk", "chunk_id": "79b706dc-c9c0-4db2-a35f-19df814ab554" }
       },
       {
         "id": "adversarial-003-not-refusal",

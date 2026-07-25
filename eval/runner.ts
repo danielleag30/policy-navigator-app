@@ -34,7 +34,7 @@ interface CriterionResult {
   note?: string;
 }
 
-interface CaseResult {
+export interface CaseResult {
   case_id: string;
   category: string;
   status: "pass" | "fail" | "skipped" | "error";
@@ -42,6 +42,15 @@ interface CaseResult {
   error_message?: string;
   criteria_results: CriterionResult[];
   response_ms: number;
+  // Persisted per-case evidence (measurement fix): every completed run must
+  // leave a durable artifact that records what the system actually said, so
+  // flip attribution never again has to be *bounded* for lack of data.
+  answer?: string; // the actual answer text returned by the pipeline
+  cited_chunk_ids?: string[]; // chunk_ids the pipeline cited
+  // Split-metric inputs (see computeSummaryMetrics): whether the case expects a
+  // substantive answer, and whether the system refused/fell through.
+  expects_answer?: boolean;
+  refused?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -225,17 +234,145 @@ export function tolerantContains(answer: string, substring: string): boolean {
 // Refusal detection
 // ---------------------------------------------------------------------------
 
+// The first five patterns catch outright refusals ("not in the documents",
+// "I cannot find…"). The last two — added by the measurement fix — catch
+// PARTIAL / hedged refusals: answers that decline the specific question up
+// front and then add tangential neighbour facts, e.g.
+//   "The provided documents do not state the mandatory minimum sentences… However…"
+//   "Based on the provided documents, there is no mention of a budget surplus…"
+// The original patterns scored these as non-refusals; the Fable full-system
+// audit predicted this exact undercount verbatim.
+//
+// The partial-refusal patterns are ANCHORED to the START of the answer (after
+// an optional "Based on/According to the provided documents," lead-in). This is
+// deliberate: a genuine answer whose decline clause is *secondary* — e.g.
+//   "Yes, every dealer is required to secure a permit […]. The provided
+//    documents do not mention any exemptions for dealers."
+// — LEADS with a substantive assertion and must NOT be reclassified as a
+// refusal. Anchoring also keeps false assertions (e.g. the stale-officeholder
+// "Sharon Bulova is listed as the supervisor…") classified as ASSERTIONS, so
+// they stay in the correctness bucket where the project's policy wants them.
+// Verified against every answer in the post-remediation results file: catches
+// the five audit-named partial refusals, and misclassifies none of the eight
+// genuine assertions checked (Dillon Rule, Fair Housing, Clean Water, Bulova,
+// fence, two shared-mobility, retrieval-003).
 export const REFUSAL_PATTERNS: readonly RegExp[] = [
   /i (don't|do not|cannot|can't) (find|have|know|answer)/i,
   /not (in|part of) (my|the) (corpus|knowledge|documents)/i,
   /no information (available|found)/i,
   /unable to (find|answer|provide)/i,
   /outside (the scope|my knowledge)/i,
+  // Partial refusal — leads with "…documents do not state/specify/contain/… X".
+  /^\s*(?:(?:based on|according to|per|within|in)\s+(?:the\s+)?(?:provided\s+|available\s+|supplied\s+|given\s+)?documents?,?\s+)?(?:the\s+)?(?:provided\s+|available\s+|supplied\s+|given\s+)?documents?\s+(?:do|does)\s+not\s+(?:state|specify|contain|mention|include|address|provide|indicate|list|define|discuss|cover|detail|reference|describe|identify|note|say)\b/i,
+  // Partial refusal — leads with "…there is no mention/information/… of X".
+  /^\s*(?:(?:based on|according to|per|within|in)\s+(?:the\s+)?(?:provided\s+|available\s+)?documents?,?\s+)?there\s+is\s+no\s+(?:mention|information|reference|indication|record|data)\b/i,
 ];
 
 export function isRefusalAnswer(answer: string): boolean {
   if (!answer || answer.trim().length === 0) return true;
   return REFUSAL_PATTERNS.some((p) => p.test(answer));
+}
+
+// ---------------------------------------------------------------------------
+// Correctness-vs-availability split metric (measurement fix)
+// ---------------------------------------------------------------------------
+//
+// A single pass rate conflates two OPPOSITE failure modes that this project
+// weights very differently under its stated correctness-over-availability
+// policy:
+//   • a FALSE ASSERTION (answered, but wrong or miscited) — never acceptable;
+//   • a REFUSAL on an answerable question (declined / fell through) — the
+//     cheaper, tolerated failure.
+// These functions and computeSummaryMetrics are pure and exported so the real
+// shipping split can be unit-tested (and mutation-probed) directly.
+
+/**
+ * A case "expects an answer" unless it explicitly expects a refusal (has an
+ * `is_refusal` criterion). Refusal / out_of_corpus cases expect a refusal;
+ * every other category expects a substantive answer.
+ */
+export function caseExpectsAnswer(criteria: readonly EvalCriterion[]): boolean {
+  return !criteria.some((c) => c.check.type === "is_refusal");
+}
+
+export interface EvalSummaryMetrics {
+  total: number;
+  skipped: number;
+  errored: number;
+  ran: number;
+  passed: number;
+  overallPct: number | null;
+  correctness: {
+    asserted: number; // ran cases where the system asserted an answer
+    correct: number; // …of those, how many fully passed (right & cited)
+    pct: number | null;
+    falseAssertionsWhereRefusalExpected: number; // severest sub-class
+  };
+  availability: {
+    expected: number; // ran cases where an answer was expected
+    answered: number; // …of those, how many the system actually answered
+    refused: number; // …of those, how many it refused / fell through
+    answeredPct: number | null;
+    refusedPct: number | null;
+  };
+}
+
+/**
+ * Compute the overall rate PLUS the correctness/availability split from a set
+ * of per-case results. Only cases that actually ran (pass/fail) count toward
+ * the split; skipped and errored cases are reported separately and never
+ * silently folded into a denominator.
+ */
+export function computeSummaryMetrics(
+  results: readonly CaseResult[],
+): EvalSummaryMetrics {
+  const total = results.length;
+  const skipped = results.filter((r) => r.status === "skipped").length;
+  const errored = results.filter((r) => r.status === "error").length;
+  const runResults = results.filter(
+    (r) => r.status === "pass" || r.status === "fail",
+  );
+  const ran = runResults.length;
+  const passed = runResults.filter((r) => r.status === "pass").length;
+
+  // Correctness: among cases where the system ASSERTED (did not refuse), how
+  // many were fully correct. Every miss here is a false or miscited assertion.
+  const asserted = runResults.filter((r) => r.refused === false);
+  const correct = asserted.filter((r) => r.status === "pass").length;
+  const falseAssertionsWhereRefusalExpected = asserted.filter(
+    (r) => r.expects_answer === false,
+  ).length;
+
+  // Availability: among cases where an answer was EXPECTED, how often the
+  // system refused / fell through.
+  const expected = runResults.filter((r) => r.expects_answer === true);
+  const refusedExpected = expected.filter((r) => r.refused === true).length;
+  const answeredExpected = expected.length - refusedExpected;
+
+  const pct = (num: number, den: number): number | null =>
+    den > 0 ? Math.round((num / den) * 100) : null;
+
+  return {
+    total,
+    skipped,
+    errored,
+    ran,
+    passed,
+    overallPct: pct(passed, ran),
+    correctness: {
+      asserted: asserted.length,
+      correct,
+      pct: pct(correct, asserted.length),
+      falseAssertionsWhereRefusalExpected,
+    },
+    availability: {
+      expected: expected.length,
+      answered: answeredExpected,
+      refused: refusedExpected,
+      answeredPct: pct(answeredExpected, expected.length),
+      refusedPct: pct(refusedExpected, expected.length),
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -459,19 +596,16 @@ if (import.meta.main) {
   // -------------------------------------------------------------------------
 
   const printSummary = (results: CaseResult[], resultsPath: string): void => {
-    const total = results.length;
-    const skipped = results.filter((r) => r.status === "skipped").length;
-    const errored = results.filter((r) => r.status === "error").length;
-    const ran = results.filter((r) => r.status === "pass" || r.status === "fail").length;
-    const passed = results.filter((r) => r.status === "pass").length;
+    const m = computeSummaryMetrics(results);
+    const fmtPct = (p: number | null): string => (p === null ? "n/a" : `${p}%`);
 
     console.log("\n=== EVAL SUMMARY ===");
-    console.log(`Total cases:   ${total}`);
-    console.log(`Skipped:       ${skipped}  (missing chunk_ids)`);
-    console.log(`Errored:       ${errored}  (pipeline call failures)`);
-    console.log(`Ran:           ${ran}`);
+    console.log(`Total cases:   ${m.total}`);
+    console.log(`Skipped:       ${m.skipped}  (missing chunk_ids)`);
+    console.log(`Errored:       ${m.errored}  (pipeline call failures)`);
+    console.log(`Ran:           ${m.ran}`);
 
-    if (ran > 0) {
+    if (m.ran > 0) {
       console.log("\nBy category:");
       const categories = [
         ...new Set(
@@ -491,8 +625,45 @@ if (import.meta.main) {
         console.log(`  ${label} ${catPassed}/${catResults.length} passed (${pct}%)`);
       }
 
-      const overallPct = Math.round((passed / ran) * 100);
-      console.log(`\nOverall pass rate: ${overallPct}% (${passed}/${ran} ran)`);
+      // Overall rate kept verbatim for continuity with prior runs — but it is
+      // NOT the headline any more, because it conflates two opposite failures.
+      console.log(
+        `\nOverall pass rate (continuity): ${fmtPct(m.overallPct)} (${m.passed}/${m.ran} ran)`,
+      );
+
+      // -----------------------------------------------------------------------
+      // The split that actually matters under this project's stated policy:
+      // a FALSE ASSERTION is far worse than a REFUSAL on an answerable question.
+      // -----------------------------------------------------------------------
+      const c = m.correctness;
+      const a = m.availability;
+      console.log("\n=== CORRECTNESS vs AVAILABILITY ===");
+      console.log(
+        "  (policy: a false/miscited assertion is far worse than a refusal on an answerable question)",
+      );
+      console.log(
+        `\n  CORRECTNESS  ${
+          fmtPct(c.pct)
+        }  (${c.correct}/${c.asserted} of ASSERTED answers were right & correctly cited)`,
+      );
+      console.log(
+        `    -> ${
+          c.asserted - c.correct
+        } assertion(s) were WRONG or MISCITED  <-- the severe failure class (target: 0)`,
+      );
+      console.log(
+        `    -> of those, ${c.falseAssertionsWhereRefusalExpected} asserted where a REFUSAL was expected (false-premise assertions)`,
+      );
+      console.log(
+        `\n  AVAILABILITY  answered ${
+          fmtPct(a.answeredPct)
+        } (${a.answered}/${a.expected}) of ANSWERABLE cases`,
+      );
+      console.log(
+        `    -> refused/fell through on ${a.refused}/${a.expected} (${
+          fmtPct(a.refusedPct)
+        })  <-- the cheaper failure under this policy`,
+      );
     }
 
     console.log(`\nResults written to: ${resultsPath}`);
@@ -567,7 +738,34 @@ if (import.meta.main) {
       skipped_reason: "One or more chunk_ids not found in any chunk table",
       criteria_results: [],
       response_ms: 0,
+      expects_answer: caseExpectsAnswer(c.criteria),
     }));
+
+    // Durable per-case artifact (measurement fix): the results path is fixed up
+    // front and REWRITTEN after every case, so a crash, rate-limit blowup, or
+    // Ctrl-C can never again leave a run with no durable per-case evidence (the
+    // 2026-07-22 baseline's per-case results were lost exactly this way). The
+    // written file includes the split-metric summary so it is self-describing.
+    await Deno.mkdir(RESULTS_DIR, { recursive: true });
+    const runStartedAt = new Date().toISOString();
+    const resultsPath = join(RESULTS_DIR, `${runStartedAt.replace(/[:.]/g, "-")}.json`);
+    const flushResults = async (): Promise<void> => {
+      await Deno.writeTextFile(
+        resultsPath,
+        JSON.stringify(
+          {
+            timestamp: runStartedAt,
+            completed_at: new Date().toISOString(),
+            summary: computeSummaryMetrics(results),
+            results,
+          },
+          null,
+          2,
+        ),
+      );
+    };
+    // Write once immediately so the artifact exists even if batch 1 dies early.
+    await flushResults();
 
     // Execute in batches
     const batches: EvalCase[][] = [];
@@ -599,10 +797,15 @@ if (import.meta.main) {
               error_message: `Pipeline returned ok=false: ${JSON.stringify(env?.error ?? env)}`,
               criteria_results: [],
               response_ms: ms,
+              expects_answer: caseExpectsAnswer(evalCase.criteria),
             };
             console.log(`ERROR — ${caseResult.error_message}`);
           } else {
             const responseData = env.data;
+            const answer: string = responseData?.answer ?? "";
+            const citedChunkIds: string[] = (responseData?.citations ?? []).map(
+              (c: { chunk_id: string }) => c.chunk_id,
+            );
             const criteriaResults = evalCase.criteria.map((c) =>
               evaluateCriterion(c, responseData)
             );
@@ -613,6 +816,10 @@ if (import.meta.main) {
               status: allPassed ? "pass" : "fail",
               criteria_results: criteriaResults,
               response_ms: ms,
+              answer,
+              cited_chunk_ids: citedChunkIds,
+              expects_answer: caseExpectsAnswer(evalCase.criteria),
+              refused: isRefusalAnswer(answer),
             };
             const failCount = criteriaResults.filter((r) => !r.pass).length;
             console.log(
@@ -629,11 +836,14 @@ if (import.meta.main) {
             error_message: err instanceof Error ? err.message : String(err),
             criteria_results: [],
             response_ms: 0,
+            expects_answer: caseExpectsAnswer(evalCase.criteria),
           };
           console.log(`ERROR — ${caseResult.error_message}`);
         }
 
         results.push(caseResult);
+        // Checkpoint after EVERY case: at most the in-flight case is ever lost.
+        await flushResults();
       }
 
       // Pause between batches (not after the last one)
@@ -645,15 +855,9 @@ if (import.meta.main) {
       }
     }
 
-    // Write results
-    await Deno.mkdir(RESULTS_DIR, { recursive: true });
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const resultsPath = join(RESULTS_DIR, `${timestamp}.json`);
-    await Deno.writeTextFile(
-      resultsPath,
-      JSON.stringify({ timestamp: new Date().toISOString(), results }, null, 2),
-    );
-
+    // Final write (identical content to the last checkpoint, plus a fresh
+    // completed_at) and the summary.
+    await flushResults();
     printSummary(results, resultsPath);
   };
 

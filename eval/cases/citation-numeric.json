@@ -123,12 +123,12 @@
     "id": "citation-num-006",
     "category": "citation_accuracy_numeric",
     "query": "What is the building permit fee percentage for accessory structures on R-3, R-4, or R-5 residential lots in Fairfax County?",
-    "chunk_ids": ["019f34d8-1f6b-7c0f-85b5-1303fb0c7e43"],
+    "chunk_ids": ["f99b8a3e-7cb8-4eb8-afcc-b05ef2d92b79"],
     "criteria": [
       {
         "id": "citation-num-006-cites",
         "description": "Response cites the THCOCOFAVI1976_APXQLADESEFESC chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34d8-1f6b-7c0f-85b5-1303fb0c7e43" }
+        "check": { "type": "cites_chunk", "chunk_id": "f99b8a3e-7cb8-4eb8-afcc-b05ef2d92b79" }
       },
       {
         "id": "citation-num-006-contains-pct",
@@ -147,12 +147,12 @@
     "id": "citation-num-007",
     "category": "citation_accuracy_numeric",
     "query": "What is the commercial building permit fee per square foot for Type IA/IB construction in Fairfax County?",
-    "chunk_ids": ["019f34d8-1f6b-7c0f-85b5-1303fb0c7e43"],
+    "chunk_ids": ["f99b8a3e-7cb8-4eb8-afcc-b05ef2d92b79"],
     "criteria": [
       {
         "id": "citation-num-007-cites",
         "description": "Response cites the THCOCOFAVI1976_APXQLADESEFESC chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34d8-1f6b-7c0f-85b5-1303fb0c7e43" }
+        "check": { "type": "cites_chunk", "chunk_id": "f99b8a3e-7cb8-4eb8-afcc-b05ef2d92b79" }
       },
       {
         "id": "citation-num-007-contains-fee",
@@ -512,12 +512,12 @@
     "id": "citation-num-022",
     "category": "citation_accuracy_numeric",
     "query": "What is the building permit fee percentage for repairs and alterations to an existing residential (R-3, R-4, or R-5) structure, such as re-siding or new roof structures, in Fairfax County?",
-    "chunk_ids": ["019f34d8-1f6b-7c0f-85b5-1303fb0c7e43"],
+    "chunk_ids": ["f99b8a3e-7cb8-4eb8-afcc-b05ef2d92b79"],
     "criteria": [
       {
         "id": "citation-num-022-cites",
         "description": "Response cites the THCOCOFAVI1976_APXQLADESEFESC chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34d8-1f6b-7c0f-85b5-1303fb0c7e43" }
+        "check": { "type": "cites_chunk", "chunk_id": "f99b8a3e-7cb8-4eb8-afcc-b05ef2d92b79" }
       },
       {
         "id": "citation-num-022-contains-pct",

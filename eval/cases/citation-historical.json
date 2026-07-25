@@ -435,12 +435,12 @@
     "id": "citation-hist-045",
     "category": "citation_accuracy_textual",
     "query": "According to the Fairfax County Code editor's note, what ordinance repealed the former Chapter 9.1 and enacted the current Chapter 9.2 on cable television?",
-    "chunk_ids": ["019f34bb-4793-71c6-be30-1194495faa43"],
+    "chunk_ids": ["b67a2722-bb87-402b-91cd-c7de5f430b6e"],
     "criteria": [
       {
         "id": "citation-hist-045-cites",
         "description": "Response cites the FACOCO_CH9.1CORE35-19-9.2 chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34bb-4793-71c6-be30-1194495faa43" }
+        "check": { "type": "cites_chunk", "chunk_id": "b67a2722-bb87-402b-91cd-c7de5f430b6e" }
       },
       {
         "id": "citation-hist-045-contains-ord",
@@ -464,12 +464,12 @@
     "id": "citation-hist-046",
     "category": "citation_accuracy_textual",
     "query": "When did the ordinance enacting Fairfax County Code Chapter 9.2 (cable television) become effective?",
-    "chunk_ids": ["019f34bb-4793-71c6-be30-1194495faa43"],
+    "chunk_ids": ["b67a2722-bb87-402b-91cd-c7de5f430b6e"],
     "criteria": [
       {
         "id": "citation-hist-046-cites",
         "description": "Response cites the FACOCO_CH9.1CORE35-19-9.2 chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34bb-4793-71c6-be30-1194495faa43" }
+        "check": { "type": "cites_chunk", "chunk_id": "b67a2722-bb87-402b-91cd-c7de5f430b6e" }
       },
       {
         "id": "citation-hist-046-contains-date",
@@ -488,12 +488,12 @@
     "id": "citation-hist-047",
     "category": "citation_accuracy_textual",
     "query": "According to the Fairfax County Code, what ordinance repealed Chapter 67 (Sanitary Sewers)?",
-    "chunk_ids": ["019f34c6-653b-7c68-bd85-d73f270ab888"],
+    "chunk_ids": ["8a7bd1cf-36a3-435b-9592-3f636490628c"],
     "criteria": [
       {
         "id": "citation-hist-047-cites",
         "description": "Response cites the FACOCO_CH67SASESEDI chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34c6-653b-7c68-bd85-d73f270ab888" }
+        "check": { "type": "cites_chunk", "chunk_id": "8a7bd1cf-36a3-435b-9592-3f636490628c" }
       },
       {
         "id": "citation-hist-047-contains-repeal-ord",
@@ -512,12 +512,12 @@
     "id": "citation-hist-048",
     "category": "citation_accuracy_textual",
     "query": "According to the Fairfax County Code, what ordinance repealed Chapter 68 (Individual Sewage Disposal Facilities)?",
-    "chunk_ids": ["019f34c7-490d-7577-8485-f5e8655c8b2e"],
+    "chunk_ids": ["94ece474-2d07-44c9-8430-ff18b7c7e074"],
     "criteria": [
       {
         "id": "citation-hist-048-cites",
         "description": "Response cites the FACOCO_CH68INSEDIFA chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34c7-490d-7577-8485-f5e8655c8b2e" }
+        "check": { "type": "cites_chunk", "chunk_id": "94ece474-2d07-44c9-8430-ff18b7c7e074" }
       },
       {
         "id": "citation-hist-048-contains-repeal-ord",
@@ -536,12 +536,12 @@
     "id": "citation-hist-049",
     "category": "citation_accuracy_textual",
     "query": "According to the Fairfax County Code, what ordinance repealed Chapter 70 (Water)?",
-    "chunk_ids": ["019f34c8-c51c-7be3-bf6d-2b228ac212b7"],
+    "chunk_ids": ["64d6d211-3e28-4b56-a8cc-0b499cc985fb"],
     "criteria": [
       {
         "id": "citation-hist-049-cites",
         "description": "Response cites the THCOCOFAVI1976_CH70WA chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34c8-c51c-7be3-bf6d-2b228ac212b7" }
+        "check": { "type": "cites_chunk", "chunk_id": "64d6d211-3e28-4b56-a8cc-0b499cc985fb" }
       },
       {
         "id": "citation-hist-049-contains-repeal-ord",
@@ -560,12 +560,12 @@
     "id": "citation-hist-050",
     "category": "citation_accuracy_textual",
     "query": "According to the Fairfax County Code, what ordinance repealed Chapter 45 (Minimum Housing Hygiene Standards Code)?",
-    "chunk_ids": ["019f34c0-342f-7cd5-8cfb-b67a36d40c1c"],
+    "chunk_ids": ["750acf56-9946-4a9b-b7e2-d83f7cd15a50"],
     "criteria": [
       {
         "id": "citation-hist-050-cites",
         "description": "Response cites the FACOCO_CH45MIHOHYSTCO chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34c0-342f-7cd5-8cfb-b67a36d40c1c" }
+        "check": { "type": "cites_chunk", "chunk_id": "750acf56-9946-4a9b-b7e2-d83f7cd15a50" }
       },
       {
         "id": "citation-hist-050-contains-repeal-ord",
@@ -584,12 +584,12 @@
     "id": "citation-hist-051",
     "category": "citation_accuracy_textual",
     "query": "According to the Fairfax County Code editor's note, when was Chapter 28 (massage establishments) repealed, and by what ordinance?",
-    "chunk_ids": ["019f34bd-2f3e-73f4-90c7-80292c14bd2e"],
+    "chunk_ids": ["9a8651de-c8a0-4687-87b1-17f087766d05"],
     "criteria": [
       {
         "id": "citation-hist-051-cites",
         "description": "Response cites the FACOCO_CH28RE chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-2f3e-73f4-90c7-80292c14bd2e" }
+        "check": { "type": "cites_chunk", "chunk_id": "9a8651de-c8a0-4687-87b1-17f087766d05" }
       },
       {
         "id": "citation-hist-051-contains-ord",
@@ -613,12 +613,12 @@
     "id": "citation-hist-052",
     "category": "citation_accuracy_textual",
     "query": "According to the Fairfax County Code editor's note, what happened to Chapter 84 (Public Transportation)?",
-    "chunk_ids": ["019f34cc-efb5-7689-ba3d-4be9acc2f372"],
+    "chunk_ids": ["72177e40-7242-4bd7-85ad-0c9b75c16ded"],
     "criteria": [
       {
         "id": "citation-hist-052-cites",
         "description": "Response cites the THCOCOFAVI1976_CH84PUTRRE47-92-84.1 chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34cc-efb5-7689-ba3d-4be9acc2f372" }
+        "check": { "type": "cites_chunk", "chunk_id": "72177e40-7242-4bd7-85ad-0c9b75c16ded" }
       },
       {
         "id": "citation-hist-052-contains-repealed",
@@ -642,12 +642,12 @@
     "id": "citation-hist-053",
     "category": "citation_accuracy_textual",
     "query": "What change does the Fairfax County Code Appendix W ordinance provision request for Designated Outdoor Refreshment Area (DORA) licenses?",
-    "chunk_ids": ["019f34d8-43de-7a19-9537-3f35437f0a73"],
+    "chunk_ids": ["7c5fe9eb-0792-4af9-a458-b0f1bdcb24e7"],
     "criteria": [
       {
         "id": "citation-hist-053-cites",
         "description": "Response cites the THCOCOFAVI1976_APXWDEOUREARLI chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34d8-43de-7a19-9537-3f35437f0a73" }
+        "check": { "type": "cites_chunk", "chunk_id": "7c5fe9eb-0792-4af9-a458-b0f1bdcb24e7" }
       },
       {
         "id": "citation-hist-053-contains-dora",
@@ -666,12 +666,12 @@
     "id": "citation-hist-054",
     "category": "citation_accuracy_textual",
     "query": "Under Fairfax County Code Appendix W, what Virginia Code section authorizes changes to Designated Outdoor Refreshment Area license frequency or duration?",
-    "chunk_ids": ["019f34d8-43de-7a19-9537-3f35437f0a73"],
+    "chunk_ids": ["7c5fe9eb-0792-4af9-a458-b0f1bdcb24e7"],
     "criteria": [
       {
         "id": "citation-hist-054-cites",
         "description": "Response cites the THCOCOFAVI1976_APXWDEOUREARLI chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34d8-43de-7a19-9537-3f35437f0a73" }
+        "check": { "type": "cites_chunk", "chunk_id": "7c5fe9eb-0792-4af9-a458-b0f1bdcb24e7" }
       },
       {
         "id": "citation-hist-054-contains-va-code",
@@ -690,12 +690,12 @@
     "id": "citation-hist-055",
     "category": "citation_accuracy_textual",
     "query": "Under Fairfax County Code Appendix J, what Code section allows a person to shoot a pneumatic gun even in areas otherwise restricted by Chapter 6?",
-    "chunk_ids": ["019f34d7-30d4-74cf-b81a-b1c7d155bd8d"],
+    "chunk_ids": ["a834114f-0f52-4d7a-8d42-2e4571917730"],
     "criteria": [
       {
         "id": "citation-hist-055-cites",
         "description": "Response cites the THCOCOFAVI1976_APXJORDEARWHFIPNGUMANOBESH chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34d7-30d4-74cf-b81a-b1c7d155bd8d" }
+        "check": { "type": "cites_chunk", "chunk_id": "a834114f-0f52-4d7a-8d42-2e4571917730" }
       },
       {
         "id": "citation-hist-055-contains-section",
@@ -714,12 +714,12 @@
     "id": "citation-hist-056",
     "category": "citation_accuracy_textual",
     "query": "When was Chapter 31 (Peddlers, Solicitors, and Canvassers) of the Fairfax County Code extensively revised, and by what ordinance?",
-    "chunk_ids": ["019f34bd-b4cd-754c-975a-2ba36ca66fef"],
+    "chunk_ids": ["84b8c265-1360-44aa-aac6-ec0d13b4b5ed"],
     "criteria": [
       {
         "id": "citation-hist-056-cites",
         "description": "Response cites the FACOCO_CH31PESOCA chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-b4cd-754c-975a-2ba36ca66fef" }
+        "check": { "type": "cites_chunk", "chunk_id": "84b8c265-1360-44aa-aac6-ec0d13b4b5ed" }
       },
       {
         "id": "citation-hist-056-contains-ord",
@@ -743,12 +743,12 @@
     "id": "citation-hist-057",
     "category": "citation_accuracy_textual",
     "query": "What happened to Chapter 29 (Real Estate Salesman) of the Fairfax County Code?",
-    "chunk_ids": ["019f34bd-772d-7b8b-aef2-36ed40512ce5"],
+    "chunk_ids": ["79b706dc-c9c0-4db2-a35f-19df814ab554"],
     "criteria": [
       {
         "id": "citation-hist-057-cites",
         "description": "Response cites the FACOCO_CH29REESSA chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34bd-772d-7b8b-aef2-36ed40512ce5" }
+        "check": { "type": "cites_chunk", "chunk_id": "79b706dc-c9c0-4db2-a35f-19df814ab554" }
       },
       {
         "id": "citation-hist-057-contains-repeal-ord",
@@ -767,12 +767,12 @@
     "id": "citation-hist-058",
     "category": "citation_accuracy_textual",
     "query": "What roads are designated as snow emergency routes in Appendix K of the Fairfax County Code?",
-    "chunk_ids": ["019f34d7-33ad-7d58-aa56-33162ecd4aff"],
+    "chunk_ids": ["f0423ffc-d72a-476f-a154-127d5966b4cd"],
     "criteria": [
       {
         "id": "citation-hist-058-cites",
         "description": "Response cites the THCOCOFAVI1976_APXKDESNEMRO chunk",
-        "check": { "type": "cites_chunk", "chunk_id": "019f34d7-33ad-7d58-aa56-33162ecd4aff" }
+        "check": { "type": "cites_chunk", "chunk_id": "f0423ffc-d72a-476f-a154-127d5966b4cd" }
       },
       {
         "id": "citation-hist-058-contains-route1",

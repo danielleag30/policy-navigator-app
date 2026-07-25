@@ -84,9 +84,30 @@ The default of 20 cases per batch with a 30-second cooldown is intentionally con
 
 ## Results format
 
+The runner writes a per-case results JSON to `eval/results/<run-start-timestamp>.json`
+and **rewrites it after every case**, so a crash, rate-limit blowup, or Ctrl-C can
+never leave a run with no durable per-case evidence (the 2026-07-22 baseline's
+per-case results were lost exactly this way). Each record captures the actual
+answer, the cited chunk ids, and the error (if any) — enough to attribute a
+pass→fail flip after the fact instead of only bounding it.
+
 ```json
 {
-  "timestamp": "2026-06-24T12:00:00.000Z",
+  "timestamp": "2026-07-25T02:50:06.000Z",
+  "completed_at": "2026-07-25T04:41:00.000Z",
+  "summary": {
+    "total": 175,
+    "ran": 168,
+    "passed": 43,
+    "overallPct": 26,
+    "correctness": {
+      "asserted": 90,
+      "correct": 41,
+      "pct": 46,
+      "falseAssertionsWhereRefusalExpected": 5
+    },
+    "availability": { "expected": 148, "answered": 70, "refused": 78, "answeredPct": 47, "refusedPct": 53 }
+  },
   "results": [
     {
       "case_id": "...",
@@ -95,10 +116,35 @@ The default of 20 cases per batch with a 30-second cooldown is intentionally con
       "criteria_results": [
         { "criterion_id": "has_temporal_flag", "pass": true }
       ],
-      "response_ms": 1234
+      "response_ms": 1234,
+      "answer": "the actual pipeline answer text",
+      "cited_chunk_ids": ["019f34ba-9207-7156-9105-8ca308feed9c"],
+      "expects_answer": true,
+      "refused": false
     }
   ]
 }
 ```
 
-Results files are excluded from git via `.gitignore`.
+(The `summary` numbers above are illustrative, not a real run.)
+
+### Correctness vs availability
+
+A single pass rate conflates two **opposite** failures that this project weights
+very differently under its correctness-over-availability policy:
+
+- **Correctness** — of the cases where the system *asserted* an answer, how many
+  were right and correctly cited. Every miss here is a false or miscited
+  assertion — the **severe** failure class (target ≈ 100%). The
+  `falseAssertionsWhereRefusalExpected` sub-count isolates the worst kind:
+  asserting where a refusal was required.
+- **Availability** — of the cases where an answer was *expected*, how often the
+  system refused or fell through. Under the stated policy this is the **cheaper**
+  failure: a refusal is not a false statement.
+
+A case "expects an answer" unless it carries an `is_refusal` criterion. The
+overall pass rate is still reported, clearly labelled as continuity-only.
+
+Results files themselves are excluded from git via `.gitignore` (they are large);
+the `eval/results/` directory is tracked via `.gitkeep`, and the runner recreates
+the path on every run.
