@@ -77,22 +77,39 @@ const CURRENT_BUDGET_INDICATOR_LOOKUP_LIMIT = 5000;
 // 600-char head. This is a LOCALIZATION failure, not a recall failure, so the fix
 // is query-relevant span selection at a BOUNDED budget, not blind head expansion.
 //
-// Budget sizing — justified against the judge's context at JUDGE_CONTEXT_COUNT (40)
-// candidates, NOT an arbitrary ×10:
-//   • Today the judge runs on 40 × 600 = 24,000 text chars + per-candidate
-//     metadata + the system prompt and does NOT truncate — empirical proof that
-//     the served gemma4:31b-cloud context comfortably exceeds the current prompt
-//     (~10K tokens total). ollama-client sets no num_ctx; the Gemma-3 family
-//     serves up to 128K natively.
-//   • New ceiling: 40 × 1,500 = 60,000 text chars (~15–18K tokens total prompt) —
-//     a 2.5× step on the text portion, i.e. a bounded doubling of a prompt that
-//     already fits, an order of magnitude below the native ceiling.
-//   • Because selection is QUERY-RELEVANT, the TYPICAL prompt grows far less than
-//     the ceiling: the median section (754 chars) already fits under budget and is
-//     shown whole; only long-tail rows > budget switch from blind head-600 to
-//     targeted query-term windows capped at the budget — which for the 3–80 KB
-//     container/blob rows keeps the prompt bounded exactly where head-600 also
-//     bounded it, while finally surfacing the query-relevant span.
+// Budget sizing — justified against the judge's context on the ACTUAL worst-case
+// candidate count, NOT an arbitrary ×10. IMPORTANT: the judge does not see 40
+// candidates in the worst case; it sees up to 49:
+//     runTemporalJudge receives ranked.slice(0, JUDGE_CONTEXT_COUNT) (≤40 RRF
+//     candidates) with up to 9 anchors PREPENDED by prependCurrentBudgetIndicators
+//     — 3 ordinance (ORDINANCE_CURRENT_VALUE_ANCHOR_LIMIT) + 3 budget-indicator
+//     (.slice(0,3)) + 3 narrative (.slice(0,3)), deduped by key. Downstream filters
+//     only remove candidates, so 40 + 9 = 49 is the true upper bound.
+// Per-candidate cost = up to JUDGE_SERIALIZE_BUDGET text + serializeChunk metadata
+// (id, table, municode_node_id, is_current, effective_date, superseded_date,
+// has_amendment_history, ancestor-title chain) ≈ 200–500 chars for ordinance rows
+// with ancestors.
+//
+//   • Today (head-600): 49 × 600 text + 49 × ~500 metadata + ~2,750 system/header
+//     ≈ 56,650 chars ≈ ~14K tokens — and the judge does NOT truncate, empirical
+//     proof the served gemma4:31b-cloud context exceeds it. ollama-client sets no
+//     num_ctx; the Gemma-3 family serves up to 128K natively.
+//   • New worst case (budget 1,500): 49 × 1,500 = 73,500 text + 49 × ~500 = 24,500
+//     metadata + ~2,750 ≈ 100,750 chars ≈ ~25K tokens (~4 chars/token; ids and
+//     legal text can run denser). ~1.8× the prior worst case, still ~20% of a 128K
+//     context — comfortable headroom, not a live safety issue.
+//   • Because selection is QUERY-RELEVANT, the TYPICAL prompt is far smaller: the
+//     median section (754 chars) fits under budget and is shown whole; only
+//     long-tail rows > budget switch from head-600 to targeted windows capped at
+//     the budget — bounded exactly where head-600 also bounded them.
+//
+// NO TOTAL-PROMPT CAP EXISTS — only this per-candidate cap. The total scales
+// MULTIPLICATIVELY: total ≈ (JUDGE_CONTEXT_COUNT + prepended anchors) ×
+// (JUDGE_SERIALIZE_BUDGET + metadata). Anyone raising the candidate count
+// (JUDGE_CONTEXT_COUNT / the anchor .slice limits / ORDINANCE_CURRENT_VALUE_ANCHOR_LIMIT)
+// OR this budget must re-check the product against the model context — the two
+// compound. A total-prompt cap is a reasonable defense-in-depth follow-up (out of
+// scope here).
 const JUDGE_SERIALIZE_BUDGET = parseInt(
   Deno.env.get("JUDGE_SERIALIZE_BUDGET") ?? "1500",
   10,
@@ -2047,6 +2064,16 @@ export function judgeQueryTerms(query: string): string[] {
  * windows don't starve the budget before a distinctive deep term (e.g. the one
  * "floor area ratio" clause) gets a window. Each term contributes at most
  * JUDGE_MAX_WINDOWS_PER_TERM windows.
+ *
+ * KNOWN LIMITATION (not a regression vs head-600): if a chunk exceeds budget AND
+ * the decisive clause uses ONLY common query terms that ALSO occur many times
+ * earlier (e.g. "tax"/"rate" repeated up-document), the first-N-occurrences-per-
+ * term cap lands its windows on the earlier occurrences and the deep clause is
+ * missed — the output degrades to roughly head-truncation. This is inherent to
+ * rarest-first + per-term occurrence capping; the proper fix for such deep,
+ * common-term content is sub-row segment embeddings + windowed serialization (a
+ * separate pending task), not a larger window here. head-600 missed these too, so
+ * this is strictly ≥ the prior behaviour.
  *
  * Invariants: the returned text's covered ranges are ⊇ text[0, headChars) and the
  * emitted text length is ≤ budget (ellipsis markers excluded).

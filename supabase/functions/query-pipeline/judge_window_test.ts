@@ -172,6 +172,32 @@ Deno.test("shrinking the budget parameter reproduces the pre-fix blindness", () 
   );
 });
 
+// ── KNOWN LIMITATION (documented, not a regression): deep decisive text using
+// only common+frequent query terms can be missed, degrading to ~head-truncation.
+// Locks the behaviour so it is not mistaken for a bug or assumed "fixed" later.
+Deno.test("KNOWN LIMITATION: deep clause of only common+frequent terms is missed (== head-600, not worse)", () => {
+  // "tax"/"rate" appear many times up-document; the decisive $1.12 clause deep in
+  // the row uses only those common terms. Rarest-first + 3-windows-per-term lands
+  // windows on the earlier occurrences, so the deep clause falls outside budget.
+  const noise = "The tax and rate provisions of this article. ".repeat(60); // ~2.7KB
+  const deep = "The applicable tax rate is $1.12 per hundred dollars.";
+  const text = noise + deep + " " + noise;
+  const query = "What is the tax rate?";
+
+  const out = selectJudgeSpans(query, text);
+  // Documented failure: the deep value is NOT surfaced...
+  assert(
+    !out.includes("$1.12"),
+    "documents the known miss for common+frequent terms",
+  );
+  // ...but this is no worse than the old head-600 (which also would not reach it).
+  const head600 = text.slice(0, 600) + "…";
+  assert(
+    !head600.includes("$1.12"),
+    "head-600 also missed it — so no regression",
+  );
+});
+
 // ── judgeQueryTerms: leaner stoplist keeps operative domain words ─────────────
 Deno.test("judgeQueryTerms keeps operative words and drops stopwords/years", () => {
   const terms = judgeQueryTerms(
