@@ -67,6 +67,71 @@ const JUDGE_CONTEXT_COUNT = parseInt(
 const JUDGE_OUTPUT_LIMIT = 8;
 const CURRENT_BUDGET_INDICATOR_LOOKUP_LIMIT = 5000;
 
+// ── Temporal-Judge candidate serialization budget (query-relevant span select) ─
+//
+// The judge can only select a chunk whose DECISIVE text it can see. The prior
+// serializer showed each candidate's first 600 chars only, which hid operative
+// clauses that sit deeper in a section — e.g. temporal-005's gold ranks #2 in the
+// vector arm (so it IS in the pool) yet the case refuses because its "Class 2
+// misdemeanor" penalty clause lives at char 1,028 of a 1,068-char row, past the
+// 600-char head. This is a LOCALIZATION failure, not a recall failure, so the fix
+// is query-relevant span selection at a BOUNDED budget, not blind head expansion.
+//
+// Budget sizing — justified against the judge's context on the ACTUAL worst-case
+// candidate count, NOT an arbitrary ×10. IMPORTANT: the judge does not see 40
+// candidates in the worst case; it sees up to 49:
+//     runTemporalJudge receives ranked.slice(0, JUDGE_CONTEXT_COUNT) (≤40 RRF
+//     candidates) with up to 9 anchors PREPENDED by prependCurrentBudgetIndicators
+//     — 3 ordinance (ORDINANCE_CURRENT_VALUE_ANCHOR_LIMIT) + 3 budget-indicator
+//     (.slice(0,3)) + 3 narrative (.slice(0,3)), deduped by key. Downstream filters
+//     only remove candidates, so 40 + 9 = 49 is the true upper bound.
+// Per-candidate cost = up to JUDGE_SERIALIZE_BUDGET text + serializeChunk metadata
+// (id, table, municode_node_id, is_current, effective_date, superseded_date,
+// has_amendment_history, ancestor-title chain) ≈ 200–500 chars for ordinance rows
+// with ancestors.
+//
+//   • Today (head-600): 49 × 600 text + 49 × ~500 metadata + ~2,750 system/header
+//     ≈ 56,650 chars ≈ ~14K tokens — and the judge does NOT truncate, empirical
+//     proof the served gemma4:31b-cloud context exceeds it. ollama-client sets no
+//     num_ctx; the Gemma-3 family serves up to 128K natively.
+//   • New worst case (budget 1,500): 49 × 1,500 = 73,500 text + 49 × ~500 = 24,500
+//     metadata + ~2,750 ≈ 100,750 chars ≈ ~25K tokens (~4 chars/token; ids and
+//     legal text can run denser). ~1.8× the prior worst case, still ~20% of a 128K
+//     context — comfortable headroom, not a live safety issue.
+//   • Because selection is QUERY-RELEVANT, the TYPICAL prompt is far smaller: the
+//     median section (754 chars) fits under budget and is shown whole; only
+//     long-tail rows > budget switch from head-600 to targeted windows capped at
+//     the budget — bounded exactly where head-600 also bounded them.
+//
+// NO TOTAL-PROMPT CAP EXISTS — only this per-candidate cap. The total scales
+// MULTIPLICATIVELY: total ≈ (JUDGE_CONTEXT_COUNT + prepended anchors) ×
+// (JUDGE_SERIALIZE_BUDGET + metadata). Anyone raising the candidate count
+// (JUDGE_CONTEXT_COUNT / the anchor .slice limits / ORDINANCE_CURRENT_VALUE_ANCHOR_LIMIT)
+// OR this budget must re-check the product against the model context — the two
+// compound. A total-prompt cap is a reasonable defense-in-depth follow-up (out of
+// scope here).
+const JUDGE_SERIALIZE_BUDGET = parseInt(
+  Deno.env.get("JUDGE_SERIALIZE_BUDGET") ?? "1500",
+  10,
+);
+// Minimum head always shown, so section-opening context is preserved and
+// serialization never regresses below the prior head-600 floor.
+const JUDGE_SERIALIZE_HEAD = parseInt(
+  Deno.env.get("JUDGE_SERIALIZE_HEAD") ?? "600",
+  10,
+);
+// Chars of context included on each side of a query-term match.
+const JUDGE_SERIALIZE_RADIUS = parseInt(
+  Deno.env.get("JUDGE_SERIALIZE_RADIUS") ?? "350",
+  10,
+);
+// Max windows a single query term may contribute, so a term repeated throughout
+// a large row cannot flood the budget ahead of rarer, more distinctive terms.
+const JUDGE_MAX_WINDOWS_PER_TERM = parseInt(
+  Deno.env.get("JUDGE_MAX_WINDOWS_PER_TERM") ?? "3",
+  10,
+);
+
 // Deterministic ordinance current-value resolver (§5.2.1). BM25 pulls a subject-
 // relevant candidate pool from ordinance_provisions per query; precision gating
 // then keeps at most ORDINANCE_CURRENT_VALUE_ANCHOR_LIMIT current-value anchors.
@@ -1916,11 +1981,198 @@ function candidateBbox(c: EnrichedCandidate): unknown | null {
   return { start, end };
 }
 
+// Minimal stopword list for query-term extraction in judge span selection. Kept
+// deliberately SMALL (articles / prepositions / question words / auxiliaries):
+// over-stripping risks dropping the decisive term, whereas an over-included term
+// only adds a window that the budget cap bounds anyway. Distinct from
+// BUDGET_INDICATOR_STOPWORDS, which strips domain words like "rate"/"value" that
+// can themselves be the operative term the judge needs to see.
+const JUDGE_QUERY_STOPWORDS = new Set([
+  "the",
+  "a",
+  "an",
+  "and",
+  "or",
+  "of",
+  "to",
+  "in",
+  "on",
+  "for",
+  "is",
+  "are",
+  "was",
+  "were",
+  "what",
+  "whats",
+  "which",
+  "who",
+  "when",
+  "where",
+  "how",
+  "did",
+  "does",
+  "do",
+  "has",
+  "have",
+  "had",
+  "that",
+  "this",
+  "with",
+  "from",
+  "by",
+  "at",
+  "as",
+  "it",
+  "its",
+  "be",
+  "been",
+  "than",
+  "then",
+  "into",
+  "under",
+  "over",
+]);
+
+/**
+ * Extract distinct query terms for span selection: lowercase, drop short tokens,
+ * generic stopwords, and bare years (which match dates everywhere and dilute the
+ * budget). Mirrors budgetIndicatorQueryTerms's shape with a leaner stoplist.
+ */
+export function judgeQueryTerms(query: string): string[] {
+  const normalized = query.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  const terms = normalized.split(/\s+/).filter((term) =>
+    term.length > 2 && !JUDGE_QUERY_STOPWORDS.has(term) &&
+    !/^(19|20)\d{2}$/.test(term)
+  );
+  return [...new Set(terms)];
+}
+
+/**
+ * Select query-relevant reading spans from a candidate's text for the judge
+ * prompt, bounded to `budget` characters.
+ *
+ * The judge can only select a chunk whose decisive text it can SEE; blind head
+ * truncation hid operative clauses deeper in a section (see JUDGE_SERIALIZE_BUDGET
+ * above). This returns the head (always — preserves section-opening context and
+ * guarantees no regression below the prior head-`headChars` behaviour) plus
+ * windows centred on query-term matches, merges overlapping spans, and caps the
+ * total emitted text at `budget`. Non-contiguous spans are joined with an ellipsis
+ * so the judge sees the cuts.
+ *
+ * Windows are selected RAREST-TERM-FIRST: a term occurring throughout the
+ * boilerplate (e.g. "district" in a zoning blob) is low priority, so its many
+ * windows don't starve the budget before a distinctive deep term (e.g. the one
+ * "floor area ratio" clause) gets a window. Each term contributes at most
+ * JUDGE_MAX_WINDOWS_PER_TERM windows.
+ *
+ * KNOWN LIMITATION (not a regression vs head-600): if a chunk exceeds budget AND
+ * the decisive clause uses ONLY common query terms that ALSO occur many times
+ * earlier (e.g. "tax"/"rate" repeated up-document), the first-N-occurrences-per-
+ * term cap lands its windows on the earlier occurrences and the deep clause is
+ * missed — the output degrades to roughly head-truncation. This is inherent to
+ * rarest-first + per-term occurrence capping; the proper fix for such deep,
+ * common-term content is sub-row segment embeddings + windowed serialization (a
+ * separate pending task), not a larger window here. head-600 missed these too, so
+ * this is strictly ≥ the prior behaviour.
+ *
+ * Invariants: the returned text's covered ranges are ⊇ text[0, headChars) and the
+ * emitted text length is ≤ budget (ellipsis markers excluded).
+ */
+export function selectJudgeSpans(
+  query: string,
+  text: string,
+  budget = JUDGE_SERIALIZE_BUDGET,
+  headChars = JUDGE_SERIALIZE_HEAD,
+  radius = JUDGE_SERIALIZE_RADIUS,
+): string {
+  // Whole chunk fits — show it verbatim, no loss. (Fixes temporal-005: its
+  // 1,068-char row now renders in full, so the char-1,028 penalty clause is seen.)
+  if (text.length <= budget) return text;
+
+  const lower = text.toLowerCase();
+
+  // Build candidate windows per query term, tagged with the term's total
+  // frequency (for rarest-first prioritisation) and match position (tie-break).
+  type Win = { start: number; end: number; freq: number; pos: number };
+  const wins: Win[] = [];
+  for (const term of judgeQueryTerms(query)) {
+    const positions: number[] = [];
+    let idx = lower.indexOf(term);
+    while (idx !== -1) {
+      positions.push(idx);
+      idx = lower.indexOf(term, idx + term.length);
+    }
+    const freq = positions.length;
+    for (const pos of positions.slice(0, JUDGE_MAX_WINDOWS_PER_TERM)) {
+      wins.push({
+        start: Math.max(0, pos - radius),
+        end: Math.min(text.length, pos + term.length + radius),
+        freq,
+        pos,
+      });
+    }
+  }
+  // Rarest term first (most distinctive), then earliest position.
+  wins.sort((a, b) => a.freq - b.freq || a.pos - b.pos);
+
+  // Select intervals until budget is spent. The head is always included first.
+  const selected: Array<[number, number]> = [
+    [0, Math.min(headChars, text.length)],
+  ];
+  let used = selected[0][1] - selected[0][0];
+  for (const w of wins) {
+    if (used >= budget) break;
+    // Marginal chars this window adds beyond already-selected coverage.
+    let marginal = w.end - w.start;
+    for (const [s, e] of selected) {
+      const lo = Math.max(w.start, s);
+      const hi = Math.min(w.end, e);
+      if (hi > lo) marginal -= hi - lo;
+    }
+    if (marginal <= 0) continue;
+    selected.push([w.start, w.end]);
+    used += marginal;
+  }
+
+  // Merge overlapping/adjacent intervals, then emit in document order, capping
+  // total emitted text at budget.
+  selected.sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [];
+  for (const [s, e] of selected) {
+    const last = merged[merged.length - 1];
+    if (last && s <= last[1]) {
+      last[1] = Math.max(last[1], e);
+    } else {
+      merged.push([s, e]);
+    }
+  }
+
+  const parts: string[] = [];
+  let emitted = 0;
+  for (const [s, e] of merged) {
+    if (emitted >= budget) break;
+    const span = text.slice(s, Math.min(e, s + (budget - emitted)));
+    if (span.length === 0) continue;
+    const prefix = s > 0 ? "…" : "";
+    const suffix = (s + span.length) < text.length ? "…" : "";
+    parts.push(prefix + span + suffix);
+    emitted += span.length;
+  }
+
+  return parts.join(" ");
+}
+
 /**
  * Serialize one enriched candidate into a compact text block for the judge prompt.
- * Chunk text is truncated at 600 chars to keep the context window manageable.
+ * Chunk text is reduced to query-relevant spans bounded by JUDGE_SERIALIZE_BUDGET
+ * (see selectJudgeSpans) so the judge sees the decisive text wherever it sits in
+ * the section, not just the first 600 chars.
  */
-function serializeChunk(c: EnrichedCandidate, index: number): string {
+export function serializeChunk(
+  c: EnrichedCandidate,
+  index: number,
+  query: string,
+): string {
   const lines: string[] = [];
 
   const meta: string[] = [`[${index + 1}] id=${c.id} | table=${c.table}`];
@@ -1943,10 +2195,7 @@ function serializeChunk(c: EnrichedCandidate, index: number): string {
   lines.push(meta.join(" | "));
 
   const rawText = candidateText(c);
-  const truncated = rawText.length > 600
-    ? rawText.slice(0, 600) + "…"
-    : rawText;
-  lines.push(`    ${truncated}`);
+  lines.push(`    ${selectJudgeSpans(query, rawText)}`);
 
   return lines.join("\n");
 }
@@ -2061,9 +2310,8 @@ CRITICAL: Output ONLY valid JSON — no preamble, no markdown fences, no explana
 
   // ── User prompt ──────────────────────────────────────────────────────────────
 
-  const chunkBlocks = candidates.map((c, i) => serializeChunk(c, i)).join(
-    "\n\n",
-  );
+  const chunkBlocks = candidates.map((c, i) => serializeChunk(c, i, userQuery))
+    .join("\n\n");
 
   const pendingBlock = pendingChanges.length === 0
     ? "None"
