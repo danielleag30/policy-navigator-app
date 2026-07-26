@@ -80,6 +80,26 @@ const CURRENT_BUDGET_INDICATOR_ANCHOR_LIMIT = 3;
 // charge $9.88/1,000 gal vs the $55.78/quarter base charge, ~5.6×), and no single
 // figure is "the" rate — so the resolver must fall through to the compound LLM
 // answer rather than corroborate the most-documented figure into a wrong pin.
+//
+// 1.5 is a deliberate two-sided trade-off; both failure directions are real:
+//   • TOO LOOSE (the error class this guard exists to catch): two genuinely
+//     DIFFERENT charges within 50% of each other would be adjudicated by mere
+//     document count and one could be corroborated into "the" rate.
+//   • TOO TIGHT: two real competing readings of the SAME tax that happen to sit
+//     just outside the window skip corroboration and fall through to the caveated
+//     path — e.g. an adopted $1.00/$100 vs an advertised $1.60/$100 of one tax is
+//     ratio 1.6 > 1.5, so it would not be corroborated even though it is exactly the
+//     same-rate revision dispute this guard is meant to resolve.
+// VERIFIED against live FY2027 data on 2026-07-26: no live pair trips the loose
+// direction. Every FY2027 rate/fee/charge row pair with differing unit and ratio
+// ≤ 1.5 had ratio EXACTLY 1.0000 — i.e. the SAME value under inconsistent unit
+// LABELS, not different charges (e.g. Sewer Service Charge 9.88 "dollars per 1,000
+// gallons" vs Sewer Charge 9.88 "dollars"; Base Charge 55.78 "dollars per quarter"
+// vs 55.78 "dollars"). The known genuinely-multi-charge case the guard was designed
+// for — $9.88/1,000 gal vs $55.78/quarter — sits at ratio 5.64, comfortably outside
+// the window, so it correctly falls through. So the too-loose risk is verified NOT
+// live (theoretical only); the too-tight risk remains theoretical as well. Retuning
+// is out of scope — this is a trade-off, not a bug.
 const BUDGET_VALUE_SAME_RATE_RATIO = 1.5;
 
 // ── Temporal-Judge candidate serialization budget (query-relevant span select) ─
@@ -1743,14 +1763,27 @@ async function fetchCurrentBudgetIndicatorRows(
   // resolver only ever saw whatever retrieval happened to surface (why real estate
   // was correct only by luck). This narrows the fetch to rows whose own
   // indicator_name/program/department mentions a DISTINCTIVE query term, so the
-  // subject-relevant rows fit inside the 1,000-row window. It is a provable
-  // SUPERSET of the client-side matchesBudgetIndicatorStructuredSubject gate below
-  // (which tests the same three fields for ALL terms): any row that passes the
-  // stricter ALL-terms client gate necessarily contains each of these terms too, so
-  // this pre-filter can never exclude a row the resolver would have accepted. Common
-  // value-kind words (tax/fee/charge) are dropped so the OR stays subject-specific
-  // rather than matching every tax row; if nothing distinctive remains the filter is
-  // skipped (behaviour unchanged for genuinely subjectless queries).
+  // subject-relevant rows fit inside the 1,000-row window. This is a SAFE PRACTICAL
+  // pre-filter for the known current-value query shapes ("what is the current X
+  // rate/fee/charge") — NOT a formal superset of the client-side
+  // matchesBudgetIndicatorStructuredSubject gate below. It is deliberately NOT a
+  // provable superset: the client gate can accept a row this OR drops, via two
+  // synonym paths that have no counterpart here. (1) VALUE-KIND SYNONYM: the client
+  // accepts the term rate/fee/charge whenever the row corpus already contains any of
+  // rate|fee|charge, with no literal term match required — whereas this OR keeps
+  // "rate" as a distinctive term and demands a literal %rate% match on
+  // name/program/department. Counterexample: query "current rate" → term ["rate"];
+  // row indicator_name "Stormwater Fee" PASSES the client gate (corpus has "fee") but
+  // FAILS this OR (no literal "rate" on its three fields). (2) TOT SYNONYM: the
+  // /\btot\b/ + transient/occupancy path in the client gate has the identical
+  // structural gap; moot in practice only because TOT is ordinance-pinned, not
+  // resolved via budget_indicators. So the invariant to rely on is "safe for the
+  // current shipped query shapes", NOT "cannot exclude any client-accepted row" — a
+  // future change that leans on a superset guarantee would silently narrow recall.
+  // Common value-kind words (tax/fee/charge) are dropped so the OR stays
+  // subject-specific rather than matching every tax row; if nothing distinctive
+  // remains the filter is skipped (behaviour unchanged for genuinely subjectless
+  // queries).
   const subjectTerms = budgetIndicatorQueryTerms(query).filter(
     (term) => !["tax", "taxes", "fee", "fees", "charge", "charges"].includes(term),
   );
