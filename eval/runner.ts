@@ -23,6 +23,7 @@ import { join } from "https://deno.land/std@0.224.0/path/mod.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import type { CriterionCheck, EvalCase, EvalCriterion } from "./schema.ts";
 import { EvalCategory } from "./schema.ts";
+import { computeCasePoolEcho, type GoldRankDetail } from "./pool-echo.ts";
 
 // ---------------------------------------------------------------------------
 // Result types
@@ -51,6 +52,22 @@ export interface CaseResult {
   // substantive answer, and whether the system refused/fell through.
   expects_answer?: boolean;
   refused?: boolean;
+  // ── Retrieval-pool instrumentation ("pool echo", additive; see pool-echo.ts) ──
+  // Distinct, per case, from whether the answer CITED the gold: these record
+  // whether the expected gold chunk_id(s) were in the retrieval candidate pool at
+  // all, and at what per-arm rank. This is what lets a failing case be attributed
+  // to RETRIEVAL (gold never surfaced) vs POST-RETRIEVAL (surfaced, then dropped
+  // by the judge/drafter). Undefined for cases with no gold chunk_ids (e.g.
+  // refusal / out_of_corpus) — there is no gold chunk whose recall we could echo.
+  gold_in_pool?: boolean;
+  gold_rank_bm25?: number | null;
+  gold_rank_vector?: number | null;
+  pool_size?: number;
+  /** Per-gold-id table + per-arm rank breakdown (auditability). */
+  gold_pool_detail?: GoldRankDetail[];
+  /** Set only if the vector arm degraded (e.g. embed endpoint down); the pool
+   *  columns then reflect the BM25 arm only, never silently read as a miss. */
+  pool_echo_vector_error?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +501,12 @@ if (import.meta.main) {
   const SUPABASE_ANON_KEY = requireEnv("SUPABASE_ANON_KEY");
   const SUPABASE_URL = requireEnv("SUPABASE_URL");
   const SUPABASE_SERVICE_ROLE_KEY = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
+  // Optional: docling-wrapper /embed base URL (thenlper/gte-small, same model as
+  // the pipeline's Supabase.ai.Session). Used ONLY by the additive pool-echo
+  // instrumentation to reconstruct the vector retrieval arm. If unset, pool echo
+  // still records the BM25 arm; the vector columns are null with an error note.
+  const EMBED_URL = Deno.env.get("HF_SPACES_DOCLING_URL") ??
+    Deno.env.get("EMBED_URL");
 
   // -------------------------------------------------------------------------
   // Load cases
@@ -767,6 +790,40 @@ if (import.meta.main) {
     // Write once immediately so the artifact exists even if batch 1 dies early.
     await flushResults();
 
+    // Retrieval-pool instrumentation client (service role; reads chunk tables via
+    // the same bm25_/match_ RPCs the pipeline calls). Kept entirely separate from
+    // the pipeline call — it never influences grading, only annotates results.
+    const poolClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const attachPoolEcho = async (
+      caseResult: CaseResult,
+      evalCase: EvalCase,
+    ): Promise<void> => {
+      // No gold chunk → nothing whose pool recall we could echo (refusal /
+      // out_of_corpus). Leave the columns undefined.
+      if (evalCase.chunk_ids.length === 0) return;
+      try {
+        const echo = await computeCasePoolEcho(
+          poolClient,
+          evalCase.query,
+          evalCase.chunk_ids,
+          { embedUrl: EMBED_URL },
+        );
+        caseResult.gold_in_pool = echo.gold_in_pool;
+        caseResult.gold_rank_bm25 = echo.gold_rank_bm25;
+        caseResult.gold_rank_vector = echo.gold_rank_vector;
+        caseResult.pool_size = echo.pool_size;
+        caseResult.gold_pool_detail = echo.gold_detail;
+        if (echo.vector_arm_error) {
+          caseResult.pool_echo_vector_error = echo.vector_arm_error;
+        }
+      } catch (err) {
+        // Instrumentation must never fail a run; record the reason and move on.
+        caseResult.pool_echo_vector_error = `pool echo failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`;
+      }
+    };
+
     // Execute in batches
     const batches: EvalCase[][] = [];
     for (let i = 0; i < runnableCases.length; i += BATCH_SIZE) {
@@ -840,6 +897,11 @@ if (import.meta.main) {
           };
           console.log(`ERROR — ${caseResult.error_message}`);
         }
+
+        // Additive retrieval-pool annotation (independent of the pipeline call;
+        // never touches status/criteria). Computed here so it is checkpointed
+        // with the case.
+        await attachPoolEcho(caseResult, evalCase);
 
         results.push(caseResult);
         // Checkpoint after EVERY case: at most the in-flight case is ever lost.

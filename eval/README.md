@@ -120,7 +120,15 @@ pass→fail flip after the fact instead of only bounding it.
       "answer": "the actual pipeline answer text",
       "cited_chunk_ids": ["019f34ba-9207-7156-9105-8ca308feed9c"],
       "expects_answer": true,
-      "refused": false
+      "refused": false,
+
+      "gold_in_pool": true,
+      "gold_rank_bm25": 14,
+      "gold_rank_vector": 1,
+      "pool_size": 277,
+      "gold_pool_detail": [
+        { "chunk_id": "019f34ba-...", "table": "ordinance_provisions", "rank_bm25": 14, "rank_vector": 1 }
+      ]
     }
   ]
 }
@@ -144,6 +152,60 @@ very differently under its correctness-over-availability policy:
 
 A case "expects an answer" unless it carries an `is_refusal` criterion. The
 overall pass rate is still reported, clearly labelled as continuity-only.
+
+### Retrieval-pool instrumentation ("pool echo")
+
+The four `gold_*` / `pool_size` columns above are **additive** and are distinct
+from whether the answer *cited* the gold. They record whether the expected gold
+`chunk_id`(s) were in the retrieval **candidate pool** at all, and at what
+per-arm rank — the prerequisite for measuring the §5.2.2 citation router.
+
+- `gold_in_pool` — was any expected gold chunk in either arm's top-40 candidate
+  pool (`gold_rank_bm25 !== null || gold_rank_vector !== null`)?
+- `gold_rank_bm25` / `gold_rank_vector` — the gold's best (lowest) 1-based rank
+  **within its own table's** BM25 / vector arm; `null` if that arm missed it.
+- `pool_size` — distinct candidates actually returned across all arms/tables,
+  keyed `{table}:{id}` exactly like the pipeline's RRF dedup.
+- `gold_pool_detail` — per-gold-id table + per-arm rank, for auditability.
+- `pool_echo_vector_error` / `arm_errors` — set only when the vector embed or a
+  per-table RPC degraded (e.g. the ~4.5s `bm25_budget_indicators` tripping the 8s
+  statement timeout under load — the pipeline degrades the same way). A pool with
+  a hole is never silently read as a clean miss.
+
+**Why this exists.** The `query-pipeline` HTTP response only exposes the ≤8
+chunks the drafter *finally cited*, never the ~40-per-arm retrieval pool that RRF
+merges. Without the pool, a failing case cannot be attributed to **retrieval**
+(the gold never surfaced — a router/ranking problem) vs **post-retrieval** (it
+surfaced and the judge/drafter dropped it). That gap is exactly how a prior
+analysis overcounted "retrieval-blind" failures.
+
+**How it stays faithful.** `eval/pool-echo.ts` reconstructs the pool by calling
+the *same* `bm25_<table>` / `match_<table>` RPCs with the *same* arguments the
+pipeline uses, and reads back the same per-table 1-based ranks. The vector arm's
+query embedding comes from the project's other shipping embed path —
+`generateEmbeddingsHttp` against the docling-wrapper `/embed` endpoint, which
+serves the *same* `thenlper/gte-small` model with the *same* mean-pool +
+L2-normalize as the pipeline's in-Edge `Supabase.ai.Session('gte-small')`. During
+a live run the runner computes these columns for every case with a gold
+`chunk_id` (set `HF_SPACES_DOCLING_URL` to enable the vector arm; without it, the
+BM25 arm is still recorded and `pool_echo_vector_error` is set).
+
+### Backfilling pool echo onto an existing run
+
+To compute the retrieval split for a results file produced **before** this
+instrumentation existed — without re-running the pipeline:
+
+```bash
+deno run --allow-net --allow-env --allow-read --allow-write \
+  eval/pool-echo-backfill.ts \
+  --results <path/to/results.json> \
+  [--status-field status_tolerant] [--out <path>]
+```
+
+It uses the same `eval/pool-echo.ts` functions, pulling gold `chunk_id`s and
+queries from `eval/cases` and pass/fail + cited chunks from the results file, and
+prints the aggregate **surfaced (post-retrieval drop) vs blind (retrieval
+problem)** split across the failing set.
 
 Results files themselves are excluded from git via `.gitignore` (they are large);
 the `eval/results/` directory is tracked via `.gitkeep`, and the runner recreates
