@@ -161,11 +161,22 @@ from whether the answer *cited* the gold. They record whether the expected gold
 per-arm rank — the prerequisite for measuring the §5.2.2 citation router.
 
 - `gold_in_pool` — was any expected gold chunk in either arm's top-40 candidate
-  pool (`gold_rank_bm25 !== null || gold_rank_vector !== null`)?
+  pool (`gold_rank_bm25 !== null || gold_rank_vector !== null`)? Read this
+  asymmetrically: `gold_in_pool=true` is a hard guarantee that retrieval
+  surfaced the gold, but `gold_in_pool=false` is a **lower-bound "blind"
+  signal, not a definitive one** — a gold that reaches the judge only via the
+  prepended current-value anchors (see `pool_size` below) still records
+  `gold_in_pool=false`. Blind counts derived from this column are therefore
+  upper bounds on true retrieval blindness.
 - `gold_rank_bm25` / `gold_rank_vector` — the gold's best (lowest) 1-based rank
   **within its own table's** BM25 / vector arm; `null` if that arm missed it.
-- `pool_size` — distinct candidates actually returned across all arms/tables,
-  keyed `{table}:{id}` exactly like the pipeline's RRF dedup.
+- `pool_size` — BM25+vector RRF candidate pool size (excludes query-shape-gated
+  prepended anchors): distinct candidates returned across the BM25 and vector
+  arms of all tables, keyed `{table}:{id}` exactly like the pipeline's RRF dedup.
+  It is **not** the full set the judge sees — `prependCurrentBudgetIndicators`
+  prepends up to 9 current-value anchors (3 ordinance + 3 budget-indicator +
+  3 narrative) ahead of the RRF pool in the real pipeline, and those are outside
+  this count.
 - `gold_pool_detail` — per-gold-id table + per-arm rank, for auditability.
 - `pool_echo_vector_error` / `arm_errors` — set only when the vector embed or a
   per-table RPC degraded (e.g. the ~4.5s `bm25_budget_indicators` tripping the 8s
