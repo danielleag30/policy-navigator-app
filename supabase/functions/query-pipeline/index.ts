@@ -163,6 +163,16 @@ const UNVERIFIED_CAVEAT =
 const CURRENT_VALUE_FALLBACK_CAVEAT =
   "Caveat: This narrative-derived current value may need source-date review.";
 
+// Defect D: a deterministic budget_indicator pin is a single auto-extracted
+// structured row, not a human-verified assertion. It can still be the wrong KIND
+// of figure for the question (a growth/share metric mislabeled as a rate) or a
+// stale-year value. Narrative pins already ship CURRENT_VALUE_FALLBACK_CAVEAT;
+// budget_indicator pins previously shipped `caveats: []`, asserting the number
+// with unqualified confidence. Attach a parallel review caveat so a structured
+// pin is never served bare.
+const BUDGET_INDICATOR_REVIEW_CAVEAT =
+  "Caveat: This value was auto-extracted from a budget document's structured indicators and may need source-date and rate-vs-metric review.";
+
 // ── Chunk-bearing tables ──────────────────────────────────────────────────────
 
 const CHUNK_TABLES = [
@@ -771,6 +781,48 @@ function matchesBudgetIndicatorStructuredSubject(
   );
 }
 
+/**
+ * Defect A: a budget_indicator row is NOT a current rate/fee/charge when its own
+ * semantics say it is a growth, change, or share metric rather than a per-unit
+ * value. Two live-confirmed hijacks this rejects:
+ *   • "Personal Property Taxes increase" (unit=percent, value 3.1) — a
+ *     year-over-year revenue-growth projection, hosted in rate-change narrative,
+ *     that was being served as the "3.1 percent personal property tax rate".
+ *   • "Fixed Charge Revenue Percentage" (unit=percent, value 25.5) — the share of
+ *     sewer revenue recovered by fixed charges, served as the "25.5 percent
+ *     water/sewer rate".
+ * The gate is on the ROW's own indicator_name/program/unit — never the hosting
+ * chunk's prose (that prose is exactly what mis-scored these rows in the first
+ * place, see finalAdoptedRateTextScore). A percent unit alone is treated as a
+ * ratio/share/growth signal, not a rate: percent-denominated real rates in this
+ * corpus (sales 1%, TOT 6%, BPOL) are ordinance-pinned, not budget_indicators.
+ * The one exception is a row whose own name explicitly calls itself a rate/levy.
+ */
+function budgetIndicatorIsGrowthOrShareMetric(c: EnrichedCandidate): boolean {
+  if (c.table !== "budget_indicators") return false;
+  const name = [c.row.indicator_name, c.row.program]
+    .map(normalizedText)
+    .join(" ");
+  // The percent-unit exception is judged on the INDICATOR name alone — the row's
+  // own declared value kind — not the program, which is only a container. "Fixed
+  // Charge Revenue Percentage" sits under program "Sewer Rate Plan": the "rate" in
+  // the plan name must not launder a share metric into a rate.
+  const indicatorName = normalizedText(c.row.indicator_name);
+  const unit = normalizedText(c.row.unit);
+  if (
+    /\b(increase|decrease|change|growth|projected|equalization)\b/.test(name)
+  ) {
+    return true;
+  }
+  if (/\bpercent(age)?\s+of\b/.test(name) || /\bshare\b/.test(name)) return true;
+  // A percent-unit indicator is a ratio/share/growth metric, not a per-unit rate,
+  // unless the indicator's own name explicitly says it is the rate or levy.
+  if (/\bpercent(age)?\b/.test(unit) && !/\b(rate|levy)\b/.test(indicatorName)) {
+    return true;
+  }
+  return false;
+}
+
 function isRelevantTaxRateCandidate(
   query: string,
   c: EnrichedCandidate,
@@ -779,6 +831,8 @@ function isRelevantTaxRateCandidate(
   if (!/\btax\b/i.test(query) || !/\brate\b/i.test(query)) return false;
   const corpus = candidateCorpus(c, doc);
   if (c.table === "budget_indicators") {
+    // Defect A: growth/change/share metrics are never a current tax rate.
+    if (budgetIndicatorIsGrowthOrShareMetric(c)) return false;
     const structuredRateFields = [c.row.indicator_name, c.row.unit]
       .map(normalizedText)
       .join(" ");
@@ -786,9 +840,12 @@ function isRelevantTaxRateCandidate(
     const actual = asNumber(c.row.value_actual);
     const plainDollarAmount = /\bdollars?\b/.test(unit) &&
       !/\bper\s+\$?100\b/.test(unit);
+    // Defect A: `unit === 'percent'` alone no longer qualifies a row as a rate —
+    // the row must name itself a rate or carry a per-$100 levy structure. (Any
+    // surviving percent-unit row has already passed
+    // budgetIndicatorIsGrowthOrShareMetric, i.e. its own name says "rate"/"levy".)
     const rowItselfIsRate = /\brate\b/.test(structuredRateFields) ||
-      /\bper\s+\$?100\b/.test(structuredRateFields) ||
-      /\bpercent(age)?\b/.test(unit);
+      /\bper\s+\$?100\b/.test(structuredRateFields);
     const rowValueIsPlausibleRate = actual === null || actual <= 100;
     return rowItselfIsRate && rowValueIsPlausibleRate &&
       !plainDollarAmount && /\btax\b/.test(corpus) &&
@@ -1022,6 +1079,12 @@ function isRelevantStructuredCurrentValueCandidate(
     return isRelevantTaxRateCandidate(query, c, doc);
   }
   if (/\b(rate|fee|charge)\b/i.test(query)) {
+    // Defect A (non-tax rate/fee/charge queries, e.g. "water/sewer rate"): a
+    // growth/share/percent metric is never the answer. "water/sewer rate" carries
+    // no "tax", so it never reaches isRelevantTaxRateCandidate; without this gate
+    // "Fixed Charge Revenue Percentage" (unit=percent, 25.5) passes the kind check
+    // below on the bare word "charge" in its name and gets served as the rate.
+    if (budgetIndicatorIsGrowthOrShareMetric(c)) return false;
     const structuredValueKind = [
       c.row.indicator_name,
       c.row.unit,
@@ -1645,6 +1708,18 @@ async function fetchCurrentBudgetIndicatorRows(
     return [];
   }
 
+  // Deterministic total order (GAP fix): `fiscal_year DESC` alone is a PARTIAL
+  // order — the ~4,100 FY2027 rows tie on fiscal_year and Postgres then returns
+  // them in physical heap order, which a parallel seq scan can vary between
+  // executions and which PR #131's full-table re-embed rewrote wholesale. Because
+  // the `.limit(...)` truncates the tail of that order, a non-total sort makes the
+  // truncation boundary (which lands mid-FY2026, see PR notes) non-deterministic:
+  // the same query can admit different FY2026 rows on different calls. Appending
+  // `id` as a tiebreak makes the order — and therefore the truncated set — stable
+  // and reproducible. (The limit is intentionally left as-is: it only ever drops
+  // the OLDEST fiscal years, which score strictly below any current-year match and
+  // so can never win a current-value pin; and `select("*")` already streams the
+  // pgvector embedding per row, so raising it is costly for no correctness gain.)
   const { data, error: dbErr } = await db
     .from("budget_indicators")
     .select(
@@ -1652,6 +1727,7 @@ async function fetchCurrentBudgetIndicatorRows(
     )
     .not("value_actual", "is", null)
     .order("fiscal_year", { ascending: false })
+    .order("id", { ascending: true })
     .limit(CURRENT_BUDGET_INDICATOR_LOOKUP_LIMIT);
 
   if (dbErr) {
@@ -2911,6 +2987,13 @@ export function deterministicCurrentValueDraft(
       ? withRequiredCaveats(`${claim}. ${inlineCitation}`, [
         CURRENT_VALUE_FALLBACK_CAVEAT,
       ])
+      // Defect D: a budget_indicator pin now carries its review caveat in the
+      // answer text too, so the qualification travels with the number rather than
+      // living only in a separate caveats array a client might drop.
+      : candidate.table === "budget_indicators"
+      ? withRequiredCaveats(`${claim}. ${inlineCitation}`, [
+        BUDGET_INDICATOR_REVIEW_CAVEAT,
+      ])
       : `${claim}. ${inlineCitation}`,
     citations: [{
       chunk_id: chunk.chunk_id,
@@ -2969,7 +3052,35 @@ export function resolveDeterministicCurrentValue(
     (candidate.table === "budget_indicators" && score >= 3_000_000) ||
     (candidate.table === "ordinance_provisions" && score >= 2_000_000)
   );
-  if (structured) return structured.candidate;
+  if (structured) {
+    // Defect C (defense-in-depth): mirror the ordinance cross-value guard
+    // (selectCurrentOrdinanceValueAnchors, "distinctValues.size > 1 → []") for the
+    // budget_indicator path, which had none — it silently pinned the top score
+    // even when peers disagreed. Deliberately GENTLER than the ordinance guard:
+    // it fires only when another pinnable budget_indicator is TIED at the winner's
+    // exact score but extracts a DIFFERENT value. A strict score winner is trusted
+    // (that is how the advertised-vs-adopted refinement resolves: real estate's
+    // adopted $1.12 strictly outscores the adopted-source $1.1225 rows, so this
+    // must NOT fall through there). A tie with disagreement means the ranker
+    // cannot say which figure is current, and the tie-break is arbitrary heap
+    // order — exactly the silent-flip condition — so we fall through to the
+    // caveated path instead of pinning a coin-flip.
+    if (structured.candidate.table === "budget_indicators") {
+      const winnerValue = formatBudgetValue(
+        structured.candidate.row.value_actual,
+        structured.candidate.row.unit,
+      );
+      const tiedDisagreement = scored.some(({ candidate, score }) =>
+        candidate.table === "budget_indicators" &&
+        candidate.key !== structured.candidate.key &&
+        score === structured.score &&
+        formatBudgetValue(candidate.row.value_actual, candidate.row.unit) !==
+          winnerValue
+      );
+      if (tiedDisagreement) return null;
+    }
+    return structured.candidate;
+  }
 
   return null;
 }
@@ -4056,6 +4167,10 @@ if (import.meta.main) {
           false,
           deterministicCurrentValue.table === "narrative_chunks"
             ? [CURRENT_VALUE_FALLBACK_CAVEAT]
+            // Defect D: budget_indicator pins carry a structured-value review
+            // caveat too, not only narrative pins.
+            : deterministicCurrentValue.table === "budget_indicators"
+            ? [BUDGET_INDICATOR_REVIEW_CAVEAT]
             : [],
         );
         return await returnLoggedSuccess(responseData, startedAt, {
