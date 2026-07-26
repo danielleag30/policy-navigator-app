@@ -150,20 +150,97 @@ Deno.test("A: water/sewer share row (25.5%) cannot pin — resolver falls throug
   assertEqual(winner, null, "water/sewer must fall through, never pin 25.5 percent");
 });
 
-// ── Defect A must NOT regress the currently-correct real-estate pin ──────────
-Deno.test("A+C: real estate still pins $1.12 with the advertised/adopted $1.1225 rows also present", () => {
-  const keys = ["re_adopted_112", "re_adopted_1225", "re_advertised_1225"];
+// ── Corroboration tie-break: distinct-document majority resolves the REAL tie ──
+// The live 7-vs-1 split: $1.12 is attested across many distinct adopted documents,
+// while $1.1225 appears ONLY in the single CEX transmittal letter (the advertised
+// letter reprinted inside the adopted package). Both $1.1225 rows and the $1.12
+// rows are budget_stage='adopted', fiscal_year=2027 — indistinguishable on stage,
+// year, and effective_date. The prior 3-row subset hid the tie by including just
+// ONE $1.12 document; with the real competing rows present the resolver must pin
+// $1.12 by DISTINCT-DOCUMENT majority — never fall through, never flip to $1.1225.
+const RE_112_KEYS = [
+  "re_adopted_112",
+  "re_112_trends",
+  "re_112_summary",
+  "re_112_chairman",
+  "re_112_package",
+];
+const RE_1225_KEYS = ["re_adopted_1225", "re_1225_cex2"];
+
+Deno.test("corroboration fixtures: $1.12 spans 5 DISTINCT documents; both $1.1225 rows share the one CEX document", () => {
+  const docs112 = new Set(RE_112_KEYS.map((k) => fx[k].row.document_id));
+  const docs1225 = new Set(RE_1225_KEYS.map((k) => fx[k].row.document_id));
+  assertEqual(docs112.size, 5, "5 distinct $1.12 documents");
+  assertEqual(docs1225.size, 1, "both $1.1225 rows are the single CEX Letter document");
+  for (const k of RE_1225_KEYS) {
+    assertEqual(fx[k].row.value_actual, 1.1225, `${k} is a $1.1225 row`);
+    assertEqual(fx[k].document.budget_stage, "adopted", `${k} is adopted-stage`);
+  }
+});
+
+Deno.test("corroboration: real $1.12 (5 docs) vs $1.1225 (1 CEX doc) tie → pins $1.12 by distinct-document majority", () => {
+  const keys = [...RE_112_KEYS, ...RE_1225_KEYS, "re_advertised_1225"];
   const winner = resolveDeterministicCurrentValue(
     RE_Q,
     keys.map(cand),
     docsFor(keys),
   );
-  assert(winner !== null, "expected a real-estate pin");
+  assert(winner !== null, "expected a real-estate pin, not a fall-through to flippy narrative");
   const w = winner!;
-  assertEqual(w.row.value_actual, 1.12, "real estate must stay $1.12 (not 1.1225)");
-  assertEqual(w.id, fx.re_adopted_112.row.id, "real estate winner is the adopted $1.12 row");
+  assertEqual(w.table, "budget_indicators", "winner is a budget_indicator pin");
+  assertEqual(w.row.value_actual, 1.12, "must pin $1.12, never the reprinted-advertised $1.1225");
   const rendered = formatBudgetValue(w.row.value_actual, w.row.unit) ?? "";
-  assert(rendered.includes("$1.12"), "real estate value renders as $1.12");
+  assert(
+    rendered.includes("$1.12") && !rendered.includes("$1.1225"),
+    `real estate value renders as $1.12, got ${rendered}`,
+  );
+});
+
+Deno.test("corroboration: order-independent — pins $1.12 even when the $1.1225 rows are listed first", () => {
+  const keys = [...RE_1225_KEYS, "re_advertised_1225", ...RE_112_KEYS];
+  const winner = resolveDeterministicCurrentValue(
+    RE_Q,
+    keys.map(cand),
+    docsFor(keys),
+  );
+  assert(winner !== null, "expected a real-estate pin regardless of candidate order");
+  assertEqual(winner!.row.value_actual, 1.12, "distinct-document majority is order-independent");
+});
+
+// ── Corroboration must NOT adjudicate across DIFFERENT charges ───────────────
+// "water and sewer rate" has two adopted figures that are DIFFERENT metrics, not
+// competing readings of one rate: the $9.88/1,000-gal service charge and the
+// $55.78/quarter base charge (~5.6× apart). The most-DOCUMENTED figure is the base
+// charge, so a naive distinct-document majority would pin $55.78 as "the rate" —
+// wrong. The same-rate closeness guard must reject the wide spread and fall through
+// so the LLM composes the compound answer (service charge + base charge).
+Deno.test("safety: water/sewer service ($9.88/1,000 gal) vs base ($55.78/quarter) → wide spread → falls through", () => {
+  const keys = ["ws_service_988_adopted", "ws_base_5578_adopted"];
+  const winner = resolveDeterministicCurrentValue(WS_Q, keys.map(cand), docsFor(keys));
+  assertEqual(winner, null, "different charges must not corroborate into a single wrong pin");
+});
+
+Deno.test("safety: both water/sewer charges are pinnable adopted rows (guard, not a gate, causes the fall-through)", () => {
+  // Confirm the fall-through above is the closeness guard, not either row being
+  // filtered out: each scores in the adopted budget band on its own.
+  assert(score(WS_Q, "ws_service_988_adopted") >= 3_000_000, "service charge is pinnable");
+  assert(score(WS_Q, "ws_base_5578_adopted") >= 3_000_000, "base charge is pinnable");
+});
+
+// ── Defect C is PRESERVED as the residual fall-through ───────────────────────
+// When only ONE $1.12 document reaches the resolver, distinct-document counts tie
+// 1-vs-1, corroboration cannot decide, and Defect C's guard fires — no coin-flip.
+// In production the prefetch dedupe (fetchCurrentBudgetIndicatorRows) guarantees
+// ≥2 distinct $1.12 documents are anchored, so this degenerate set cannot arise
+// there; the test pins down the safety floor of the tie-break itself.
+Deno.test("C preserved: a lone $1.12 document tied 1-vs-1 with the CEX $1.1225 document → falls through (no coin-flip)", () => {
+  const keys = ["re_adopted_112", "re_adopted_1225", "re_1225_cex2"];
+  const winner = resolveDeterministicCurrentValue(
+    RE_Q,
+    keys.map(cand),
+    docsFor(keys),
+  );
+  assertEqual(winner, null, "1-vs-1 distinct-document tie must fall through, never coin-flip a pin");
 });
 
 // ── Defect C: exact-score-tie disagreement falls through; agreement pins ─────

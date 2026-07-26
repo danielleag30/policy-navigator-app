@@ -66,6 +66,21 @@ const JUDGE_CONTEXT_COUNT = parseInt(
 // Maximum chunks the Temporal Judge may select (hard ceiling per build plan).
 const JUDGE_OUTPUT_LIMIT = 8;
 const CURRENT_BUDGET_INDICATOR_LOOKUP_LIMIT = 5000;
+// Budget-indicator current-value anchors prepended per query, taken after deduping
+// by source document (see fetchCurrentBudgetIndicatorRows). Kept at 3 — the same
+// anchor count as before — but now guaranteed to span 3 DISTINCT documents, which
+// is what the resolver's distinct-document corroboration tie-break needs to break a
+// same-stage value disagreement (e.g. the $1.12 vs reprinted-$1.1225 real-estate
+// rate) without a coin-flip.
+const CURRENT_BUDGET_INDICATOR_ANCHOR_LIMIT = 3;
+// Distinct-document corroboration only adjudicates competing READINGS OF THE SAME
+// rate (a minor revision dispute like real estate's $1.12 vs the reprinted $1.1225
+// — a 0.2% gap). When the pinnable values span more than this ratio they are
+// DIFFERENT charges, not competing readings of one rate (e.g. the sewer service
+// charge $9.88/1,000 gal vs the $55.78/quarter base charge, ~5.6×), and no single
+// figure is "the" rate — so the resolver must fall through to the compound LLM
+// answer rather than corroborate the most-documented figure into a wrong pin.
+const BUDGET_VALUE_SAME_RATE_RATIO = 1.5;
 
 // ── Temporal-Judge candidate serialization budget (query-relevant span select) ─
 //
@@ -1720,12 +1735,40 @@ async function fetchCurrentBudgetIndicatorRows(
   // the OLDEST fiscal years, which score strictly below any current-year match and
   // so can never win a current-value pin; and `select("*")` already streams the
   // pgvector embedding per row, so raising it is costly for no correctness gain.)
-  const { data, error: dbErr } = await db
+  // Server-side subject pre-filter (CRITICAL — the `.limit()` below is silently
+  // capped at PostgREST's db-max-rows, 1,000). Ordered by `fiscal_year DESC`, the
+  // first 1,000 rows are the out-year forecasts plus the earliest-id FY-current
+  // rows; the ADOPTED current-year rate rows sit far past row 1,000 (rn ≈ 2,000–
+  // 4,100 for real estate), so WITHOUT this filter they are never returned and the
+  // resolver only ever saw whatever retrieval happened to surface (why real estate
+  // was correct only by luck). This narrows the fetch to rows whose own
+  // indicator_name/program/department mentions a DISTINCTIVE query term, so the
+  // subject-relevant rows fit inside the 1,000-row window. It is a provable
+  // SUPERSET of the client-side matchesBudgetIndicatorStructuredSubject gate below
+  // (which tests the same three fields for ALL terms): any row that passes the
+  // stricter ALL-terms client gate necessarily contains each of these terms too, so
+  // this pre-filter can never exclude a row the resolver would have accepted. Common
+  // value-kind words (tax/fee/charge) are dropped so the OR stays subject-specific
+  // rather than matching every tax row; if nothing distinctive remains the filter is
+  // skipped (behaviour unchanged for genuinely subjectless queries).
+  const subjectTerms = budgetIndicatorQueryTerms(query).filter(
+    (term) => !["tax", "taxes", "fee", "fees", "charge", "charges"].includes(term),
+  );
+  let request = db
     .from("budget_indicators")
     .select(
       "*, documents!inner(id, url, title, filename, ingested_at, budget_stage, source_published_at, fiscal_year)",
     )
-    .not("value_actual", "is", null)
+    .not("value_actual", "is", null);
+  if (subjectTerms.length > 0) {
+    const orExpr = subjectTerms
+      .map((term) =>
+        `indicator_name.ilike.%${term}%,program.ilike.%${term}%,department.ilike.%${term}%`
+      )
+      .join(",");
+    request = request.or(orExpr);
+  }
+  const { data, error: dbErr } = await request
     .order("fiscal_year", { ascending: false })
     .order("id", { ascending: true })
     .limit(CURRENT_BUDGET_INDICATOR_LOOKUP_LIMIT);
@@ -1738,7 +1781,7 @@ async function fetchCurrentBudgetIndicatorRows(
     return [];
   }
 
-  const rows = ((data ?? []) as Record<string, unknown>[])
+  const ranked = ((data ?? []) as Record<string, unknown>[])
     .filter((row) => {
       const doc = row.documents as SourceDocument | undefined;
       return isAdoptedBudgetSource(budgetIndicatorCandidate(row), doc) &&
@@ -1760,12 +1803,29 @@ async function fetchCurrentBudgetIndicatorRows(
           ...(docB ? [[docB.id, docB] as const] : []),
         ]),
       )(candidateA, candidateB);
-    })
-    .slice(0, 3)
-    .map((row) => {
-      const { documents: _documents, ...candidateRow } = row;
-      return budgetIndicatorCandidate(candidateRow);
     });
+
+  // Corroboration material (works with resolveDeterministicCurrentValue's
+  // distinct-document tie-break): keep the best-scoring row per DISTINCT source
+  // document, then take the top anchors. Deduping by document is what makes the
+  // tie-break robust: two structurally identical adopted-stage figures are decided
+  // by how many DISTINCT documents attest each, so the prefetch must surface
+  // document BREADTH, not several near-duplicate rows from one document. Concretely
+  // for the real-estate rate, the $1.1225 rows both live in one document (the CEX
+  // transmittal letter reprinted in the adopted package), so after this dedupe they
+  // can occupy at most one anchor slot — guaranteeing the remaining slots carry the
+  // genuinely-adopted $1.12 value from multiple distinct documents, so the resolver
+  // always sees a distinct-document majority instead of a 1-vs-1 coin-flip.
+  const seenDocuments = new Set<string>();
+  const rows: EnrichedCandidate[] = [];
+  for (const row of ranked) {
+    const documentId = asText(row.document_id) ?? String(row.id);
+    if (seenDocuments.has(documentId)) continue;
+    seenDocuments.add(documentId);
+    const { documents: _documents, ...candidateRow } = row;
+    rows.push(budgetIndicatorCandidate(candidateRow));
+    if (rows.length >= CURRENT_BUDGET_INDICATOR_ANCHOR_LIMIT) break;
+  }
 
   return rows;
 }
@@ -3053,31 +3113,82 @@ export function resolveDeterministicCurrentValue(
     (candidate.table === "ordinance_provisions" && score >= 2_000_000)
   );
   if (structured) {
-    // Defect C (defense-in-depth): mirror the ordinance cross-value guard
-    // (selectCurrentOrdinanceValueAnchors, "distinctValues.size > 1 → []") for the
-    // budget_indicator path, which had none — it silently pinned the top score
-    // even when peers disagreed. Deliberately GENTLER than the ordinance guard:
-    // it fires only when another pinnable budget_indicator is TIED at the winner's
-    // exact score but extracts a DIFFERENT value. A strict score winner is trusted
-    // (that is how the advertised-vs-adopted refinement resolves: real estate's
-    // adopted $1.12 strictly outscores the adopted-source $1.1225 rows, so this
-    // must NOT fall through there). A tie with disagreement means the ranker
-    // cannot say which figure is current, and the tie-break is arbitrary heap
-    // order — exactly the silent-flip condition — so we fall through to the
-    // caveated path instead of pinning a coin-flip.
     if (structured.candidate.table === "budget_indicators") {
-      const winnerValue = formatBudgetValue(
-        structured.candidate.row.value_actual,
-        structured.candidate.row.unit,
+      // Pinnable adopted-band budget_indicator candidates (score ≥ 3,000,000):
+      // each has already passed the growth/share gate (Defect A), the adopted-
+      // source gate, and the subject/relevance gates, so these are the legitimate
+      // "current adopted rate" candidates for the subject. Advertised, growth, and
+      // share rows never reach here — they score 0, far below the band.
+      const band = scored.filter(({ candidate, score }) =>
+        candidate.table === "budget_indicators" && score >= 3_000_000
       );
-      const tiedDisagreement = scored.some(({ candidate, score }) =>
-        candidate.table === "budget_indicators" &&
-        candidate.key !== structured.candidate.key &&
-        score === structured.score &&
-        formatBudgetValue(candidate.row.value_actual, candidate.row.unit) !==
-          winnerValue
-      );
-      if (tiedDisagreement) return null;
+
+      // Distinct SOURCE DOCUMENTS attesting each numeric value. Grouped by the
+      // numeric rate, NOT by formatBudgetValue: the same rate is stored under
+      // several verbatim unit spellings ("dollars per $100", "…per $100 of
+      // assessed value", "…per $100 assessed value"), which must CORROBORATE one
+      // another, not split the vote into separate formatted strings.
+      const documentsByValue = new Map<number, Set<string>>();
+      for (const { candidate } of band) {
+        const value = asNumber(candidate.row.value_actual);
+        if (value === null) continue;
+        const documentId = asText(candidate.row.document_id) ?? candidate.key;
+        let documents = documentsByValue.get(value);
+        if (!documents) documentsByValue.set(value, documents = new Set());
+        documents.add(documentId);
+      }
+
+      if (documentsByValue.size > 1) {
+        // Same-rate revision dispute vs different metrics: corroboration only
+        // adjudicates competing READINGS OF ONE rate. When the pinnable values span
+        // a wide range they are DIFFERENT charges (the sewer service charge vs the
+        // quarterly base charge, ~5.6×), not competing readings, and no single
+        // figure is "the" rate — fall through to the compound LLM answer instead of
+        // corroborating the most-documented figure into a wrong pin. (Mirrors Defect
+        // C's cannot-decide safety.)
+        const values = [...documentsByValue.keys()];
+        const minValue = Math.min(...values);
+        const maxValue = Math.max(...values);
+        if (minValue > 0 && maxValue / minValue > BUDGET_VALUE_SAME_RATE_RATIO) {
+          return null;
+        }
+
+        // The pinnable adopted rate rows DISAGREE on the value. Two structurally
+        // identical adopted-stage figures — real estate's $1.12 and the $1.1225
+        // rows reprinted from the advertised transmittal letter inside the adopted
+        // package — are indistinguishable on stage, fiscal_year, and effective_date;
+        // every currency signal is identical, and prose-sniffing is the Defect B
+        // failure mode we already fixed.
+        //
+        // Corroboration tie-break (runs BEFORE Defect C): prefer the value attested
+        // by the most DISTINCT source documents. The genuinely-adopted rate is
+        // restated across the whole adopted package (summary, chairman's letter,
+        // revenue overview, multi-year plan, trends, …); a reprinted advertised
+        // figure appears in exactly one document (the CEX transmittal letter).
+        // Distinct-document breadth is a structured provenance signal.
+        const ranked = [...documentsByValue.entries()].sort(
+          (a, b) => b[1].size - a[1].size,
+        );
+        const [corroboratedValue, mostDocuments] = ranked[0];
+        const hasUniqueMajority = ranked.length < 2 ||
+          ranked[1][1].size < mostDocuments.size;
+
+        if (hasUniqueMajority) {
+          // Pin the highest-scoring band candidate carrying the best-corroborated
+          // value. `scored` is sorted by score descending, so the first match wins.
+          const corroborated = scored.find(({ candidate, score }) =>
+            candidate.table === "budget_indicators" && score >= 3_000_000 &&
+            asNumber(candidate.row.value_actual) === corroboratedValue
+          );
+          if (corroborated) return corroborated.candidate;
+        }
+
+        // Defect C (preserved): distinct-document counts ALSO tie, so the ranker
+        // genuinely cannot say which figure is current. The remaining tie-break
+        // would be arbitrary heap order — exactly the silent-flip condition — so
+        // fall through to the caveated path instead of pinning a coin-flip.
+        return null;
+      }
     }
     return structured.candidate;
   }
