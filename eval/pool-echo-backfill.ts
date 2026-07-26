@@ -146,9 +146,12 @@ interface Augmented extends Record<string, unknown> {
 
 const augmented: Augmented[] = [];
 let n = 0;
-// Modest case-level concurrency: each case already fans its 5 tables out in
-// parallel, so keep the case pool small to bound total concurrent RPCs.
-const CASE_CONCURRENCY = 5;
+// Case-level concurrency. Each case already fans its 5 tables out in parallel
+// (the pipeline's own per-query load), so CASE_CONCURRENCY=1 reproduces exactly
+// that load. Higher values multiply concurrent RPCs and push the slow BM25 scans
+// (bm25_narrative_chunks ~30s, bm25_ordinance ~5s) past the 8s PostgREST cap,
+// which corrupts the measurement. Keep at 1 for a faithful operational read.
+const CASE_CONCURRENCY = Number(Deno.env.get("POOL_ECHO_CASE_CONCURRENCY") ?? "1");
 for (let i = 0; i < targets.length; i += CASE_CONCURRENCY) {
   const slice = targets.slice(i, i + CASE_CONCURRENCY);
   const batch = await Promise.all(slice.map(async (r) => {
