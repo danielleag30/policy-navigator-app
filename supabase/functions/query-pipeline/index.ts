@@ -1144,7 +1144,30 @@ export function structuredCurrentValueScore(
   if (!isAdoptedBudgetSource(c, doc)) return 0;
 
   const fiscalYear = asNumber(c.row.fiscal_year) ?? doc?.fiscal_year ?? 0;
-  if (fiscalYear > currentFiscalYear()) return 0;
+  // Corpus-anchored future-PROJECTION gate. A budget_indicator row whose
+  // fiscal_year exceeds its OWN document's fiscal_year is an out-year projection
+  // published inside that budget (row.fiscal_year > document.fiscal_year), never a
+  // current value; a row at (or below) its document's year is the budget's own /
+  // historical value. This holds across all 27 forecast ladders in the corpus.
+  //
+  // The boundary is the DOCUMENT (the corpus), not the wall clock. The prior gate
+  // was `fiscalYear > currentFiscalYear()`, derived from new Date(): today the
+  // wall-clock FY and the corpus FY happen to agree, but on 2027-07-01
+  // currentFiscalYear() ticks to 2028 and the FY2028 forecast rows ALREADY in the
+  // database would pass, then win the `+ fiscalYear` tiebreak below — a four-years-
+  // out projection served as "the current rate", triggered by nothing but a
+  // calendar tick with no new data ingested. Anchoring to document.fiscal_year
+  // makes the gate time-invariant. effective_date is deliberately NOT used as an
+  // independent signal: it is derived as "July 1 of (FY-1)" with
+  // effective_date_source='default', so it merely restates fiscal_year.
+  //
+  // parseDocumentFiscalYear also recovers the year from the document url/title when
+  // the fiscal_year column is null. The wall clock survives ONLY as the fallback
+  // boundary for a genuinely undatable document (no fiscal_year, no parseable
+  // year) — there is no corpus signal to anchor to in that case, and it is no worse
+  // than the prior behavior.
+  const projectionBoundary = parseDocumentFiscalYear(doc) ?? currentFiscalYear();
+  if (fiscalYear > projectionBoundary) return 0;
   const draftPenalty = hasDraftQualifierForRateEvidence(c, doc) ? -100 : 0;
   // Budget-first ordering (fix ②): an adopted budget_indicator sits in the TOP
   // band (3,000,000+), strictly above any ordinance anchor (2,000,000+). For a
