@@ -129,7 +129,7 @@ const POLL_CLAIM_WINDOW_MS = 80_000;
  * The ~108s CPU failure point referenced above came from stacking multiple
  * rows' local Supabase.ai.Session embedding calls (CPU-bound) in one
  * invocation; now that all PDF-branch embedding runs over HTTP instead (see
- * embedDocumentChunks and friends below, same fix PR #83 applied to
+ * embedNarrativeChunks and friends below, same fix PR #83 applied to
  * ordinance_provisions), that CPU accumulation no longer happens per row, so
  * the Docling wall-clock budget can go back to matching the single-row value.
  */
@@ -456,58 +456,6 @@ async function pdfBranch(
   await extractAndPersist(documentId, docType, chunks, deadlineMs);
 
   return { documentId, chunks, doclingVersion, skipped: false };
-}
-
-// ── Task 2-6: embedding generation for document_chunks ────────────────────────
-
-async function embedDocumentChunks(
-  documentId: string,
-  embedUrl: string,
-): Promise<void> {
-  const { data: rows, error: fetchErr } = await db
-    .from("document_chunks")
-    .select("id, text")
-    .eq("document_id", documentId)
-    .order("chunk_index");
-
-  if (fetchErr) {
-    throw new Error(`Fetching document_chunks failed: ${fetchErr.message}`);
-  }
-  if (!rows || rows.length === 0) {
-    console.log(`[embedder] no document_chunks for document ${documentId}`);
-    return;
-  }
-
-  const texts = rows.map((r) => r.text as string);
-  const embeddings = await generateEmbeddingsHttpBatched(embedUrl, texts);
-
-  // Write embeddings back, one update per chunk — check each write
-  for (let i = 0; i < rows.length; i++) {
-    const { error: chunkErr } = await db
-      .from("document_chunks")
-      .update({ embedding: embeddings[i] })
-      .eq("id", rows[i].id);
-    if (chunkErr) {
-      throw new Error(
-        `Failed to write embedding for chunk ${rows[i].id}: ${chunkErr.message}`,
-      );
-    }
-  }
-
-  // DB-side count verification: non-null count must match expected chunk count
-  const { count: nonNullCount, error: countErr } = await db
-    .from("document_chunks")
-    .select("id", { count: "exact", head: true })
-    .eq("document_id", documentId)
-    .not("embedding", "is", null);
-  if (countErr) {
-    throw new Error(`Embedding count check failed: ${countErr.message}`);
-  }
-  if ((nonNullCount ?? 0) !== rows.length) {
-    throw new Error(
-      `Embedding count mismatch: expected ${rows.length}, got ${nonNullCount ?? 0} non-null in DB`,
-    );
-  }
 }
 
 // ── Task 2-6: embedding generation for PDF-derived structured tables ──────────
@@ -869,17 +817,21 @@ async function processClaimedIngestion(
         return success({ status: "skipped", document_id: documentId });
       }
 
-      // ── Task 2-6: embed document_chunks and PDF-derived structured tables ─
+      // ── Task 2-6: embed PDF-derived structured tables + narrative_chunks ──
       // Runs over HTTP (see generateEmbeddingsHttpBatched), not the local AI
       // Session -- same fix PR #83 applied to ordinance_provisions, for the
       // same reason: session.run() is CPU-bound and was exhausting the Edge
       // Function's CPU-time budget before a single row's embeddings landed,
       // leaving these documents stuck at status='unknown' with narrative_chunks/
       // budget_indicators rows created but never embedded.
+      //
+      // NOTE: document_chunks is intentionally NOT embedded here. Its embeddings
+      // were read by no retrieval path (no query-pipeline code and no DB
+      // function reference the table) and its text is ~99.75% duplicated into
+      // the retrievable narrative_chunks, which IS embedded below. Embedding it
+      // doubled the per-PDF load on the HF embedding Space for zero consumer.
       const embedUrl = Deno.env.get("HF_SPACES_DOCLING_URL");
       if (!embedUrl) throw new Error("HF_SPACES_DOCLING_URL not set");
-
-      await embedDocumentChunks(documentId, embedUrl);
 
       // vote_tallies and policy_decisions are written for bos_minutes/bos_summary;
       // budget_indicators for budget_pdf; narrative_chunks for any PDF type
