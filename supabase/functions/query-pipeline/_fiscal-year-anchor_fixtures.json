@@ -1,0 +1,98 @@
+{
+  "_generated": "Verbatim rows from Supabase project ahaurkifxzqsrhwjshbj (budget_indicators + their document), captured for the corpus-anchored fiscal-year gate test. embedding/content_tsv/created_at/updated_at omitted (unused by the scorer); raw_extracted_text is the verbatim chunk body. The four indicator rows are a SINGLE forecast ladder inside ONE adopted FY2027 document (019f5689-14eb-7eea-a078-b96cc5a6e911): the FY2027 rows are the budget's OWN year (real current values), the FY2028 rows are out-year PROJECTIONS published inside that same budget. All four share byte-identical raw_extracted_text, so the prose tiebreak (finalAdoptedRateTextScore) scores them identically and the `+ fiscalYear` addend is the sole score differentiator — the exact exposed surface of the dated latent bug.",
+  "document": {
+    "id": "019f5689-14eb-7eea-a078-b96cc5a6e911",
+    "url": "https://www.fairfaxcounty.gov/budget/sites/budget/files/Assets/documents/fy2027/adopted/volume2/69000.pdf",
+    "title": null,
+    "doc_type": "budget_pdf",
+    "filename": null,
+    "fiscal_year": 2027,
+    "ingested_at": "2026-07-12T13:34:12.203+00:00",
+    "budget_stage": "adopted",
+    "source_published_at": null
+  },
+  "sewer_fy2027_own": {
+    "table": "budget_indicators",
+    "row": {
+      "id": "019f5689-7cc0-7880-91b7-aeacc885f46f",
+      "document_id": "019f5689-14eb-7eea-a078-b96cc5a6e911",
+      "fiscal_year": 2027,
+      "department": "Wastewater Management",
+      "program": "Sewer Rate Plan",
+      "indicator_name": "Sewer Service Charge Per 1,000 gallons of water",
+      "value_actual": 9.88,
+      "value_target": null,
+      "value_prior_year": 9.33,
+      "unit": "dollars",
+      "raw_extracted_text": "The five-year sewer rate plan, approved by the Board of Supervisors as part of the FY 2026 Adopted Budget Plan, proposed to increase the sewer charges by 5.9 percent in FY 2027. After careful review, the Wastewater Management staff recommended increasing the sewer charges by 5.9 percent in FY 2027 as previously planned. The Sewer Service Charge  increased  from  $9.33  to  $9.88  per  1,000  gallons  of  water  consumed  based  on  Fairfax County's winter quarter average consumption of 16,000 gallons. The Base Charge increased from $52.62 per quarter in FY 2026 to $55.78 per quarter in FY 2027. The  Base  Charge  provides  for  a  more  equitable  rate  structure  by  recovering  a  portion  of  the program's  fixed  costs. The  industry  practice  for  a  fixed  charge  revenue  rate  is  25  percent  to 30 percent of operating revenues. The fixed charge revenue percentage in FY 2027 is equal to 25.5  percent. The  current  system,  including  sewer  lines,  facilities,  purchased  capacity,  and equipment is valued at approximately $2 billion. Based on the age and required maintenance of the system, reinvestment must continue to be addressed. The implementation of the increases to the Base Charge helps ensure that all users of the system share in the fixed costs associated with reinvestment and operations. The annual average customer bill increased from $807.60 in FY 2026 to $855.44 in FY 2027, an annual cost increase of $47.84 or 5.9 percent. In FY 2027, the average bill in Fairfax County is competitive  compared  to  the  average  bill  in  other  regional  jurisdictions, even with the proposed increases. The increases in the Sewer Service Charge and Base Charge from FY 2027 to FY 2031 will partially offset the increased costs associated with capital project construction, system operation and  maintenance,  debt  service,  and  required  reinvestment  into  Fairfax  County's  treatment  by contract partners (DC Water, AlexRenew, etc.) conveyance and treatment facilities. 1  This value is based on Fairfax County's winter quarter average consumption of 16,000 gallons and corresponding service and base charges. Year Sewer Service Charge Per 1,000 gallons of water Base Charge Per Quarterly Bill Sewer Charges Percentage Increase 1 Fixed Charge Revenue Percentage 2026 $9.33 $52.62 5.90% 25.9% 2027 $9.88 $55.78 5.90% 25.5% 2028 $10.78 $60.79 9.00% 25.5% 2029 $11.75 $66.26 9.00% 25.5% 2030",
+      "page_number_start": 1,
+      "page_number_end": 2,
+      "chunk_sequence": 2,
+      "effective_date": "2026-07-01",
+      "effective_date_source": "default"
+    }
+  },
+  "sewer_fy2028_projection": {
+    "table": "budget_indicators",
+    "row": {
+      "id": "019f5689-7cc0-76a8-b835-a88b72711e3a",
+      "document_id": "019f5689-14eb-7eea-a078-b96cc5a6e911",
+      "fiscal_year": 2028,
+      "department": "Wastewater Management",
+      "program": "Sewer Rate Plan",
+      "indicator_name": "Sewer Service Charge Per 1,000 gallons of water",
+      "value_actual": 10.78,
+      "value_target": null,
+      "value_prior_year": 9.88,
+      "unit": "dollars",
+      "raw_extracted_text": "The five-year sewer rate plan, approved by the Board of Supervisors as part of the FY 2026 Adopted Budget Plan, proposed to increase the sewer charges by 5.9 percent in FY 2027. After careful review, the Wastewater Management staff recommended increasing the sewer charges by 5.9 percent in FY 2027 as previously planned. The Sewer Service Charge  increased  from  $9.33  to  $9.88  per  1,000  gallons  of  water  consumed  based  on  Fairfax County's winter quarter average consumption of 16,000 gallons. The Base Charge increased from $52.62 per quarter in FY 2026 to $55.78 per quarter in FY 2027. The  Base  Charge  provides  for  a  more  equitable  rate  structure  by  recovering  a  portion  of  the program's  fixed  costs. The  industry  practice  for  a  fixed  charge  revenue  rate  is  25  percent  to 30 percent of operating revenues. The fixed charge revenue percentage in FY 2027 is equal to 25.5  percent. The  current  system,  including  sewer  lines,  facilities,  purchased  capacity,  and equipment is valued at approximately $2 billion. Based on the age and required maintenance of the system, reinvestment must continue to be addressed. The implementation of the increases to the Base Charge helps ensure that all users of the system share in the fixed costs associated with reinvestment and operations. The annual average customer bill increased from $807.60 in FY 2026 to $855.44 in FY 2027, an annual cost increase of $47.84 or 5.9 percent. In FY 2027, the average bill in Fairfax County is competitive  compared  to  the  average  bill  in  other  regional  jurisdictions, even with the proposed increases. The increases in the Sewer Service Charge and Base Charge from FY 2027 to FY 2031 will partially offset the increased costs associated with capital project construction, system operation and  maintenance,  debt  service,  and  required  reinvestment  into  Fairfax  County's  treatment  by contract partners (DC Water, AlexRenew, etc.) conveyance and treatment facilities. 1  This value is based on Fairfax County's winter quarter average consumption of 16,000 gallons and corresponding service and base charges. Year Sewer Service Charge Per 1,000 gallons of water Base Charge Per Quarterly Bill Sewer Charges Percentage Increase 1 Fixed Charge Revenue Percentage 2026 $9.33 $52.62 5.90% 25.9% 2027 $9.88 $55.78 5.90% 25.5% 2028 $10.78 $60.79 9.00% 25.5% 2029 $11.75 $66.26 9.00% 25.5% 2030",
+      "page_number_start": 1,
+      "page_number_end": 2,
+      "chunk_sequence": 2,
+      "effective_date": "2027-07-01",
+      "effective_date_source": "default"
+    }
+  },
+  "base_fy2027_own": {
+    "table": "budget_indicators",
+    "row": {
+      "id": "019f5689-7cc0-787e-9e6d-ba13d489cda2",
+      "document_id": "019f5689-14eb-7eea-a078-b96cc5a6e911",
+      "fiscal_year": 2027,
+      "department": "Wastewater Management",
+      "program": "Sewer Rate Plan",
+      "indicator_name": "Base Charge Per Quarterly Bill",
+      "value_actual": 55.78,
+      "value_target": null,
+      "value_prior_year": 52.62,
+      "unit": "dollars",
+      "raw_extracted_text": "The five-year sewer rate plan, approved by the Board of Supervisors as part of the FY 2026 Adopted Budget Plan, proposed to increase the sewer charges by 5.9 percent in FY 2027. After careful review, the Wastewater Management staff recommended increasing the sewer charges by 5.9 percent in FY 2027 as previously planned. The Sewer Service Charge  increased  from  $9.33  to  $9.88  per  1,000  gallons  of  water  consumed  based  on  Fairfax County's winter quarter average consumption of 16,000 gallons. The Base Charge increased from $52.62 per quarter in FY 2026 to $55.78 per quarter in FY 2027. The  Base  Charge  provides  for  a  more  equitable  rate  structure  by  recovering  a  portion  of  the program's  fixed  costs. The  industry  practice  for  a  fixed  charge  revenue  rate  is  25  percent  to 30 percent of operating revenues. The fixed charge revenue percentage in FY 2027 is equal to 25.5  percent. The  current  system,  including  sewer  lines,  facilities,  purchased  capacity,  and equipment is valued at approximately $2 billion. Based on the age and required maintenance of the system, reinvestment must continue to be addressed. The implementation of the increases to the Base Charge helps ensure that all users of the system share in the fixed costs associated with reinvestment and operations. The annual average customer bill increased from $807.60 in FY 2026 to $855.44 in FY 2027, an annual cost increase of $47.84 or 5.9 percent. In FY 2027, the average bill in Fairfax County is competitive  compared  to  the  average  bill  in  other  regional  jurisdictions, even with the proposed increases. The increases in the Sewer Service Charge and Base Charge from FY 2027 to FY 2031 will partially offset the increased costs associated with capital project construction, system operation and  maintenance,  debt  service,  and  required  reinvestment  into  Fairfax  County's  treatment  by contract partners (DC Water, AlexRenew, etc.) conveyance and treatment facilities. 1  This value is based on Fairfax County's winter quarter average consumption of 16,000 gallons and corresponding service and base charges. Year Sewer Service Charge Per 1,000 gallons of water Base Charge Per Quarterly Bill Sewer Charges Percentage Increase 1 Fixed Charge Revenue Percentage 2026 $9.33 $52.62 5.90% 25.9% 2027 $9.88 $55.78 5.90% 25.5% 2028 $10.78 $60.79 9.00% 25.5% 2029 $11.75 $66.26 9.00% 25.5% 2030",
+      "page_number_start": 1,
+      "page_number_end": 2,
+      "chunk_sequence": 2,
+      "effective_date": "2026-07-01",
+      "effective_date_source": "default"
+    }
+  },
+  "base_fy2028_projection": {
+    "table": "budget_indicators",
+    "row": {
+      "id": "019f5689-7cc0-79da-b037-47da9ca3e84d",
+      "document_id": "019f5689-14eb-7eea-a078-b96cc5a6e911",
+      "fiscal_year": 2028,
+      "department": "Wastewater Management",
+      "program": "Sewer Rate Plan",
+      "indicator_name": "Base Charge Per Quarterly Bill",
+      "value_actual": 60.79,
+      "value_target": null,
+      "value_prior_year": 55.78,
+      "unit": "dollars",
+      "raw_extracted_text": "The five-year sewer rate plan, approved by the Board of Supervisors as part of the FY 2026 Adopted Budget Plan, proposed to increase the sewer charges by 5.9 percent in FY 2027. After careful review, the Wastewater Management staff recommended increasing the sewer charges by 5.9 percent in FY 2027 as previously planned. The Sewer Service Charge  increased  from  $9.33  to  $9.88  per  1,000  gallons  of  water  consumed  based  on  Fairfax County's winter quarter average consumption of 16,000 gallons. The Base Charge increased from $52.62 per quarter in FY 2026 to $55.78 per quarter in FY 2027. The  Base  Charge  provides  for  a  more  equitable  rate  structure  by  recovering  a  portion  of  the program's  fixed  costs. The  industry  practice  for  a  fixed  charge  revenue  rate  is  25  percent  to 30 percent of operating revenues. The fixed charge revenue percentage in FY 2027 is equal to 25.5  percent. The  current  system,  including  sewer  lines,  facilities,  purchased  capacity,  and equipment is valued at approximately $2 billion. Based on the age and required maintenance of the system, reinvestment must continue to be addressed. The implementation of the increases to the Base Charge helps ensure that all users of the system share in the fixed costs associated with reinvestment and operations. The annual average customer bill increased from $807.60 in FY 2026 to $855.44 in FY 2027, an annual cost increase of $47.84 or 5.9 percent. In FY 2027, the average bill in Fairfax County is competitive  compared  to  the  average  bill  in  other  regional  jurisdictions, even with the proposed increases. The increases in the Sewer Service Charge and Base Charge from FY 2027 to FY 2031 will partially offset the increased costs associated with capital project construction, system operation and  maintenance,  debt  service,  and  required  reinvestment  into  Fairfax  County's  treatment  by contract partners (DC Water, AlexRenew, etc.) conveyance and treatment facilities. 1  This value is based on Fairfax County's winter quarter average consumption of 16,000 gallons and corresponding service and base charges. Year Sewer Service Charge Per 1,000 gallons of water Base Charge Per Quarterly Bill Sewer Charges Percentage Increase 1 Fixed Charge Revenue Percentage 2026 $9.33 $52.62 5.90% 25.9% 2027 $9.88 $55.78 5.90% 25.5% 2028 $10.78 $60.79 9.00% 25.5% 2029 $11.75 $66.26 9.00% 25.5% 2030",
+      "page_number_start": 1,
+      "page_number_end": 2,
+      "chunk_sequence": 2,
+      "effective_date": "2027-07-01",
+      "effective_date_source": "default"
+    }
+  }
+}
